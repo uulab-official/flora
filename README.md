@@ -25,6 +25,7 @@ Flora는 iOS, Android, Web 앱의 빌드·서명·환경설정·스토어·OTA·
 5. [단계별 구현과 완료 기준](docs/roadmap/milestones.ko.md)
 6. [첫 Foundation 설계안](docs/superpowers/specs/2026-10-06-foundation-design.md)
 7. [공식 문서로 확인한 제약과 비용](docs/reference/provider-facts.ko.md)
+8. [Foundation 상세 구현 계획](docs/superpowers/plans/2026-10-06-foundation-implementation.md)
 
 ## 완전 오픈소스 원칙
 

@@ -69,7 +69,7 @@ Source provider는 GitHub App을 우선한다. 조직 설치 및 선택 reposito
 
 ### 상속과 버전
 
-Organization → Project → App → Flavor → Environment → Platform 순으로 기본 우선순위를 적용하되, 각 레코드는 정확한 scope selector와 버전을 갖는다. 같은 우선순위의 중복 키는 임의 순서로 덮어쓰지 않고 오류로 처리한다. 교차 축 결합 override가 필요하면 별도 명시적 target override 정책을 추가한다.
+Organization → Project → App → Flavor → Environment → Platform 순으로 기본 우선순위를 적용하되, 각 레코드는 정확한 scope selector와 버전을 갖는다. 같은 우선순위의 중복 키는 임의 순서로 덮어쓰지 않고 오류로 처리한다. 교차 축 결합은 App+Flavor+Environment+Platform을 모두 지정한 명시적 target override로 지원하며 일반 Platform scope보다 높은 우선순위를 갖는다. 불완전한 교차 selector를 임의로 해석하지 않는다.
 
 History/Diff/Rollback/Author/Reason/Timestamp를 남긴다. Rollback은 과거 기록의 수정이 아니라 새 버전 작성이다. Build/OTA/Release에는 현재 값을 동적으로 참조하지 않고 config snapshot과 secret/credential version reference를 고정한다. 설정 diff에는 secret plaintext를 노출하지 않는다.
 

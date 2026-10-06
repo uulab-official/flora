@@ -2,7 +2,7 @@
 
 작성일: 2026-10-06
 
-상태: **사용자 검토용 설계. 구현 전.**
+상태: **2026-10-06 설계 승인. 상세 구현 계획 검토 중, 구현 전.**
 이 문서는 전체 제품 비전 중 첫 번째로 검증할 수 있는 작은 기반을 정의한다. [통합 기획서](../../product/integrated-plan.ko.md)의 모든 기능을 한 번에 구현하는 계획이 아니다.
 
 ## 1. 목표와 성공 기준
@@ -56,7 +56,7 @@ Core와 API는 provider SDK나 UI를 의존하지 않는다. 모듈 간 식별�
 
 Organization은 모든 소유권의 루트다. Project/Application 참조와 Flavor/Environment는 같은 organization/app 관계를 검증한다. Platform은 ios/android/web enum이다. repo identity + app root는 Application 연결이며 Project ID와 repo ID를 혼용하지 않는다.
 
-설정 입력은 runtime 검증된 `scope`, `key`, `kind`, `version`, `value` 또는 `versionRef`다. 조직·프로젝트·앱·flavor·environment·platform 우선순위를 명시하고 동일 우선순위·동일 키 중복은 오류로 처리한다. 해당 타깃과 무관한 selector는 제외한다. 빈 key, prototype 오염 키, 잘못된 selector, cross-tenant ref, secret plaintext는 거부한다.
+설정 입력은 runtime 검증된 `scope`, `key`, `kind`, `version`, `value` 또는 `versionRef`다. 조직·프로젝트·앱·flavor·environment·platform·완전한 target override 순으로 우선순위를 명시하고 동일 우선순위·동일 키 중복은 오류로 처리한다. 완전한 target override는 app+flavor+environment+platform을 모두 지정하므로 free/production/ios와 pro/production/ios를 분리할 수 있다. 불완전한 교차 selector는 거부한다. 해당 타깃과 무관한 selector는 제외한다. 빈 key, prototype 오염 키, 잘못된 selector, cross-tenant ref, secret plaintext는 거부한다.
 
 Snapshot에는 target, source revision, resolved non-secret values, immutable version references, resolver schema version을 포함한다. 정렬된 canonical representation으로 digest를 계산해 입력 순서에 영향받지 않게 한다. 기존 snapshot은 수정하지 않는다. CLI 출력에는 secret reference만 보이고 raw secret은 입력받지 않는다.
 
