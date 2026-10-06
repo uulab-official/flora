@@ -14,7 +14,17 @@ Flora는 iOS, Android, Web 앱의 빌드·서명·환경설정·스토어·OTA·
 - 특정 개발자 PC가 꺼져 있거나 바뀌어도, 권한이 있는 다른 개발자가 작업을 이어갈 수 있는 조직 공용 Runner
 - 설정과 인증서 파일을 사람마다 복사하지 않아도 되는 팀 운영
 
-**현재 상태: 기획·설계 문서 단계.** 로그인, Runner, 빌드, Vault, OTA, 스토어 업로드, Cloudflare 배포는 아직 구현되지 않았습니다. 문서에 있는 명령어와 화면은 목표 UX이며 실행 가능한 제품을 뜻하지 않습니다.
+**현재 상태: 로컬 Foundation 구현.** 타깃 검증, 설정 스냅샷, SQLite Job/lease/fence, synthetic artifact·Release 이력과 CLI가 구현되었습니다. 로그인, 실제 Runner daemon/native build, Vault, OTA, 스토어 업로드, Cloudflare 배포와 Dashboard는 아직 구현되지 않았습니다.
+
+[로컬 설치·실행 가이드](docs/development/local-foundation.ko.md)의 명령은 실행할 수 있습니다. 제품 기획서의 나머지 명령·화면은 향후 목표입니다.
+
+```sh
+pnpm install --frozen-lockfile --ignore-scripts
+pnpm check
+pnpm platform job simulate --file examples/local-workflow.json --scenario runner-replacement
+```
+
+Node 24.19.0 / pnpm 11.19.0 기준입니다. 기존 pnpm 없이 시작하는 방법도 실행 가이드에 있습니다. 실제 클라우드 리소스나 credential을 만들지 않습니다.
 
 ## 문서
 

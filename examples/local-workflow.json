@@ -1,0 +1,115 @@
+{
+  "catalog": {
+    "organizations": [
+      {
+        "id": "org_demo"
+      },
+      {
+        "id": "org_other"
+      }
+    ],
+    "projects": [
+      {
+        "id": "project_demo",
+        "organizationId": "org_demo"
+      }
+    ],
+    "applications": [
+      {
+        "id": "app_demo",
+        "organizationId": "org_demo",
+        "projectId": "project_demo"
+      },
+      {
+        "id": "app_other",
+        "organizationId": "org_demo",
+        "projectId": "project_demo"
+      }
+    ],
+    "flavors": [
+      {
+        "id": "free",
+        "organizationId": "org_demo",
+        "applicationId": "app_demo"
+      },
+      {
+        "id": "pro",
+        "organizationId": "org_demo",
+        "applicationId": "app_demo"
+      },
+      {
+        "id": "other",
+        "organizationId": "org_demo",
+        "applicationId": "app_other"
+      }
+    ],
+    "environments": [
+      {
+        "id": "production",
+        "organizationId": "org_demo",
+        "applicationId": "app_demo"
+      },
+      {
+        "id": "staging",
+        "organizationId": "org_demo",
+        "applicationId": "app_demo"
+      }
+    ]
+  },
+  "target": {
+    "id": "target_demo",
+    "organizationId": "org_demo",
+    "projectId": "project_demo",
+    "applicationId": "app_demo",
+    "flavorId": "free",
+    "environmentId": "production",
+    "platform": "ios"
+  },
+  "source": {
+    "id": "source_demo",
+    "organizationId": "org_demo",
+    "applicationId": "app_demo",
+    "repositoryId": "repo_demo",
+    "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "rootDirectory": "apps/demo",
+    "lockfileDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "adapterId": "expo",
+    "adapterVersion": "1.0.0",
+    "toolchain": {
+      "node": "24.19.0"
+    }
+  },
+  "configEntries": [
+    {
+      "key": "API_URL",
+      "versionId": "version_one",
+      "scope": {
+        "level": "organization",
+        "organizationId": "org_demo"
+      },
+      "binding": {
+        "kind": "CONFIG",
+        "value": "https://api.example.invalid"
+      }
+    },
+    {
+      "key": "API_TOKEN",
+      "versionId": "version_one",
+      "scope": {
+        "level": "target",
+        "organizationId": "org_demo",
+        "applicationId": "app_demo",
+        "flavorId": "free",
+        "environmentId": "production",
+        "platform": "ios"
+      },
+      "binding": {
+        "kind": "SECRET",
+        "organizationId": "org_demo",
+        "resourceId": "secret_demo",
+        "versionId": "version_one"
+      }
+    }
+  ],
+  "releaseVersion": "1.0.0"
+}

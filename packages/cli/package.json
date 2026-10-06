@@ -1,0 +1,21 @@
+{
+  "name": "@app-ops/cli",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "license": "Apache-2.0",
+  "exports": "./dist/main.js",
+  "bin": {
+    "platform": "./bin/platform.mjs",
+    "flora": "./bin/platform.mjs"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@app-ops/core": "workspace:*",
+    "@app-ops/config": "workspace:*",
+    "@app-ops/db": "workspace:*",
+    "@app-ops/runner-protocol": "workspace:*"
+  }
+}

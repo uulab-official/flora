@@ -1,0 +1,30 @@
+{
+  "name": "app-operations-platform",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "license": "Apache-2.0",
+  "packageManager": "pnpm@11.19.0",
+  "engines": {
+    "node": ">=24.19.0 <25"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "typecheck": "tsc -p tsconfig.tests.json --noEmit",
+    "test": "pnpm build && node scripts/test.mjs",
+    "check": "pnpm build && pnpm typecheck && node scripts/test.mjs",
+    "platform": "node packages/cli/dist/main.js",
+    "flora": "node packages/cli/dist/main.js",
+    "verify:clean": "pnpm build && node scripts/clean-install.mjs",
+    "doctor:toolchain": "pnpm build && node scripts/verify-toolchain.mjs"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "@types/node": "24.19.1",
+    "@app-ops/core": "workspace:*",
+    "@app-ops/config": "workspace:*",
+    "@app-ops/db": "workspace:*",
+    "@app-ops/runner-protocol": "workspace:*",
+    "@app-ops/cli": "workspace:*"
+  }
+}

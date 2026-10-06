@@ -1,10 +1,10 @@
 # 단계별 구현과 완료 기준
 
-2026-10-06 · 모든 항목은 아직 계획 상태
+2026-10-07 · Foundation 0A 로컬 구현 진행. 아래 실제 provider 연동·MVP 단계는 미완료.
 
 ## 단계 0A: 검증 가능한 Foundation
 
-첫 구현 후보이며 현재 설계 검토 전이다. 범위: brand-neutral domain/target identity, configuration resolution + immutable snapshot, job request idempotency/lease fencing/state, migration 제약 및 provenance 계약, local-only 검사·시뮬레이션. 외부 로그인·secret 전송·실제 build/store/OTA/deploy는 포함하지 않는다.
+로컬 구현 단계다. 실제 검증 명령과 한계는 [실행 가이드](../development/local-foundation.ko.md)를 따른다. 범위: brand-neutral domain/target identity, configuration resolution + immutable snapshot, job request idempotency/lease fencing/state, migration 제약 및 provenance 계약, local-only 검사·시뮬레이션. 외부 로그인·secret 전송·실제 build/store/OTA/deploy는 포함하지 않는다.
 
 완료 증거: strict typecheck, unit/contract/integration tests, SQL tenant/FK/invariant 테스트, stale fence/concurrent claim 테스트, secret-free fixtures, 새 checkout 재실행 문서, 독립 코드 리뷰. 로컬 테스트만으로 Cloudflare 분산 운영·native 빌드 검증이 끝났다고 보고하지 않는다.
 
