@@ -180,6 +180,79 @@ test("lost_import_response_is_not_success_and_repeat_clicks_are_serialized", asy
   const pending = app.client.importFile("source", file); await app.client.importFile("source", file); assert.equal(app.calls.filter(call => call.url === "/api/sources").length, 1);
   gate.resolve(); await pending; assert.ok(app.document.getElementById("notice").textContent.includes("확인하지 못")); assert.equal(app.document.getElementById("retry-button").hidden, false); app.client.close();
 });
+// These fail if upload errors auto-resubmit, the retry control sends a POST,
+// 403 erases a valid session, or 401 leaves private state / late responses alive.
+for (const kind of ["source", "baseline"] as const) for (const outcome of ["network", "forbidden"] as const) test(`${kind}_${outcome}_keeps_verified_history_until_explicit_reload_and_file_reselection`, async () => {
+  const data = state(); data.history.items = [record()]; let posts = 0;
+  const path = kind === "source" ? "/api/sources" : "/api/baselines?snapshotId=snapshot_a";
+  const app = await controller(data, async url => {
+    if (url.endsWith("/log")) return response({ id: "baseline_a", safeLog: "verified private log", logTruncated: false });
+    if (url !== path) return;
+    if (++posts === 1) {
+      if (outcome === "network") throw new TypeError("Failed to fetch");
+      return response({ error: "FORBIDDEN" }, 403);
+    }
+    return response(kind === "source" ? data.selected : data.history.items[0], 201);
+  });
+  const log = app.document.getElementById("log-baseline_a"); log.open = true; await log.dispatch("toggle");
+  const before = ["app-name", "source-details", "baseline-history", "flavor-detail"].map(id => app.document.getElementById(id).textContent);
+  const file = new File([" original bytes\n"], "original.json", { type: "application/json" });
+  const input = app.document.getElementById(kind + "-file"); input.files = [file]; input.value = "original.json";
+  await input.dispatch("change");
+  const notice = app.document.getElementById("notice");
+  assert.equal(notice.getAttribute("role"), "alert"); assert.ok(!notice.className.includes("notice-success"));
+  assert.ok(notice.textContent.includes(outcome === "network" ? "반입 완료 여부를 확인하지 못" : "요청 권한"));
+  if (outcome === "forbidden") assert.ok(!notice.textContent.includes("반입 완료 여부"));
+  assert.deepEqual(["app-name", "source-details", "baseline-history", "flavor-detail"].map(id => app.document.getElementById(id).textContent), before);
+  assert.equal(app.document.getElementById("workspace").getAttribute("aria-busy"), "false");
+  assert.equal(input.value, ""); assert.equal(input.disabled, false); assert.equal(posts, 1);
+  assert.equal(app.document.getElementById("login-link").hidden, true);
+  assert.equal(app.document.getElementById("retry-button").hidden, false);
+  const callsBeforeReload = app.calls.length; await app.document.getElementById("retry-button").dispatch("click");
+  assert.deepEqual(app.calls.slice(callsBeforeReload).map(call => [call.url, call.init.method]), [["/api/state?snapshotId=snapshot_a", "GET"]]);
+  assert.equal(posts, 1); assert.equal(input.value, "");
+  input.files = [file]; input.value = "original.json"; await input.dispatch("change");
+  assert.equal(posts, 2); assert.equal(input.value, "");
+  assert.ok(notice.className.includes("notice-success"));
+  for (const call of app.calls.filter(call => call.url === path)) assert.strictEqual(call.init.body, file);
+  assert.equal(app.document.getElementById("baseline-history").children.length, 1); app.client.close();
+});
+for (const kind of ["source", "baseline"] as const) test(`${kind}_401_erases_private_dom_inputs_and_fences_late_log_then_requires_fresh_login`, async () => {
+  const data = state(); data.history.items = [record()]; const lateLog = deferred<any>();
+  const path = kind === "source" ? "/api/sources" : "/api/baselines?snapshotId=snapshot_a";
+  const app = await controller(data, async url => url.endsWith("/log") ? lateLog.promise : url === path ? response({ error: "UNAUTHENTICATED" }, 401) : undefined);
+  const log = app.document.getElementById("log-baseline_a"); log.open = true; const loading = log.dispatch("toggle");
+  for (const id of ["source-file", "baseline-file"]) app.document.getElementById(id).value = "original.json";
+  const file = new File([" original bytes\n"], "original.json"); await app.client.importFile(kind, file);
+  function cleared() {
+    for (const id of ["app-name", "snapshot-select", "flavor-select", "source-details", "baseline-history", "flavor-detail", "app-rows", "recent-history", "app-search"]) {
+      assert.equal(app.document.getElementById(id).textContent, "", id); assert.equal(app.document.getElementById(id).value, "", id);
+    }
+    for (const id of ["source-file", "baseline-file"]) { assert.equal(app.document.getElementById(id).value, ""); assert.equal(app.document.getElementById(id).disabled, true); }
+    for (const id of ["snapshot-select", "flavor-select", "logout-button", "snapshot-previous", "snapshot-next", "history-previous", "history-next", "retry-button", "app-search", "app-source-filter", "app-sort", "app-previous", "app-next", "nav-apps", "mobile-apps"]) assert.equal(app.document.getElementById(id).disabled, true, id);
+    assert.equal(app.document.getElementById("dashboard-content").hidden, true);
+    assert.equal(app.document.getElementById("app-detail").hidden, true);
+    assert.ok(!app.document.text.includes("synthetic/app")); assert.ok(!app.document.text.includes("baseline_a"));
+    assert.equal(app.document.getElementById("login-link").hidden, false);
+    assert.equal(app.document.getElementById("retry-button").hidden, true);
+    assert.ok(app.document.getElementById("notice").textContent.includes("다시 로그인"));
+    assert.ok(!app.document.getElementById("notice").className.includes("notice-success"));
+  }
+  cleared(); lateLog.resolve(response({ id: "baseline_a", safeLog: "late private log", logTruncated: false })); await loading; cleared();
+  assert.ok(!app.document.text.includes("late private log")); const count = app.calls.length;
+  await app.client.refresh(); await app.client.importFile(kind, file); assert.equal(app.calls.length, count);
+  app.client.close();
+  // A 401 is not evidence of no write: the authority can recheck after D1
+  // commits. Backend commit/revocation is covered in worker.test.ts; this
+  // client contract checks the fresh-session path over an existing receipt.
+  const fresh = await controller(data, async url => url === path ? response(kind === "source" ? data.selected : data.history.items[0], 201) : undefined);
+  assert.equal(fresh.calls[0]!.url, "/api/auth/session"); assert.notEqual(fresh.csrf, app.csrf);
+  await fresh.client.importFile(kind, file);
+  assert.strictEqual(fresh.calls.find(call => call.url === path)!.init.body, file);
+  assert.equal(fresh.document.getElementById("snapshot-select").value, data.selected.id);
+  assert.equal(fresh.document.getElementById("baseline-history").children.length, 1);
+  assert.ok(fresh.document.getElementById("notice").className.includes("notice-success")); fresh.client.close();
+});
 test("quota_network_and_database_failure_never_become_empty_history", async () => {
   const app = await controller(state(), async url => url === "/api/state" ? response({ error: "UNAVAILABLE" }, 503) : undefined);
   assert.equal(app.document.getElementById("empty").hidden, true); assert.equal(app.document.getElementById("dashboard-content").hidden, true); assert.ok(app.document.getElementById("notice").textContent.includes("불러오지 못"));

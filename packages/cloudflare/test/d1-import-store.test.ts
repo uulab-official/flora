@@ -9,6 +9,7 @@ import { bundleBytes, syntheticBaseline, syntheticSourceBundle } from "../../../
 import { createD1ImportStore, verifyD1Identity } from "../src/d1-import-store.ts";
 import type { FloraConfig } from "../src/contracts.ts";
 import { createTestRuntime } from "./runtime.ts";
+import { observeD1Capacity } from "./d1-capacity-diagnostics.ts";
 
 const config: FloraConfig = { ownerId: "owner-fixture", ownerEmail: "owner@example.invalid", origin: "https://flora.example.com", dbIdentity: "fixture-identity", setup: null };
 const now = 1770000000000;
@@ -285,7 +286,17 @@ test("payload_capacity_is_atomic_and_sql_checks_actual_utf8_bytes", async t => {
   const insertSize = (size: number) => db.prepare(sql).bind(...fields, size, overhead, size, overhead, size);
   await assert.rejects(insertSize(524289).run(), /CHECK constraint failed/);
   await assert.rejects(db.prepare("INSERT INTO source_head_observations(owner_id,repository_id,root_directory,observed_order,data,stored_bytes) VALUES(?,?,?,?,?,1)").bind(...fields).run(), /CHECK constraint failed/);
-  for (let i = 0; i < 255; i += 3) await db.batch([insertSize(524288), insertSize(524288), insertSize(524288)]);
+  const diagnostics = observeD1Capacity(message => t.diagnostic(message));
+  try {
+    for (let i = 0; i < 255; i += 3) {
+      diagnostics.beginBatch(i / 3 + 1, i);
+      try {
+        const pending = db.batch([insertSize(524288), insertSize(524288), insertSize(524288)]);
+        diagnostics.submitted();
+        await pending;
+      } catch (error) { diagnostics.rethrow(error); }
+    }
+  } finally { diagnostics.dispose(); }
   const used = (await db.prepare("SELECT payload_bytes FROM flora_capacity").first<{ payload_bytes: number }>())!.payload_bytes;
   const remaining = 134217728 - used;
   assert.ok(remaining > overhead && remaining < 524288);

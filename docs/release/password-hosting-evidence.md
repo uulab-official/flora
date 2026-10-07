@@ -30,6 +30,37 @@ Local elapsed time is emulator wall time, not deployed front-Worker CPU, DO CPU,
 
 The initial expected RED was the missing hosted source route. After integration, six cases passed and the timeout test returned 403 because its test-only GET-to-POST probe omitted CSRF; supplying the required header produced the final 7/7 pass. The console test includes a positive capture control and retains enrollment output before checking for leaks. The install's first process-status poll timed out in automatic review; one bounded retry using the populated store completed successfully. Pinned supply-chain checks and Wrangler emitted network/proxy warnings; no versions, crypto parameters or transport security were weakened. The skipped test was `Windows preparation inherits profile access and rejects junctions`, which still needs the required Windows gate.
 
+## Explicit upload-recovery acceptance scope
+
+The synthetic HTTP and browser gates now evaluate an honest upload failure
+followed by explicit user recovery. The full original source POST without CSRF,
+consumed 403, and immediate valid POST remain the characterized boundary. Only
+its `ECONNRESET` / `UND_ERR_SOCKET` cause can enter one history reload and one
+same-file resubmission in HTTP acceptance. Every other transport error, and any
+failed recovery step, still fails. Strict `dispatchFetch` characterization still
+fails on its original error. A successful initial POST explicitly reports that
+natural-reset recovery was not exercised.
+
+Deterministic browser abort before dispatch proves no write and exact unchanged
+state. Delivery loss after real source and baseline commits instead proves that
+explicit reload/reselection preserves the complete committed receipt, original
+record timestamps/provenance/digests and duplicate-free state. Post-dispatch
+failure alone never proves that no write occurred. The existing production UI
+supplies the uncertain-result alert, releases busy state, clears the selected file
+and waits for user action; its retry control only reloads history. Separate
+network / 403 / 401 UI tests preserve permission guidance and valid-session state
+on 403, and require private clearing, late-response fencing and a fresh session
+on 401. A 401 can follow a submitted D1 write; existing Worker tests retain that
+boundary. Request-outcome QA evidence is separate from stored baseline results.
+
+This is an acceptance-contract change, not an auth/runtime repair. It adds no
+production retry, socket override, delay, denied-body draining or dependency
+change. Initial-reset characterization, exact-candidate OS/browser receipts,
+visual review, deployed rejection/retry, and actual Free-edge behavior remain
+open until separately verified. Browser evidence stays within fifteen PNGs plus
+one JSON file and the existing 4 MiB total cap. See the
+[synthetic gate contract](../../scripts/hosted-qa/README.md#ordinary-http-acceptance-and-unresolved-runtime-gate).
+
 ## Ordered production gates
 
 All unchecked items are **unverified**. Record the observed result, UTC time, exact deployed version and a non-secret evidence reference before marking a gate complete. Do not paste credentials, setup tokens, private payloads or real resource identifiers into this public document.

@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import { createHostedQaHarness } from "./runtime.mjs";
 import { bridgeRequest, SYNTHETIC_ORIGIN } from "./transport.mjs";
 import { createResponseGate } from "./response-gate.mjs";
+import { observeUpload, uploadResetEvidence } from "./upload-outcome.mjs";
 import { measureMobileAppDensity } from "./mobile-density.mjs";
 import { encodeEvidence, LIMITS } from "../dashboard-qa/evidence.mjs";
 import { verifyKoreanFontUsage } from "../dashboard-qa/fonts.mjs";
@@ -30,8 +31,10 @@ try {
     env: { ...process.env, XDG_CONFIG_HOME: config, XDG_CACHE_HOME: cache, FONTCONFIG_FILE: fontConfig, DEBUG: "", PWDEBUG: "0" } });
   const cdp = await browser.newBrowserCDPSession(); const commandLine = await cdp.send("Browser.getBrowserCommandLine");
   assert.ok(!commandLine.arguments.some(value => /^--(?:no-sandbox|disable-setuid-sandbox|disable-web-security|single-process|ignore-certificate-errors|allow-insecure-localhost)(?:=|$)/.test(value))); await cdp.detach();
-  let externalRequests = 0, pageErrors = 0, bridgeErrors = 0, logRequests = 0, lifecycleRequests = 0;
-  let loseNextBaselineResponse = false, lostReceipt, logoutGate, logGate;
+  let externalRequests = 0, pageErrors = 0, logRequests = 0, lifecycleRequests = 0;
+  const uploadPosts = { source: 0, baseline: 0 }, expectedUploadResets = [], unexpectedBridgeFailures = [], uploadRecovery = [];
+  let initialSourceBoundary, abortNextSourceBeforeDispatch = false;
+  let loseNextBaselineResponse = false, loseNextSourceResponse = false, lostReceipt, lostSourceReceipt, logoutGate, logGate;
   const files = [], captures = [], checks = [], importDigests = [], targetChecks = [];
   let pageScaleEvidence;
   async function sessionPage(clock = false) {
@@ -41,10 +44,31 @@ try {
       if (url.origin !== SYNTHETIC_ORIGIN || url.username || url.password) { externalRequests++; await route.abort(); return; }
       if (/^\/api\/baselines\/[^/]+\/log$/.test(url.pathname)) logRequests++;
       if (/\/(?:run|runs|cancel|bootstrap)(?:\/|$)/.test(url.pathname)) lifecycleRequests++;
+      const kind = request.method() === "POST" && (url.pathname === "/api/sources" ? "source" : url.pathname === "/api/baselines" ? "baseline" : null);
+      if (kind) uploadPosts[kind]++;
+      const boundary = kind === "source" ? initialSourceBoundary : undefined;
+      if (boundary) initialSourceBoundary = undefined; // exactly one prescribed POST, never a retry loop
       try {
-        const response = await bridgeRequest(request, harness.httpFetch);
-        if (loseNextBaselineResponse && url.pathname === "/api/baselines" && request.method() === "POST" && response.status === 201) {
-          loseNextBaselineResponse = false; lostReceipt = JSON.parse(response.body.toString()).id;
+        if (kind === "source" && abortNextSourceBeforeDispatch) {
+          abortNextSourceBeforeDispatch = false; await route.abort("failed"); return;
+        }
+        let response;
+        try { response = await bridgeRequest(request, harness.httpFetch); }
+        catch (error) {
+          const reset = boundary && uploadResetEvidence(error);
+          if (!reset) throw error;
+          assert.deepEqual(request.postDataBuffer(), boundary.bytes);
+          expectedUploadResets.push({ phase: "full-source-after-consumed-missing-CSRF-403", method: request.method(), path: url.pathname,
+            requestBytes: boundary.bytes.length, requestSha256: createHash("sha256").update(boundary.bytes).digest("hex"),
+            previousStatus: 403, previousBodyConsumed: true, commitStatus: "unknown", reset });
+          await route.abort("failed"); return;
+        }
+        if (loseNextBaselineResponse && kind === "baseline" && response.status === 201) {
+          loseNextBaselineResponse = false; lostReceipt = JSON.parse(response.body.toString());
+          await route.abort("failed"); return;
+        }
+        if (loseNextSourceResponse && kind === "source" && response.status === 201) {
+          loseNextSourceResponse = false; lostSourceReceipt = JSON.parse(response.body.toString());
           await route.abort("failed"); return;
         }
         const gate = url.pathname === "/api/auth/logout" ? logoutGate
@@ -52,7 +76,10 @@ try {
         if (gate) {
           try { await gate.hold(); await route.fulfill(response); } finally { gate.finish(); }
         } else await route.fulfill(response);
-      } catch { bridgeErrors++; await route.abort().catch(() => {}); }
+      } catch (error) {
+        unexpectedBridgeFailures.push({ path: url.pathname, method: request.method(), name: error?.name ?? "UnknownError" });
+        await route.abort().catch(() => {});
+      }
     });
     const page = await context.newPage(); page.setDefaultTimeout(15_000); page.on("pageerror", () => { pageErrors++; });
     if (clock) await page.clock.install({ time: new Date() });
@@ -156,7 +183,45 @@ try {
             const metrics = await session.send("Page.getLayoutMetrics");
             if (expired) return null;
             const domScale = await page.evaluate(() => window.visualViewport?.scale);
-            return { metrics, domScale };
+            let pointer;
+            if (samplePhase === "mobile-twofold-page-scale-probe-open-detail" || samplePhase === "mobile-twofold-page-scale-open-detail") {
+              if (expired) return null;
+              const { root } = await session.send("DOM.getDocument", { depth: 0 });
+              if (expired) return null;
+              const { nodeId } = await session.send("DOM.querySelector", { nodeId: root.nodeId, selector: "#flavor-row-sample-4" });
+              if (expired) return null;
+              const { quads } = await session.send("DOM.getContentQuads", { nodeId });
+              if (expired) return null;
+              pointer = await page.evaluate(quad => {
+                const target = document.getElementById("flavor-row-sample-4"), visual = window.visualViewport;
+                const navigation = document.querySelector(".mobile-nav");
+                if (!target || !visual || !Array.isArray(quad) || quad.length !== 8 || !quad.every(Number.isFinite)) return null;
+                const box = target.getBoundingClientRect(), nav = navigation?.getBoundingClientRect();
+                // Sample Playwright 1.58.2's layout-clipped quad candidate. This
+                // is a read-only comparison, not a dispatched pointer event.
+                const xs = [quad[0], quad[2], quad[4], quad[6]], ys = [quad[1], quad[3], quad[5], quad[7]];
+                const x = Math.trunc(xs.reduce((sum, value) => sum + Math.min(Math.max(value, 0), window.innerWidth) / 4, 0) * 100) / 100;
+                const y = Math.trunc(ys.reduce((sum, value) => sum + Math.min(Math.max(value, 0), window.innerHeight) / 4, 0) * 100) / 100;
+                // Hit categories: -1 invalid/no visible intersection; 0 no
+                // element; 1 target/descendant; 2 fixed nav; 3 another element.
+                const hit = (x, y) => {
+                  if (!Number.isFinite(x) || !Number.isFinite(y)) return -1;
+                  const element = document.elementFromPoint(x, y);
+                  return !element ? 0 : target.contains(element) ? 1 : navigation?.contains(element) ? 2 : 3;
+                };
+                const left = Math.max(box.left, visual.offsetLeft), right = Math.min(box.right, visual.offsetLeft + visual.width);
+                const top = Math.max(box.top, visual.offsetTop), bottom = Math.min(box.bottom, visual.offsetTop + visual.height);
+                return { domX: box.x, domY: box.y, domWidth: box.width, domHeight: box.height,
+                  quadLeft: Math.min(...xs), quadTop: Math.min(...ys), quadWidth: Math.max(...xs) - Math.min(...xs), quadHeight: Math.max(...ys) - Math.min(...ys),
+                  quadX: x, quadY: y, quadHit: hit(x, y), offsetQuadHit: hit(x + visual.offsetLeft, y + visual.offsetTop),
+                  scaledQuadHit: hit(x / visual.scale + visual.offsetLeft, y / visual.scale + visual.offsetTop),
+                  domHit: hit(box.x + box.width / 2, box.y + box.height / 2),
+                  visibleWidth: Math.max(0, right - left), visibleHeight: Math.max(0, bottom - top),
+                  visibleHit: right > left && bottom > top ? hit((left + right) / 2, (top + bottom) / 2) : -1,
+                  navX: nav?.x, navY: nav?.y, navWidth: nav?.width, navHeight: nav?.height };
+              }, quads?.[0] ?? []);
+            }
+            return { metrics, domScale, pointer };
           })(),
           new Promise(resolve => { timer = setTimeout(() => { expired = true; resolve(null); }, 500); }),
         ]);
@@ -168,6 +233,13 @@ try {
           visualWidth: numeric(visual?.clientWidth), visualHeight: numeric(visual?.clientHeight),
           visualOffsetX: numeric(visual?.offsetX), visualOffsetY: numeric(visual?.offsetY),
           visualPageX: numeric(visual?.pageX), visualPageY: numeric(visual?.pageY) }));
+        if (observed.pointer !== undefined) {
+          const record = { phase: samplePhase };
+          for (const key of ["domX", "domY", "domWidth", "domHeight", "quadLeft", "quadTop", "quadWidth", "quadHeight",
+            "quadX", "quadY", "quadHit", "offsetQuadHit", "scaledQuadHit", "domHit", "visibleWidth", "visibleHeight", "visibleHit",
+            "navX", "navY", "navWidth", "navHeight"]) record[key] = numeric(observed.pointer?.[key]);
+          console.log("FLORA_HOSTED_QA_SCALE_POINTER " + JSON.stringify(record));
+        }
       } catch { console.log("FLORA_HOSTED_QA_SCALE_METRICS_UNAVAILABLE " + samplePhase); }
       finally { expired = true; clearTimeout(timer); }
     }
@@ -198,6 +270,8 @@ try {
       await search.fill("Sample App 4");
       step("count-filtered");
       assert.equal(await appButtons.count(), 1);
+      step("probe-open-detail");
+      await sample();
       step("open-detail");
       await page.locator("#flavor-row-sample-4").click();
       step("wait-detail");
@@ -254,15 +328,46 @@ try {
     assert.deepEqual(await page.evaluate(() => [localStorage.length, sessionStorage.length]), [0, 0]);
     return cookies.find(cookie => cookie.name === "__Host-flora_session").value;
   }
-  async function upload(page, kind, bytes) {
+  async function uploadOutcome(page, kind, bytes) {
     await ready(page);
     if (kind === "baseline") await navigate(page, "history");
-    const pending = page.waitForResponse(response => new URL(response.url()).pathname === "/api/" + (kind === "source" ? "sources" : "baselines") && response.request().method() === "POST");
-    await page.locator("#" + kind + "-file").setInputFiles({ name: "synthetic-" + kind + ".json", mimeType: "application/json", buffer: bytes });
-    const response = await pending; assert.equal(response.status(), 201);
-    const transported = response.request().postDataBuffer(); assert.deepEqual(transported, bytes, "ORIGINAL_IMPORT_BYTES_REQUIRED");
-    importDigests.push({ kind, bytes: bytes.length, sha256: createHash("sha256").update(transported).digest("hex") });
-    const receipt = await response.json(); await ready(page); return receipt;
+    const pending = observeUpload(page, "/api/" + (kind === "source" ? "sources" : "baselines"));
+    try {
+      await page.locator("#" + kind + "-file").setInputFiles({ name: "synthetic-" + kind + ".json", mimeType: "application/json", buffer: bytes });
+      const outcome = await pending.result;
+      const transported = outcome.request.postDataBuffer(); assert.deepEqual(transported, bytes, "ORIGINAL_IMPORT_BYTES_REQUIRED");
+      importDigests.push({ kind, bytes: bytes.length, sha256: createHash("sha256").update(transported).digest("hex"),
+        outcome: outcome.kind, ...(outcome.kind === "response" ? { status: outcome.response.status() } : { failure: outcome.failure }) });
+      await ready(page); assert.equal(await page.locator("#" + kind + "-file").inputValue(), "");
+      assert.equal(unexpectedBridgeFailures.length, 0, "UNEXPECTED_BRIDGE_FAILURE"); return outcome;
+    } finally { pending.cancel(); }
+  }
+  async function upload(page, kind, bytes) {
+    const outcome = await uploadOutcome(page, kind, bytes); assert.equal(outcome.kind, "response", "UNEXPECTED_UPLOAD_REQUEST_FAILURE");
+    assert.equal(outcome.response.status(), 201); return outcome.response.json();
+  }
+  async function uncertainUpload(page, kind, before) {
+    await page.locator("#notice[role=alert]").filter({ hasText: "반입 완료 여부를 확인하지 못" }).waitFor();
+    assert.equal((await page.locator("#notice").getAttribute("class")).includes("notice-success"), false);
+    assert.equal(await page.locator("#workspace").getAttribute("aria-busy"), "false");
+    assert.equal(await page.locator("#" + kind + "-file").inputValue(), "");
+    assert.equal(await page.locator("#" + kind + "-file").isDisabled(), false);
+    assert.equal(await page.locator("#retry-button").isVisible(), true);
+    assert.equal(uploadPosts[kind], before + 1, "NO_UNSOLICITED_RESUBMISSION");
+  }
+  async function reloadHistory(page) {
+    const before = { ...uploadPosts };
+    const pending = page.waitForResponse(response => new URL(response.url()).pathname === "/api/state" && response.request().method() === "GET");
+    await page.locator("#retry-button").click(); const response = await pending; assert.equal(response.status(), 200);
+    const state = await response.json(); await ready(page);
+    assert.deepEqual(uploadPosts, before, "RETRY_CONTROL_ONLY_RELOADS_HISTORY"); return state;
+  }
+  async function storedState(page, snapshotId) {
+    const result = await page.evaluate(async id => {
+      const response = await fetch("/api/state" + (id ? "?snapshotId=" + encodeURIComponent(id) : ""));
+      return { status: response.status, body: await response.json() };
+    }, snapshotId);
+    assert.equal(result.status, 200); return result.body;
   }
   async function cleared(page) {
     assert.equal(await page.locator("#dashboard-content").isHidden(), true);
@@ -287,14 +392,60 @@ try {
   assert.equal((await authenticate(page, true)).status(), 200); await page.waitForURL(harness.origin + "/"); await ready(page);
   await page.getByText("첫 소스 snapshot을 가져오세요").waitFor(); await both(page, "empty");
   const firstSession = await cookieProof(first.context, page); checks.push("real-scrypt-enrollment", "secure-httponly-strict-host-cookies", "no-browser-credential-storage");
-  assert.equal(await page.evaluate(async () => (await fetch("/api/sources", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).status), 403);
-  checks.push("csrf-required-on-real-write");
+  phase = "source-predispatch-abort-explicit-recovery";
+  const sourceBytes = harness.source(), emptyState = await storedState(page);
+  const beforeAbort = uploadPosts.source; abortNextSourceBeforeDispatch = true;
+  assert.equal((await uploadOutcome(page, "source", sourceBytes)).kind, "requestfailed");
+  assert.equal(abortNextSourceBeforeDispatch, false); await uncertainUpload(page, "source", beforeAbort);
+  assert.deepEqual(await storedState(page), emptyState, "PREDISPATCH_ABORT_MUST_NOT_WRITE");
+  assert.deepEqual(await reloadHistory(page), emptyState);
+  const source = await upload(page, "source", sourceBytes);
+  const firstSourceState = await storedState(page);
+  assert.equal(uploadPosts.source, beforeAbort + 2); assert.equal(firstSourceState.snapshots.items.length, 1);
+  assert.deepEqual(firstSourceState.selected, source);
+  uploadRecovery.push({ scenario: "source-predispatch-abort", commitStatus: "known-no-write", explicitReloads: 1, explicitResubmissions: 1,
+    receiptId: source.id, snapshotCount: 1, originalStateUnchangedBeforeRetry: true });
+  checks.push("predispatch-source-failure-explicit-reload-and-same-file-create-once");
+
+  phase = "full-csrf-rejection-immediate-source-upload";
+  const rejected = await page.evaluate(async bytes => {
+    const response = await fetch("/api/sources", { method: "POST", headers: { "Content-Type": "application/json" }, body: new Uint8Array(bytes) });
+    return { status: response.status, body: await response.json() };
+  }, [...sourceBytes]);
+  assert.deepEqual(rejected, { status: 403, body: { error: "FORBIDDEN" } });
+  initialSourceBoundary = { bytes: sourceBytes }; const beforeInitial = uploadPosts.source;
+  const initialOutcome = await uploadOutcome(page, "source", sourceBytes);
+  assert.equal(initialSourceBoundary, undefined);
+  // Emit the initial outcome before recovery, so a failed later step cannot
+  // erase the characterized failure from the bounded CI log evidence.
+  console.log("FLORA_HOSTED_QA_UPLOAD_OUTCOME " + JSON.stringify({ scenario: "full-source-after-consumed-missing-CSRF-403",
+    requestBytes: sourceBytes.length, initialOutcome: initialOutcome.kind === "response" ? initialOutcome.response.status() : "requestfailed",
+    naturalResetObserved: expectedUploadResets.length === 1, reset: expectedUploadResets[0] ?? null, runtimeFixClaimed: false }));
+  let recoveredSource;
+  if (initialOutcome.kind === "requestfailed") {
+    assert.equal(expectedUploadResets.length, 1, "ONLY_CHARACTERIZED_INITIAL_UPLOAD_RESET_IS_ACCEPTED");
+    await uncertainUpload(page, "source", beforeInitial);
+    const reloaded = await reloadHistory(page); // failure after dispatch never implies no write
+    assert.deepEqual(reloaded, firstSourceState);
+    recoveredSource = await upload(page, "source", sourceBytes);
+    assert.equal(uploadPosts.source, beforeInitial + 2);
+  } else {
+    assert.equal(initialOutcome.response.status(), 201); recoveredSource = await initialOutcome.response.json();
+    assert.equal(expectedUploadResets.length, 0); assert.equal(uploadPosts.source, beforeInitial + 1);
+  }
+  assert.deepEqual(recoveredSource, source); assert.deepEqual(await storedState(page), firstSourceState);
+  uploadRecovery.push({ scenario: "full-source-after-consumed-missing-CSRF-403", requestBytes: sourceBytes.length,
+    initialOutcome: initialOutcome.kind === "response" ? "201" : "requestfailed", naturalResetObserved: expectedUploadResets.length === 1,
+    explicitReloads: initialOutcome.kind === "requestfailed" ? 1 : 0, explicitResubmissions: initialOutcome.kind === "requestfailed" ? 1 : 0,
+    receiptId: source.id, finalSnapshotCount: 1, completeReceiptAndStateUnchanged: true, runtimeFixClaimed: false });
+  checks.push("csrf-required-on-real-full-byte-write", "immediate-source-outcome-and-bounded-explicit-recovery-recorded");
 
   phase = "invalid-upload-and-recovery";
-  const invalidResponse = page.waitForResponse(response => new URL(response.url()).pathname === "/api/sources");
-  await page.locator("#source-file").setInputFiles({ name: "synthetic-invalid.json", mimeType: "application/json", buffer: Buffer.from("{") });
-  assert.equal((await invalidResponse).status(), 400); await page.locator("#notice[role=alert]").waitFor(); await both(page, "upload-error");
-  const source = await upload(page, "source", harness.source()); assert.equal(await page.locator("#snapshot-select").inputValue(), source.id);
+  const invalidOutcome = await uploadOutcome(page, "source", Buffer.from("{"));
+  assert.equal(invalidOutcome.kind, "response"); assert.equal(invalidOutcome.response.status(), 400);
+  await page.locator("#notice[role=alert]").waitFor(); await both(page, "upload-error");
+  assert.deepEqual(await upload(page, "source", sourceBytes), source);
+  assert.equal(await page.locator("#snapshot-select").inputValue(), source.id);
   phase = "apps-search-sort-pagination-and-detail";
   await navigate(page, "apps");
   const appButtons = page.locator('#app-rows button[id^="flavor-row-"]');
@@ -368,12 +519,21 @@ try {
 
   phase = "lost-response-idempotent-recovery";
   await navigate(page, "history");
+  const beforeBaselineLoss = await storedState(page), beforeLostPost = uploadPosts.baseline;
   const lostBytes = await harness.baseline(0, 2); loseNextBaselineResponse = true;
-  await page.locator("#baseline-file").setInputFiles({ name: "synthetic-baseline.json", mimeType: "application/json", buffer: lostBytes });
-  await page.locator("#notice[role=alert]").filter({ hasText: "반입 완료 여부" }).waitFor(); assert.ok(lostReceipt);
-  await page.locator("#retry-button").click(); await ready(page); assert.equal(await page.locator("#baseline-history .record").count(), 2);
-  assert.equal((await upload(page, "baseline", lostBytes)).id, lostReceipt);
-  assert.equal(await page.locator("#baseline-history .record").count(), 2); checks.push("lost-real-commit-response-retry-preserves-receipt");
+  assert.equal((await uploadOutcome(page, "baseline", lostBytes)).kind, "requestfailed");
+  await uncertainUpload(page, "baseline", beforeLostPost); assert.ok(lostReceipt); assert.equal(loseNextBaselineResponse, false);
+  const baselineAfterLoss = await reloadHistory(page);
+  assert.deepEqual(baselineAfterLoss.selected, beforeBaselineLoss.selected);
+  assert.deepEqual(baselineAfterLoss.history.items.find(item => item.id === baseline.id), beforeBaselineLoss.history.items[0]);
+  assert.equal(baselineAfterLoss.history.items.length, 2);
+  assert.equal(baselineAfterLoss.history.items.find(item => item.id === lostReceipt.id).evidenceDigest, createHash("sha256").update(lostBytes).digest("hex"));
+  assert.deepEqual(await upload(page, "baseline", lostBytes), lostReceipt);
+  assert.deepEqual(await storedState(page), baselineAfterLoss); assert.equal(uploadPosts.baseline, beforeLostPost + 2);
+  assert.equal(await page.locator("#baseline-history .record").count(), 2);
+  uploadRecovery.push({ scenario: "baseline-response-lost-after-real-commit", commitStatus: "known-committed", receiptId: lostReceipt.id,
+    explicitReloads: 1, explicitResubmissions: 1, originalRecordUnchanged: true, completeReceiptAndStateUnchanged: true, historyCount: 2 });
+  checks.push("lost-real-baseline-commit-response-retry-preserves-complete-receipt-and-state");
 
   phase = "history-and-snapshot-pagination";
   for (let attempt = 3; attempt <= 21; attempt++) await upload(page, "baseline", await harness.baseline(0, attempt));
@@ -382,6 +542,24 @@ try {
   await page.locator("#history-next").click(); await ready(page); assert.equal(await page.locator("#baseline-history .record").count(), 1);
   await mobileTargets(page, "history-previous-page", ["#history-previous"]);
   await page.locator("#history-previous").click(); await ready(page); assert.equal(await page.locator("#baseline-history .record").count(), 20);
+  phase = "source-response-lost-after-real-commit";
+  const beforeSourceLoss = await storedState(page), beforeSourcePost = uploadPosts.source;
+  const lostSourceBytes = harness.source(1); loseNextSourceResponse = true;
+  assert.equal((await uploadOutcome(page, "source", lostSourceBytes)).kind, "requestfailed");
+  await uncertainUpload(page, "source", beforeSourcePost); assert.ok(lostSourceReceipt); assert.equal(loseNextSourceResponse, false);
+  const retainedSource = await reloadHistory(page);
+  assert.deepEqual(retainedSource.selected, beforeSourceLoss.selected); assert.deepEqual(retainedSource.history, beforeSourceLoss.history);
+  const sourceAfterLoss = await storedState(page);
+  assert.deepEqual(sourceAfterLoss.selected, lostSourceReceipt); assert.equal(sourceAfterLoss.snapshots.items.length, 2);
+  assert.deepEqual(await upload(page, "source", lostSourceBytes), lostSourceReceipt);
+  assert.deepEqual(await storedState(page), sourceAfterLoss); assert.equal(uploadPosts.source, beforeSourcePost + 2);
+  const originalSourceAfterRetry = await storedState(page, source.id);
+  assert.deepEqual(originalSourceAfterRetry.selected, beforeSourceLoss.selected); assert.deepEqual(originalSourceAfterRetry.history, beforeSourceLoss.history);
+  uploadRecovery.push({ scenario: "source-response-lost-after-real-commit", commitStatus: "known-committed", receiptId: lostSourceReceipt.id,
+    explicitReloads: 1, explicitResubmissions: 1, originalSourceAndHistoryUnchanged: true, completeReceiptAndStateUnchanged: true, snapshotCount: 2 });
+  checks.push("lost-real-source-commit-response-retry-preserves-complete-receipt-and-state");
+
+  phase = "snapshot-pagination";
   for (let index = 1; index <= 20; index++) await upload(page, "source", harness.source(index));
   await navigate(page, "sources");
   const newestId = await page.locator("#snapshot-select").inputValue();
@@ -447,10 +625,11 @@ try {
   await second.page.clock.fastForward(expiresAt - browserNow + 1);
   await second.page.locator("#notice[role=alert]").filter({ hasText: "만료" }).waitFor(); await cleared(second.page);
   await both(second.page, "expired"); checks.push("browser-clock-absolute-expiry-clears-dom");
-  assert.equal(externalRequests, 0); assert.equal(harness.outboundRequests(), 0); assert.equal(pageErrors, 0); assert.equal(bridgeErrors, 0); assert.equal(lifecycleRequests, 0);
+  assert.equal(externalRequests, 0); assert.equal(harness.outboundRequests(), 0); assert.equal(pageErrors, 0); assert.equal(unexpectedBridgeFailures.length, 0); assert.ok(expectedUploadResets.length <= 1); assert.equal(lifecycleRequests, 0);
+  assert.equal(captures.length, 15); assert.equal(files.length, 15);
   files.push({ name: "synthetic-hosted-evidence.json", bytes: Buffer.from(JSON.stringify({ syntheticOnly: true, commit: process.env.GITHUB_SHA,
     browser: await browser.version(), browserSandboxRequested: true, unsafeSandboxFlagsAbsent: true,
-    sourceEvidence: harness.sourceEvidence, importDigests, targetChecks, pageScaleEvidence,
+    sourceEvidence: harness.sourceEvidence, importDigests, targetChecks, pageScaleEvidence, uploadRecovery, expectedUploadResets,
     visualTarget: {
       desktop: { sha256: "87822d71c7531c20e038955642279c79eba9cf9bb8bc1c48b7560cc25086d813", width: 1487, height: 1058 },
       mobile: { sha256: "828923f82f1337aca78ee2eabb79c969c5083d8876362995b2d9430c886f7617", sourceWidth: 853, sourceHeight: 1844, viewportWidth: 390, viewportHeight: 844 },
@@ -461,7 +640,7 @@ try {
     },
     transport: "synthetic HTTPS interception via ordinary local HTTP into production Worker, SQLite DO and D1; real response cookies",
     unverified: ["workerd#7634 rejected-upload transport risk", "deployed upload rejection/retry recovery", "deployed DNS/TLS", "Cloudflare Free account/resource capacity", "deployed CPU/memory/latency", "wall-clock server expiry during browser run", "native pinch gesture", "OS text zoom", "browser toolbar zoom"],
-    externalRequests, workerOutboundRequests: harness.outboundRequests(), pageErrors, bridgeErrors, lifecycleRequests, captures, checks }, null, 2)) });
+    externalRequests, workerOutboundRequests: harness.outboundRequests(), pageErrors, unexpectedBridgeFailures, uploadPosts, lifecycleRequests, captures, checks }, null, 2)) });
   phase = "evidence-encoding";
   for (const line of encodeEvidence(files, process.env.GITHUB_SHA)) console.log(line);
   console.log("FLORA_HOSTED_QA_SUMMARY: synthetic hosted composition passed; inspect decoded pixels before visual approval; deployed DNS/TLS and performance unverified");

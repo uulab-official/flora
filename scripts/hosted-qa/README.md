@@ -56,16 +56,52 @@ request bytes, and always uses manual redirects. It does not create a custom
 connection pool, force a fresh socket, delay, or retry a request. The production
 Worker, auth DO, D1, admission rules, and response attributes are unchanged.
 
-That acceptance test sends the complete CSRF-rejected source followed by a valid
-source and baseline upload. It also deliberately loses delivery after a real
-committed HTTP write, checks that existing records remain intact, and verifies
-that an explicit same-envelope retry returns the same receipt without another
-record. This deliberate delivery failure is separate from a runtime reset. The
-browser already checks its corresponding uncertain-result notice, explicit
-reload/reupload, receipt identity, and two-record count without another capture.
+That acceptance test preserves the complete source POST without CSRF, consumes
+its 403, and immediately posts the identical original bytes with valid CSRF.
+Only at this initial normal-HTTP POST boundary, a real cause-chain code of
+`ECONNRESET` or `UND_ERR_SOCKET` may enter the bounded user-recovery scenario.
+The original failure chain, request size and previous response are reported. The
+scenario performs one explicit history reload and one identical-file submission;
+any reload or resubmission failure fails the gate. No automatic retry, delay,
+fresh-connection override or denied-body drain is added. A first-attempt 201
+reports `naturalResetObserved: false` and recovery as not exercised. Neither
+outcome is evidence that the runtime defect is fixed.
+
+A request failure after dispatch has unknown commit status. The reloaded state
+can contain zero or one source; resubmission must leave exactly one, retaining
+the complete first receipt, timestamps and provenance when already committed.
+Separate source and baseline scenarios deliberately drop delivery after a real
+201 commit. Their identical-file resubmissions must return the complete original
+receipt and leave the complete stored state unchanged. Existing sources and
+baseline records, including their timestamps and evidence digests, are compared
+before and after recovery. These controlled losses are not natural-reset proof.
+
+The browser observer accepts either the matching POST response or the matching
+`requestfailed` event, with a bounded deadline and no abandoned event listeners.
+Its deterministic first-source abort occurs before dispatch, so only that case
+asserts exact no-write state. The UI must show its actual uncertain-result alert,
+release busy state, clear the file input and issue no second POST. Clicking the
+existing retry button must perform only a history GET; explicit file reselection
+then creates exactly one source. The full-byte missing-CSRF/immediate-valid-POST
+sequence follows against that first receipt, so it also proves retained-state
+recovery without adding screenshots. Its natural-reset outcome is reported
+separately from deterministic abort and post-commit response-loss evidence.
+Only that one initial POST can classify the two known reset codes as expected;
+all other bridge exceptions, including further resets, fail the gate.
+
+The narrow UI matrix separately checks network uncertainty, 403 and 401 for both
+file types. A 403 is permission denial before body import, preserves the last
+verified UI and does not revoke the session. A 401 clears private DOM, selections,
+logs and file inputs, disables controls and fences late responses. It is not a
+no-write assertion: the auth authority can recheck after D1 commits. Existing
+Worker commit/revocation tests and fresh-session same-file client recovery cover
+that distinction. QA request outcomes never become stored failed assessments.
 
 The former `dispatchFetch` composition remains executable as a separate
-characterization, with the same real API sequence and response-consumption gate:
+characterization, with the same real API sequence and response-consumption gate.
+It remains strict: its first transport reset fails the test and never enters the
+HTTP recovery acceptance branch. These characterization commands are manual:
+
 
 ```sh
 FLORA_HOSTED_QA_TRANSPORT=dispatch node --test --test-name-pattern=composition tests/hosted-qa.test.ts
@@ -91,7 +127,8 @@ Node 24.19.0's native fetch uses undici 7.29.0; no dependency version was change
 
 [workerd issue #7634](https://github.com/cloudflare/workerd/issues/7634) independently
 reports the same class of unread-body/service-binding reset and remains open.
-The actual hosted composition also failed on Linux and macOS. Reading its 18
+The actual hosted composition also failed on Linux and macOS; ordinary native
+HTTP reproduced the immediate valid-source reset on Windows and macOS as well. Reading its 18
 previously unread response bodies was necessary cleanup, but did not eliminate
 this reset. Do not remove the characterization, weaken pre-auth admission, drain
 denied production uploads, or label an HTTP acceptance pass as a runtime fix.
@@ -130,6 +167,8 @@ through Chrome DevTools, then checks horizontal overflow.
 
 - Public login, rejected setup token, real enrollment, private empty state
 - Cleared auth fields, unchanged Unicode/whitespace password, real cookies and CSRF
+- Deterministic pre-dispatch first-source abort, unchanged storage, GET-only user reload, and explicit same-file creation of exactly one receipt
+- Full original-source CSRF rejection followed immediately by valid upload; observed natural outcome and bounded explicit recovery recorded
 - Invalid JSON upload followed by successful original source/baseline file imports
 - Eleven declared flavors from one source; searchable and sortable ten-row table,
   source filtering, empty search, paging, selected-flavor detail and close
@@ -137,13 +176,13 @@ through Chrome DevTools, then checks horizontal overflow.
   declared version with explicitly unconnected deployment, error and revenue
 - Original upload byte equality, exact original-baseline envelope digest, lazy
   logs, keyboard focus, measured 44px mobile targets and 2× CDP page scaling
-- A dropped response after a real committed baseline write, reload, and duplicate retry preserving the receipt
+- Dropped responses after real source and baseline commits; explicit reload/reselection preserves complete receipts, original provenance and stored state
 - Twenty-entry history pages with 21 baseline records and 21 source snapshots; selected snapshot retained across pages
 - A consumed setup token rejected in a second independent browser context, password login, and revisiting the same D1 records/log
 - Private DOM clearing while actual logout and earlier private-log responses are held behind bounded gates; late private response cannot refill the DOM
 - Real browser-cookie revocation and the other session still authorized
 - Absolute-expiry DOM clearing using only the second browser's test clock
-- No page exceptions, bridge failures, app outbound network or run/cancel/bootstrap calls
+- No page exceptions, unexpected bridge failures, app outbound network or run/cancel/bootstrap calls; at most one narrowly classified initial upload reset with its actual cause evidence
 
 Fifteen bounded viewport PNGs are captured: desktop login and app detail;
 desktop/mobile empty, upload error, Apps, Source, logout and expiry; mobile

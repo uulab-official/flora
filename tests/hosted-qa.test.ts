@@ -154,7 +154,7 @@ test("hosted mobile QA requires measured disclosures, pagination and observed pa
 // Run only the real scale helper, without importing the CI-only browser runner.
 // Browser calls are replaced here to inject failures; these tests prove safe
 // diagnostics and cleanup, not Chromium scaling or pointer actionability.
-async function scaleDiagnosticHarness(failAt?: string, failCleanup = false, stallSample?: "cdp" | "dom") {
+async function scaleDiagnosticHarness(failAt?: string, failCleanup = false, stallSample?: "cdp" | "dom" | "pointer-cdp" | "pointer-dom") {
   const capture = await readFile(new URL("../scripts/hosted-qa/capture.mjs", import.meta.url), "utf8");
   const start = capture.indexOf("  async function twofoldPageScale(");
   const end = capture.indexOf("  async function authenticate(", start);
@@ -175,6 +175,12 @@ async function scaleDiagnosticHarness(failAt?: string, failCleanup = false, stal
     send: async (method: string, args?: { pageScaleFactor: number }) => {
       operation();
       if (failed && stallSample === "cdp" && method === "Page.getLayoutMetrics") await stalled();
+      if (method === "DOM.getDocument") return { root: { nodeId: 1 } };
+      if (method === "DOM.querySelector") return { nodeId: 2 };
+      if (method === "DOM.getContentQuads") {
+        if (failed && stallSample === "pointer-cdp") await stalled();
+        return { quads: [[0, 20, 500, 20, 500, 154, 0, 154]], private: "private-quad" };
+      }
       if (method === "Emulation.setPageScaleFactor") scale = args!.pageScaleFactor;
       return { cssLayoutViewport: { clientWidth: 390, clientHeight: 844, secret: "private-layout" },
         cssVisualViewport: { scale, clientWidth: 390 / scale, clientHeight: 844 / scale,
@@ -189,8 +195,19 @@ async function scaleDiagnosticHarness(failAt?: string, failCleanup = false, stal
     waitFor: async () => operation(), isHidden: async () => { operation(); return true; },
   };
   const page = { context: () => ({ newCDPSession: async () => { operation(); return session; } }),
-    waitForFunction: async () => operation(), evaluate: async () => {
-      operation(); if (failed && stallSample === "dom") await stalled(); return scale;
+    waitForFunction: async () => operation(), evaluate: async (fn: unknown, argument?: unknown) => {
+      operation(); if (failed && stallSample === "dom") await stalled();
+      if (Array.isArray(argument)) {
+        if (failed && stallSample === "pointer-dom") await stalled();
+        const target = { getBoundingClientRect: () => ({ x: 16, y: 400, left: 16, top: 400, right: 266, bottom: 467, width: 250, height: 67 }),
+          contains: (hit: unknown) => hit === target };
+        const nav = { getBoundingClientRect: () => ({ x: 0, y: 779, width: 390, height: 65 }), contains: () => false };
+        const document = { getElementById: () => target, querySelector: () => nav,
+          elementFromPoint: (x: number, y: number) => x >= 16 && x <= 266 && y >= 400 && y <= 467 ? target : {} };
+        return runInNewContext("(" + String(fn) + ")(quad)", { document, quad: argument,
+          window: { innerWidth: 390, innerHeight: 844, visualViewport: { scale: 2, offsetLeft: 16, offsetTop: 390, width: 195, height: 422 } } });
+      }
+      return scale;
     },
     locator: () => control };
   const appButtons = { count: async () => { operation(); return filtered ? 1 : 10; } };
@@ -202,7 +219,7 @@ async function scaleDiagnosticHarness(failAt?: string, failCleanup = false, stal
 test("page-scale diagnostics emit static subphases and only bounded numeric viewport fields", async () => {
   const harness = await scaleDiagnosticHarness(); await harness.run();
   for (const step of ["attach", "request-twofold", "observe-twofold", "read-layout", "validate-layout", "scroll-search",
-    "trial-search", "fill-search", "count-filtered", "open-detail", "wait-detail", "close-detail", "check-detail-hidden",
+    "trial-search", "fill-search", "count-filtered", "probe-open-detail", "open-detail", "wait-detail", "close-detail", "check-detail-hidden",
     "clear-search", "count-restored", "observe-retained", "restore-request", "restore-observe", "detach", "read-restored"]) {
     assert.ok(harness.lines.includes("FLORA_HOSTED_QA_SCALE_STEP mobile-twofold-page-scale-" + step), step);
   }
@@ -238,18 +255,42 @@ test("page-scale diagnostics retain the failed interaction phase through reset a
   assert.ok(doubleFailure.calls.includes("detach-called"));
 });
 
-for (const source of ["cdp", "dom"] as const) test("stalled " + source + " diagnostic sampling cannot block scale cleanup", async () => {
-  const harness = await scaleDiagnosticHarness("trial-search", false, source);
+test("pointer diagnostics compare protocol and DOM coordinates using only numeric geometry and hit categories", async () => {
+  const harness = await scaleDiagnosticHarness("open-detail");
+  await assert.rejects(harness.run(), error => error === harness.failure);
+  const records = harness.lines.filter(line => line.startsWith("FLORA_HOSTED_QA_SCALE_POINTER "));
+  assert.equal(records.length, 2, "Sample before the pointer action and after its failure");
+  for (const line of records) {
+    const record = JSON.parse(line.slice("FLORA_HOSTED_QA_SCALE_POINTER ".length));
+    assert.deepEqual(Object.keys(record).sort(), ["phase", "domX", "domY", "domWidth", "domHeight", "quadLeft", "quadTop", "quadWidth", "quadHeight",
+      "quadX", "quadY", "quadHit", "offsetQuadHit", "scaledQuadHit", "domHit", "visibleWidth", "visibleHeight", "visibleHit",
+      "navX", "navY", "navWidth", "navHeight"].sort());
+    assert.ok(["mobile-twofold-page-scale-probe-open-detail", "mobile-twofold-page-scale-open-detail"].includes(record.phase));
+    assert.equal(record.domX, 16); assert.equal(record.domY, 400);
+    assert.equal(record.quadX, 195); assert.equal(record.quadY, 87);
+    assert.equal(record.quadHit, 3); assert.equal(record.scaledQuadHit, 1);
+    assert.equal(record.domHit, 1); assert.equal(record.visibleHit, 1);
+    assert.equal(record.visibleWidth, 195); assert.equal(record.visibleHeight, 67);
+    for (const [key, value] of Object.entries(record)) if (key !== "phase") {
+      assert.ok(value === null || (typeof value === "number" && Number.isFinite(value) && Math.abs(value) <= 1_000_000));
+    }
+  }
+  assert.ok(!harness.lines.join("\n").includes("private"));
+});
+
+for (const source of ["cdp", "dom", "pointer-cdp", "pointer-dom"] as const) test("stalled " + source + " diagnostic sampling cannot block scale cleanup", async () => {
+  const failedStep = source.startsWith("pointer-") ? "open-detail" : "trial-search";
+  const harness = await scaleDiagnosticHarness(failedStep, false, source);
   let deadline: ReturnType<typeof setTimeout> | undefined;
   try {
     const bounded = Promise.race([harness.run(), new Promise<never>((_, reject) => {
       deadline = setTimeout(() => reject(new Error("DIAGNOSTIC_BLOCKED_CLEANUP")), 1500);
     })]);
     await assert.rejects(bounded, error => error === harness.failure);
-    assert.equal(harness.scope.phase, "mobile-twofold-page-scale-trial-search");
+    assert.equal(harness.scope.phase, "mobile-twofold-page-scale-" + failedStep);
     assert.ok(harness.calls.includes("mobile-twofold-page-scale-restore-request"));
     assert.ok(harness.calls.includes("detach-called"));
-    assert.ok(harness.lines.includes("FLORA_HOSTED_QA_SCALE_METRICS_UNAVAILABLE mobile-twofold-page-scale-trial-search"));
+    assert.ok(harness.lines.includes("FLORA_HOSTED_QA_SCALE_METRICS_UNAVAILABLE mobile-twofold-page-scale-" + failedStep));
     assert.equal(harness.scope.checks.length, 0);
     const lines = [...harness.lines], calls = [...harness.calls];
     harness.releaseSample();
@@ -260,7 +301,7 @@ for (const source of ["cdp", "dom"] as const) test("stalled " + source + " diagn
 });
 
 const compositionTransport = process.env.FLORA_HOSTED_QA_TRANSPORT ?? "http";
-test("hosted " + compositionTransport + " composition requires real enrollment, preserves original import receipts and revokes sessions", async () => {
+test("hosted " + compositionTransport + " composition requires real enrollment, preserves original import receipts and revokes sessions", async t => {
   const { createHostedQaHarness } = await import("../scripts/hosted-qa/runtime.mjs");
   const harness = await createHostedQaHarness();
   try {
@@ -268,6 +309,7 @@ test("hosted " + compositionTransport + " composition requires real enrollment, 
     assert.ok(["http", "dispatch"].includes(compositionTransport), "Choose http acceptance or dispatch characterization explicitly");
     const send = compositionTransport === "dispatch" ? harness.dispatchFetch : harness.httpFetch;
     const { createHash } = await import("node:crypto");
+    const { uploadResetEvidence } = await import("../scripts/hosted-qa/upload-outcome.mjs");
     assert.ok(harness.sourceEvidence, "The runtime must identify the exact rendered Worker and asset bytes");
     assert.match(harness.sourceEvidence.workerSha256, /^[a-f0-9]{64}$/);
     for (const [name, digest] of Object.entries(harness.sourceEvidence.assetSha256)) assert.equal(digest, createHash("sha256").update(await readFile(new URL("../packages/cloudflare/public/" + name, import.meta.url))).digest("hex"));
@@ -330,42 +372,88 @@ test("hosted " + compositionTransport + " composition requires real enrollment, 
     await expectJson(await call("/api/auth/enroll", setup), 403, { error: "SETUP_UNAVAILABLE" });
     const empty = await (await call("/api/state", undefined, auth)).json() as { selected: unknown; snapshots: { items: unknown[] } };
     assert.equal(empty.selected, null); assert.equal(empty.snapshots.items.length, 0);
-    await expectJson(await call("/api/sources", harness.source(), { Cookie: auth.Cookie }), 403, { error: "FORBIDDEN" });
-    const source = await call("/api/sources", harness.source(), auth); assert.equal(source.status, 201);
+    const sourceBytes = harness.source();
+    await expectJson(await call("/api/sources", sourceBytes, { Cookie: auth.Cookie }), 403, { error: "FORBIDDEN" });
+    // Keep this immediate full-byte POST boundary intact. Only normal HTTP
+    // acceptance may evaluate one explicit user recovery after its known reset;
+    // dispatch characterization must still fail on the original transport error.
+    let source: Awaited<ReturnType<typeof call>>;
+    let afterUnknownSource: import("../packages/cloudflare/src/contracts.ts").HostedState | undefined;
+    let initialReset: ReturnType<typeof uploadResetEvidence> = null;
+    try { source = await call("/api/sources", sourceBytes, auth); }
+    catch (error) {
+      initialReset = uploadResetEvidence(error);
+      if (compositionTransport !== "http" || !initialReset) throw error;
+      t.diagnostic(JSON.stringify({ boundary: "full-source-after-consumed-missing-CSRF-403", transport: compositionTransport,
+        requestBytes: sourceBytes.length, initialOutcome: "requestfailed", commitStatus: "unknown", reset: initialReset }));
+      // This is the user's prescribed history reload, never a hidden POST retry.
+      const reloaded = await call("/api/state", undefined, auth); assert.equal(reloaded.status, 200);
+      afterUnknownSource = await reloaded.json() as typeof afterUnknownSource;
+      assert.ok(afterUnknownSource); assert.ok(afterUnknownSource.snapshots.items.length <= 1);
+      assert.equal(Boolean(afterUnknownSource.selected), afterUnknownSource.snapshots.items.length === 1);
+      assert.equal(afterUnknownSource.history.items.length, 0);
+      source = await call("/api/sources", sourceBytes, auth); // one identical-file resubmission; any failure fails the gate
+    }
+    assert.equal(source.status, 201);
     const selected = await source.json() as import("@app-ops/dogfood").InventorySnapshot;
+    const sourceState = await (await call("/api/state", undefined, auth)).json() as import("../packages/cloudflare/src/contracts.ts").HostedState;
+    assert.equal(sourceState.snapshots.items.length, 1); assert.deepEqual(sourceState.selected, selected);
+    if (afterUnknownSource?.selected) assert.deepEqual(sourceState, afterUnknownSource, "A reset after commit must retain the first receipt, timestamps and provenance");
+    t.diagnostic(JSON.stringify({ boundary: "full-source-after-consumed-missing-CSRF-403", transport: compositionTransport,
+      requestBytes: sourceBytes.length, initialOutcome: initialReset ? "requestfailed" : "201",
+      naturalResetObserved: Boolean(initialReset), explicitRecovery: initialReset ? "one-reload-one-identical-resubmit-passed" : "not-exercised", runtimeFixClaimed: false }));
+    const sourceDuplicate = await call("/api/sources", sourceBytes, auth); assert.equal(sourceDuplicate.status, 201);
+    assert.deepEqual(await sourceDuplicate.json(), selected);
+    assert.deepEqual(await (await call("/api/state", undefined, auth)).json(), sourceState);
     const baselineBytes = await harness.baseline();
     const baseline = await call("/api/baselines?snapshotId=" + selected.id, baselineBytes, auth); assert.equal(baseline.status, 201);
     const receipt = await baseline.json() as { id: string; evidence: { evidenceDigest: string } };
     const duplicate = await call("/api/baselines?snapshotId=" + selected.id, baselineBytes, auth);
-    assert.equal(duplicate.status, 201); assert.equal((await duplicate.json() as { id: string }).id, receipt.id);
+    assert.equal(duplicate.status, 201); assert.deepEqual(await duplicate.json(), receipt);
     let state = await (await call("/api/state", undefined, auth)).json() as { selected: { id: string }; history: { items: { id: string; evidenceDigest: string }[] } };
     assert.equal(state.selected.id, selected.id); assert.equal(state.history.items.length, 1);
     assert.equal(state.history.items[0]!.evidenceDigest, createHash("sha256").update(baselineBytes).digest("hex"));
     // Lose only delivery after a real HTTP write and response. This is a
     // controlled transport failure, not a claim that workerd's reset is fixed.
-    const lostBytes = await harness.baseline(0, 2); let lostReceipt: string | undefined;
+    const lostBytes = await harness.baseline(0, 2); let lostReceipt: typeof receipt | undefined;
     await assert.rejects(async () => {
       const committed = await call("/api/baselines?snapshotId=" + selected.id, lostBytes, auth);
       assert.equal(committed.status, 201);
-      lostReceipt = (await committed.json() as { id: string }).id;
+      lostReceipt = await committed.json() as typeof receipt;
       throw new Error("SYNTHETIC_RESPONSE_LOST_AFTER_COMMIT");
     }, /SYNTHETIC_RESPONSE_LOST_AFTER_COMMIT/);
     const afterLoss = await (await call("/api/state", undefined, auth)).json() as typeof state;
     assert.equal(afterLoss.selected.id, selected.id); assert.equal(afterLoss.history.items.length, 2);
     assert.deepEqual(afterLoss.history.items.find(item => item.id === receipt.id), state.history.items[0]);
-    assert.equal(afterLoss.history.items.find(item => item.id === lostReceipt)?.evidenceDigest, createHash("sha256").update(lostBytes).digest("hex"));
+    assert.equal(afterLoss.history.items.find(item => item.id === lostReceipt?.id)?.evidenceDigest, createHash("sha256").update(lostBytes).digest("hex"));
     // An explicit same-envelope user retry must return the committed receipt.
     const retried = await call("/api/baselines?snapshotId=" + selected.id, lostBytes, auth);
-    assert.equal(retried.status, 201); assert.equal((await retried.json() as { id: string }).id, lostReceipt);
+    assert.equal(retried.status, 201); assert.deepEqual(await retried.json(), lostReceipt);
     state = await (await call("/api/state", undefined, auth)).json() as typeof state;
     assert.deepEqual(state, afterLoss);
+    // A real new source commit also survives lost delivery. The original source
+    // and its baseline history remain unchanged, including all first provenance.
+    const nextSourceBytes = harness.source(1); let lostSource: typeof selected | undefined;
+    await assert.rejects(async () => {
+      const committed = await call("/api/sources", nextSourceBytes, auth); assert.equal(committed.status, 201);
+      lostSource = await committed.json() as typeof selected;
+      throw new Error("SYNTHETIC_SOURCE_RESPONSE_LOST_AFTER_COMMIT");
+    }, /SYNTHETIC_SOURCE_RESPONSE_LOST_AFTER_COMMIT/);
+    const sourceAfterLoss = await (await call("/api/state", undefined, auth)).json() as typeof sourceState;
+    assert.equal(sourceAfterLoss.snapshots.items.length, 2); assert.deepEqual(sourceAfterLoss.selected, lostSource);
+    const oldSource = await (await call("/api/state?snapshotId=" + selected.id, undefined, auth)).json() as typeof sourceState;
+    assert.deepEqual(oldSource.selected, selected); assert.deepEqual(oldSource.history, afterLoss.history);
+    const recoveredSource = await call("/api/sources", nextSourceBytes, auth); assert.equal(recoveredSource.status, 201);
+    assert.deepEqual(await recoveredSource.json(), lostSource);
+    assert.deepEqual(await (await call("/api/state", undefined, auth)).json(), sourceAfterLoss);
+    state = sourceAfterLoss as typeof state;
     const second = await call("/api/auth/login", JSON.stringify({ email: harness.email, password: harness.password })); assert.equal(second.status, 200);
     const secondCookie = second.headers.getSetCookie().map(value => value.split(";", 1)[0]).join("; ");
     assert.notEqual(secondCookie, auth.Cookie);
     const secondSession = await second.json() as { csrfToken: string; expiresAt: number };
     assert.notEqual(secondSession.csrfToken, session.csrfToken);
     assert.ok(secondSession.expiresAt > Date.now());
-    assert.equal((await (await call("/api/state", undefined, { Cookie: secondCookie })).json() as { selected: { id: string } }).selected.id, selected.id);
+    assert.equal((await (await call("/api/state", undefined, { Cookie: secondCookie })).json() as { selected: { id: string } }).selected.id, state.selected.id);
     await expectJson(await call("/api/auth/logout", "{}", auth), 200, { ok: true });
     await expectJson(await call("/api/state", undefined, auth), 401, { error: "UNAUTHENTICATED" });
     for (const path of ["/", "/app.js", "/app.css"]) await expectJson(await call(path, undefined, auth), 401, { error: "UNAUTHENTICATED" });
