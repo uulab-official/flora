@@ -1,3 +1,4 @@
+import { verifySurfaceDepth } from "./surface-depth.mjs";
 import assert from "node:assert/strict";
 import { access, mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -43,10 +44,11 @@ try {
     const heading = await fontCdp.send("DOM.querySelector", { nodeId: root.root.nodeId, selector: "h1" });
     const actualFonts = await fontCdp.send("CSS.getPlatformFontsForNode", { nodeId: heading.nodeId });
     const koreanFont = verifyKoreanFontUsage(actualFonts.fonts, await page.locator("h1").innerText());
+    const surfaceDepth = await verifySurfaceDepth(page);
     const bytes = await page.screenshot({ type: "png", fullPage, animations: "disabled" });
     assert.ok(bytes.length <= LIMITS.fileBytes, "SCREENSHOT_BYTE_LIMIT"); files.push({ name: `synthetic-${name}.png`, bytes });
     assert.ok(files.reduce((sum, file) => sum + file.bytes.length, 0) <= LIMITS.totalBytes, "EVIDENCE_TOTAL_BYTE_LIMIT");
-    captures.push({ name, viewport: page.viewportSize(), fullPage, horizontalOverflow: false, koreanFont });
+    captures.push({ name, viewport: page.viewportSize(), fullPage, horizontalOverflow: false, surfaceDepth, koreanFont });
   }
   async function both(name, fullPage = false) {
     await page.setViewportSize({ width: 1440, height: 1050 }); await capture("desktop-" + name, fullPage);

@@ -121,3 +121,46 @@ test("render gate verifies actual Korean font glyph usage rather than advertised
   assert.match(capture, /CSS\.getPlatformFontsForNode/); assert.match(capture, /FONTCONFIG_FILE: fontConfig/);
   assert.ok(!capture.includes("document.fonts.check"));
 });
+
+// Removing elevation from any shipped surface must fail before visual review.
+test("local, hosted and auth surfaces share restrained elevation and preserve motion preferences", () => {
+  const styles = ["packages/dashboard/public/app.css", "packages/cloudflare/public/app.css", "packages/cloudflare/public/auth.css"].map(path => readFileSync(new URL("../" + path, import.meta.url), "utf8"));
+  const tokens = ["--shadow-control", "--shadow-panel", "--shadow-raised", "--shadow-primary", "--shadow-primary-hover", "--shadow-nav"];
+  for (const token of tokens) {
+    const values = styles.map(css => css.match(new RegExp(token + ":([^;}]+)"))?.[1]);
+    assert.ok(values[0], `Missing elevation token ${token}`);
+    assert.deepEqual(values, [values[0], values[0], values[0]], `${token} differs between shipped UIs`);
+  }
+  for (const css of styles) {
+    assert.match(css, /box-shadow:var\(--shadow-panel\)/);
+    assert.match(css, /box-shadow:var\(--shadow-primary\)/);
+    assert.match(css, /box-shadow:var\(--shadow-primary-hover\)/);
+    assert.match(css, /@media\(prefers-reduced-motion:no-preference\)\{[^{}]+\{[^{}]*transition:[^{}]*box-shadow/);
+    assert.match(css, /:disabled[^{}]*\{[^{}]*box-shadow:none/);
+    assert.ok(!/transition:\s*all\b|transform:\s*translate/.test(css), "Elevation must not shift dense rows or animate arbitrary properties");
+  }
+  assert.match(styles[1]!, /\.app-open:focus-visible\{outline-offset:-3px\}/, "Keyboard ring must remain inside the clipped table");
+  assert.match(styles[1]!, /@media\(max-width:760px\)\{\.app-table-shell\{box-shadow:none\}/, "Mobile rows retain the compact borderless list");
+});
+
+test("both browser render gates check actual elevation, reduced motion and stable geometry", () => {
+  for (const path of ["dashboard-qa", "hosted-qa"]) {
+    const driver = readFileSync(new URL(`../scripts/${path}/capture.mjs`, import.meta.url), "utf8");
+    assert.match(driver, /await verifySurfaceDepth\(page\)/);
+    assert.match(driver, /captures\.push\(\{[^\n]*surfaceDepth/);
+  }
+  const verifier = readFileSync(new URL("../scripts/dashboard-qa/surface-depth.mjs", import.meta.url), "utf8");
+  assert.match(verifier, /getComputedStyle\(node\)/);
+  assert.match(verifier, /reducedMotion: "reduce"/);
+  assert.match(verifier, /REDUCED_MOTION/);
+  assert.match(verifier, /ELEVATION_MUST_NOT_CHANGE_LAYOUT/);
+});
+
+test("disabled elevation resets outrank primary hover and pagination controls", () => {
+  for (const path of ["packages/dashboard/public/app.css", "packages/cloudflare/public/app.css"]) {
+    const css = readFileSync(new URL("../" + path, import.meta.url), "utf8");
+    assert.match(css, /\.primary:disabled:hover[^{}]*\{box-shadow:none\}/);
+  }
+  const hosted = readFileSync(new URL("../packages/cloudflare/public/app.css", import.meta.url), "utf8");
+  assert.match(hosted, /\.pagination \.icon-button:disabled[^{}]*\{box-shadow:none\}/);
+});
