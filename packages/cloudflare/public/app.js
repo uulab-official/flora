@@ -23,9 +23,9 @@ export async function startClient(env) {
   let currentView = "apps"; let appPage = 0; let filteredCount = 0; let detailTrigger = null; const pageSize = 10;
   const requests = new Set(); const logs = new Map();
 
-  function notice(text = "", error = false, retry = false) {
+  function notice(text = "", error = false, retry = false, success = false) {
     node("notice").textContent = text; node("notice").hidden = !text;
-    node("notice").className = "notice" + (error ? " notice-error" : ""); node("notice").setAttribute("role", error ? "alert" : "status");
+    node("notice").className = "notice" + (error ? " notice-error" : success ? " notice-success" : ""); node("notice").setAttribute("role", error ? "alert" : "status");
     node("retry-button").hidden = !retry || closed;
   }
   function controls() {
@@ -250,7 +250,7 @@ export async function startClient(env) {
       if (typeof receipt?.id !== "string" || !receipt.id || (kind === "baseline" && receipt.snapshotId !== selectedId)) throw new Error("INVALID_RECEIPT");
       if (kind === "source") { selectedId = receipt.id; snapshotCursors = [null]; }
       historyCursors = [null];
-      const ready = await refresh(); if (ready && !closed) notice("반입한 결과를 저장된 이력에서 확인했습니다. 사용자 반입 증거로 표시됩니다.");
+      const ready = await refresh(); if (ready && !closed) notice("반입 완료 · 사용자 반입 이력에서 확인됨", false, false, true);
     } catch (error) { if (!closed && version === generation) failure(error, true); }
     finally { busy = false; node(kind === "source" ? "source-file" : "baseline-file").value = ""; if (!closed) controls(); }
   }

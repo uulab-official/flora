@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import { createHostedQaHarness } from "./runtime.mjs";
 import { bridgeRequest, SYNTHETIC_ORIGIN } from "./transport.mjs";
 import { createResponseGate } from "./response-gate.mjs";
+import { measureMobileAppDensity } from "./mobile-density.mjs";
 import { encodeEvidence, LIMITS } from "../dashboard-qa/evidence.mjs";
 import { verifyKoreanFontUsage } from "../dashboard-qa/fonts.mjs";
 
@@ -71,6 +72,24 @@ try {
     const heading = await fontCdp.send("DOM.querySelector", { nodeId: root.root.nodeId, selector: "h1" });
     const actualFonts = await fontCdp.send("CSS.getPlatformFontsForNode", { nodeId: heading.nodeId });
     const koreanFont = verifyKoreanFontUsage(actualFonts.fonts, await page.locator("h1").innerText()); await fontCdp.detach();
+    let appDensity;
+    if (name === "mobile-apps") {
+      assert.equal(await page.locator("#app-sort").inputValue(), "name-asc");
+      assert.equal(await page.locator("#app-search").inputValue(), "");
+      assert.equal(await page.locator("#app-source-filter").inputValue(), "all");
+      assert.equal(await page.locator("#app-detail").isHidden(), true);
+      assert.match(await page.locator("#app-page-number").innerText(), /^1 \/ /);
+      // Read the same unmodified viewport as the canonical screenshot below.
+      // No row is scrolled into view to satisfy the density threshold.
+      const rows = await page.locator("#app-rows tr").all();
+      appDensity = measureMobileAppDensity({
+        viewport: page.viewportSize(),
+        ...await page.evaluate(() => ({ scale: window.visualViewport?.scale, scrollY: window.scrollY })),
+        navigation: await page.locator(".mobile-nav").boundingBox(),
+        rows: await Promise.all(rows.map(row => row.boundingBox())),
+      });
+      checks.push("at-least-four-complete-mobile-app-rows");
+    }
     const bytes = await page.screenshot({ type: "png", fullPage, animations: "disabled" });
     assert.ok(bytes.length <= LIMITS.fileBytes, "SCREENSHOT_BYTE_LIMIT"); files.push({ name: `synthetic-hosted-${name}.png`, bytes });
     assert.ok(files.length < LIMITS.files && files.reduce((sum, file) => sum + file.bytes.length, 0) <= LIMITS.totalBytes, "EVIDENCE_TOTAL_BYTE_LIMIT");
@@ -79,7 +98,7 @@ try {
       assert.ok(typography.bodyPx >= 13 && typography.bodyPx <= 14, "DENSE_BODY_TYPE_REQUIRED");
       assert.ok(typography.headingPx >= 20 && typography.headingPx <= 22, "DENSE_HEADING_TYPE_REQUIRED");
     }
-    captures.push({ name, viewport: page.viewportSize(), fullPage, horizontalOverflow: false, koreanFont, typography });
+    captures.push({ name, viewport: page.viewportSize(), fullPage, horizontalOverflow: false, koreanFont, typography, ...(appDensity ? { appDensity } : {}) });
   }
   async function both(page, name, fullPage = false) {
     await page.setViewportSize({ width: 1487, height: 1058 }); await capture(page, "desktop-" + name, fullPage);
@@ -362,7 +381,7 @@ try {
       mobile: { sha256: "828923f82f1337aca78ee2eabb79c969c5083d8876362995b2d9430c886f7617", sourceWidth: 853, sourceHeight: 1844, viewportWidth: 390, viewportHeight: 844 },
       state: "apps; 11 declared flavors; 1 source; 1 source-scoped baseline; Sample App 4 selected; detail closed; empty search; ascending app name; first page",
       approvedRefinement: "13–14px body, minimum 12px auxiliary text, 20–22px heading, denser rows and unknown deployment/error/revenue comparisons",
-      referenceNormalization: "Mobile reference proportionally normalizes to 390×843; capture is 390×844. Density refinement intentionally shows more rows than the original reference.",
+      referenceNormalization: "Mobile reference proportionally normalizes to 390×843; capture is 390×844. Density gate requires at least four complete mobile app rows above the fixed navigation.",
       pixelReview: "required after decoding; interaction assertions alone are not visual approval",
     },
     transport: "synthetic HTTPS route interception into production Worker, SQLite DO and D1; real response cookies",

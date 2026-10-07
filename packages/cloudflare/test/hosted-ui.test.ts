@@ -242,8 +242,30 @@ test("baseline_receipt_must_match_selected_snapshot_before_success", async () =>
   for (const receipt of [{}, { ...record(), snapshotId: "wrong_snapshot" }]) {
     const app = await controller(state(), async url => url.startsWith("/api/baselines?") ? response(receipt) : undefined);
     await app.client.importFile("baseline", new File(["{}"], "synthetic.json"));
-    assert.ok(app.document.getElementById("notice").textContent.includes("확인하지 못")); assert.ok(!app.document.getElementById("notice").textContent.includes("저장된 이력에서 확인했습니다")); app.client.close();
+    assert.ok(app.document.getElementById("notice").textContent.includes("확인하지 못")); assert.ok(!app.document.getElementById("notice").className.includes("notice-success")); app.client.close();
   }
+});
+test("compact_import_confirmation_never_hides_loading_failure_or_expiry_status", async () => {
+  let nextRead: ReturnType<typeof deferred<any>> | undefined;
+  const readStarted = deferred<void>();
+  const app = await controller(state(), async url => {
+    if (url === "/api/sources") return response(state().selected);
+    if (url.startsWith("/api/state") && nextRead) { readStarted.resolve(); return nextRead.promise; }
+  });
+  await app.client.importFile("source", new File(["{}"], "synthetic.json"));
+  const notice = app.document.getElementById("notice");
+  assert.equal(notice.hidden, false); assert.equal(notice.getAttribute("role"), "status");
+  assert.ok(notice.className.includes("notice-success")); assert.ok(notice.textContent.includes("사용자 반입"));
+  nextRead = deferred<any>(); const refreshing = app.client.refresh(); await readStarted.promise;
+  assert.equal(notice.hidden, false); assert.ok(!notice.className.includes("notice-success")); assert.ok(notice.textContent.includes("불러오는 중"));
+  nextRead.resolve(response({ error: "UNAVAILABLE" }, 503)); await refreshing;
+  assert.equal(notice.hidden, false); assert.equal(notice.getAttribute("role"), "alert");
+  assert.ok(!notice.className.includes("notice-success")); assert.equal(app.document.getElementById("retry-button").hidden, false);
+  nextRead = undefined; await app.client.importFile("source", new File(["{}"], "synthetic.json"));
+  assert.ok(notice.className.includes("notice-success"));
+  app.setTime(now + 3_600_000); [...app.timers.values()][0]!.callback();
+  assert.equal(notice.hidden, false); assert.equal(notice.getAttribute("role"), "alert");
+  assert.ok(!notice.className.includes("notice-success")); assert.ok(notice.textContent.includes("만료")); app.client.close();
 });
 test("malformed_session_never_reveals_state_or_navigates", async () => {
   const app = await controller(state(), async url => url === "/api/auth/session" ? response({ csrfToken: "", expiresAt: now + 1000 }) : undefined);

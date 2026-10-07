@@ -3,6 +3,47 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { bridgeRequest, SYNTHETIC_ORIGIN } from "../scripts/hosted-qa/transport.mjs";
 import { createResponseGate } from "../scripts/hosted-qa/response-gate.mjs";
+import { measureMobileAppDensity } from "../scripts/hosted-qa/mobile-density.mjs";
+
+// These are viewport-relative CSS-pixel boxes, as returned by Playwright.
+const mobileDensity = (firstRowY = 418) => ({
+  viewport: { width: 390, height: 844 }, scale: 1, scrollY: 0,
+  navigation: { x: 0, y: 779, width: 390, height: 65 },
+  rows: Array.from({ length: 10 }, (_, index) => ({ x: 16, y: firstRowY + index * 68, width: 358, height: 68 })),
+});
+
+test("mobile density counts only complete rows above the fixed navigation", () => {
+  assert.deepEqual(measureMobileAppDensity(mobileDensity(418)), {
+    viewport: { width: 390, height: 844 }, scale: 1, scrollY: 0,
+    firstRowY: 418, navigationTop: 779, visibleBottom: 779, completeVisibleRows: 5, minimumCompleteRows: 4,
+  });
+  assert.equal(measureMobileAppDensity(mobileDensity(507)).completeVisibleRows, 4);
+  assert.throws(() => measureMobileAppDensity(mobileDensity(508)), /MOBILE_APP_DENSITY_REQUIRED: 3 complete rows/);
+  // The reviewed defect: two full rows at y616, with row three under the nav.
+  assert.throws(() => measureMobileAppDensity(mobileDensity(616)), /MOBILE_APP_DENSITY_REQUIRED: 2 complete rows/);
+});
+
+test("mobile density excludes viewport clipping and hidden or zero-size rows", () => {
+  const evidence = mobileDensity(418);
+  evidence.rows[0]!.x = -1; evidence.rows[1]!.width = 375;
+  evidence.rows[2]!.y = -1; evidence.rows[3]!.height = 0;
+  assert.throws(() => measureMobileAppDensity(evidence), /MOBILE_APP_DENSITY_REQUIRED: 1 complete rows/);
+  const outside = mobileDensity(508); outside.navigation.y = 830; outside.navigation.height = 14;
+  assert.equal(measureMobileAppDensity(outside).completeVisibleRows, 4);
+});
+
+test("mobile density rejects invalid geometry and noncanonical viewports or scroll", () => {
+  for (const invalid of [NaN, Infinity, -Infinity, 1_000_001]) {
+    const evidence = mobileDensity(); evidence.rows[0]!.y = invalid;
+    assert.throws(() => measureMobileAppDensity(evidence), /INVALID_MOBILE_DENSITY_EVIDENCE/);
+  }
+  for (const changed of [
+    { viewport: { width: 391, height: 844 } }, { scale: 2 }, { scrollY: 1 },
+    { navigation: null }, { navigation: { x: 0, y: 779, width: 0, height: 65 } },
+    { rows: [] }, { rows: Array(101).fill({ x: 0, y: 0, width: 1, height: 1 }) },
+    { rows: [null] }, { rows: [{ x: 0, y: 0, width: -1, height: 1 }] },
+  ]) assert.throws(() => measureMobileAppDensity({ ...mobileDensity(), ...changed }), /INVALID_MOBILE_DENSITY_EVIDENCE/);
+});
 
 test("only exact generic brand and icon assets are public", async () => {
   const { routeRequest, HttpFailure } = await import("../packages/cloudflare/dist/http.js");
