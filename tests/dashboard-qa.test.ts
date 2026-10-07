@@ -164,3 +164,10 @@ test("disabled elevation resets outrank primary hover and pagination controls", 
   const hosted = readFileSync(new URL("../packages/cloudflare/public/app.css", import.meta.url), "utf8");
   assert.match(hosted, /\.pagination \.icon-button:disabled[^{}]*\{box-shadow:none\}/);
 });
+
+test("switching to reduced motion cancels in-flight control transitions", () => {
+  for (const path of ["packages/dashboard/public/app.css", "packages/cloudflare/public/app.css", "packages/cloudflare/public/auth.css"]) {
+    const css = readFileSync(new URL("../" + path, import.meta.url), "utf8");
+    assert.match(css, /@media\(prefers-reduced-motion:reduce\)\{button,\.button,a\{transition:none\}\}/);
+  }
+});

@@ -10,3 +10,6 @@ input,select{box-shadow:var(--shadow-control)}
 button{box-shadow:var(--shadow-primary)}
 button:disabled{box-shadow:none}
 @media(prefers-reduced-motion:no-preference){button{transition:background-color .15s ease,box-shadow .15s ease}}
+
+/* Cancel an in-flight transition when the motion preference changes. */
+@media(prefers-reduced-motion:reduce){button,.button,a{transition:none}}

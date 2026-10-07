@@ -19,7 +19,8 @@ browser/OS control; no custom popup or dialog is introduced.
 Keyboard focus uses a separate 3px outline, with the app-row outline inset so
 the desktop table cannot clip it. Disabled actions and pagination controls are
 flat, including while hovered. Shadow transitions run only when the user has
-not requested reduced motion.
+not requested reduced motion. Switching that preference also cancels any
+in-flight control transition.
 
 `pnpm check` covers token parity, cascade guards and existing contrast checks.
 Both synthetic browser gates record computed surface shadows, disabled hover,

@@ -30,3 +30,6 @@
 .app-open:focus-visible{outline-offset:-3px}
 button:disabled,.primary:disabled:hover,.pagination .icon-button:disabled,.import-action:has(input:disabled) .button{box-shadow:none}
 @media(max-width:760px){.app-table-shell{box-shadow:none}.mobile-nav{box-shadow:var(--shadow-nav)}}
+
+/* Cancel an in-flight transition when the motion preference changes. */
+@media(prefers-reduced-motion:reduce){button,.button,a{transition:none}}

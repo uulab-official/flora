@@ -11,3 +11,6 @@
 .secondary,select{box-shadow:var(--shadow-control)}
 .empty-card{box-shadow:var(--shadow-panel)}
 button:disabled,.primary:disabled:hover,.import-action:has(.file-input:disabled) label,.actions:has(.file-input:disabled) label{box-shadow:none}
+
+/* Cancel an in-flight transition when the motion preference changes. */
+@media(prefers-reduced-motion:reduce){button,.button,a{transition:none}}
