@@ -1,10 +1,14 @@
 # 로컬 Foundation 실행
 
+[처음 실행하기](../getting-started.ko.md) · [English quick start](../../README.en.md#try-the-local-foundation)
+
+처음 받았다면 시작 가이드의 준비·예상 결과·문제 해결 순서를 따릅니다. 이 문서는 CLI와 데이터·보안 계약을 더 자세히 설명하는 reference입니다.
+
 Foundation 0A는 실제 TypeScript·SQLite·CLI 구현이다. 아래 흐름에는 계정, secret 값, native compiler 또는 Cloudflare 계정이 필요하지 않다. 생성되는 artifact는 작은 synthetic JSON의 metadata이며 실제 앱 binary가 아니다.
 
 ## 준비와 설치
 
-검증 기준 버전은 Node.js 24.19.0 / pnpm 11.19.0이다. Node는 공식 설치 경로를 사용하고 `.node-version` / `.nvmrc`와 맞춘다. 기존 pnpm이 없으면 global 설치 없이 npm exec를 사용할 수 있다.
+검증 기준 버전은 Node.js 24.19.0 / pnpm 11.19.0이다. Node는 [해당 버전의 공식 설치 경로](https://nodejs.org/en/download/archive/v24.19.0)를 사용하고 `.node-version` / `.nvmrc`와 맞춘다. Git과 Node에 포함된 npm이 필요하다. 기존 pnpm이 없으면 global 설치 없이 npm exec를 사용할 수 있다.
 
 ```sh
 git clone https://github.com/uulab-official/flora.git
@@ -13,7 +17,7 @@ npm exec --yes --package=pnpm@11.19.0 -- pnpm install --frozen-lockfile --ignore
 npm exec --yes --package=pnpm@11.19.0 -- pnpm check
 ```
 
-이후 예시의 `pnpm`이 PATH에 없다면 동일한 `npm exec --yes --package=pnpm@11.19.0 -- pnpm` 접두어를 쓴다. Corepack이나 이미 설치된 정확한 버전의 pnpm도 사용할 수 있다. lifecycle install script는 필요하지 않다. 실제 credential을 `.env`에 넣거나 로그인할 필요가 없다.
+이후 예시의 `pnpm`이 PATH에 없다면 동일한 `npm exec --yes --package=pnpm@11.19.0 -- pnpm` 접두어를 쓴다. Windows에서 `npm.ps1`이 차단되면 `npm.cmd`를 사용한다. Corepack이나 이미 설치된 정확한 버전의 pnpm도 사용할 수 있다. lifecycle install script는 필요하지 않다. 실제 credential을 `.env`에 넣거나 로그인할 필요가 없다. CLI 전에 `check`로 source를 build한다. `verify:clean`은 Git의 추적 파일 목록을 사용하므로 ZIP이 아닌 Git clone에서 실행한다.
 
 ## 명령
 
@@ -26,7 +30,7 @@ pnpm platform job simulate --file examples/local-workflow.json --scenario unsafe
 pnpm verify:clean
 ```
 
-- doctor: OS/architecture/Node/pnpm 및 Xcode·Java·Git 진단. 미설치 도구를 설치하거나 라이선스에 동의하지 않는다. native build 검증 완료를 주장하지 않는다
+- doctor: OS/architecture/Node/pnpm 및 Xcode·Java·Git 진단. 종료 코드 0이어도 모든 도구가 준비되었다는 뜻은 아니다. 미설치 도구를 설치하거나 라이선스에 동의하지 않는다. Xcode/Java는 이 로컬 체험의 필수 조건이 아니며 `nativeBuildVerified`는 false다
 - config validate: source/target/scope 검사, 결정적인 SHA-256 snapshot ID. 값 대신 key와 버전 참조만 출력한다
 - happy-path: 실제 로컬 SQLite에 Job/lease/attempt/synthetic artifact/Release timeline을 연결한다
 - runner-replacement: A의 lease 만료, B의 새 fence, A의 오래된 완료 거부를 검증한다. 거부 결과는 `rejectedOperations`에 표시한다. 실패한 transaction의 audit를 성공 event처럼 저장하지 않는다
@@ -51,7 +55,7 @@ Job claim/cancel/complete는 SQLite transaction과 조건부 상태 변경으로
 
 SQL FK·trigger와 모든 adapter connection의 `recursive_triggers=ON`으로 일반 UPDATE/DELETE/REPLACE 경로에서 immutable provenance와 terminal attempts를 보호한다. DB administrator가 PRAGMA/trigger를 변경할 수 없다는 의미는 아니다. 이 라이브러리는 인터넷 인증·RBAC boundary가 아니다. operator authorization context는 신뢰된 호출자가 제공하는 내부 계약이다.
 
-Node SQLite는 사용 중인 버전에서 release-candidate API다. 현재는 로컬 reference adapter이며 Cloudflare D1 운영 검증을 대체하지 않는다. polling/Queue/Vault/로그 전송/실제 Runner daemon은 후속 단계다.
+[Node 24.19.0 SQLite](https://nodejs.org/download/release/v24.19.0/docs/api/sqlite.html)는 release-candidate API다. 현재는 로컬 reference adapter이며 Cloudflare D1 운영 검증을 대체하지 않는다. polling/Queue/Vault/로그 전송/실제 Runner daemon은 후속 단계다.
 
 ## 검증 범위
 

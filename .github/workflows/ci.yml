@@ -23,9 +23,18 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24.19.0
-      - run: npm install --global pnpm@11.19.0 --ignore-scripts
-      - run: pnpm install --frozen-lockfile --ignore-scripts
-      - run: pnpm check
-      - run: pnpm doctor:toolchain
-      - run: pnpm verify:clean
+      - run: node --version
+      - run: npm --version
+      - run: git --version
+      - run: npm exec --yes --package=pnpm@11.19.0 -- pnpm --version
+      - run: npm exec --yes --package=pnpm@11.19.0 -- pnpm install --frozen-lockfile --ignore-scripts
+      - run: npm exec --yes --package=pnpm@11.19.0 -- pnpm check
+      - run: npm exec --yes --package=pnpm@11.19.0 -- pnpm platform --help
+      - run: npm exec --yes --package=pnpm@11.19.0 -- pnpm platform doctor --json
+      - run: npm exec --yes --package=pnpm@11.19.0 -- pnpm platform config validate --file examples/local-workflow.json
+      - run: npm exec --yes --package=pnpm@11.19.0 -- pnpm platform job simulate --file examples/local-workflow.json --scenario happy-path
+      - run: npm exec --yes --package=pnpm@11.19.0 -- pnpm platform job simulate --file examples/local-workflow.json --scenario runner-replacement
+      - run: npm exec --yes --package=pnpm@11.19.0 -- pnpm platform job simulate --file examples/local-workflow.json --scenario unsafe-expiry
+      - run: npm exec --yes --package=pnpm@11.19.0 -- pnpm doctor:toolchain
+      - run: npm exec --yes --package=pnpm@11.19.0 -- pnpm verify:clean
       - run: git diff --exit-code

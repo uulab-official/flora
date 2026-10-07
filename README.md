@@ -1,5 +1,7 @@
 # Flora
 
+[한국어](README.md) · [English](README.en.md)
+
 **Open Source App Operations Platform**
 
 > Your apps. Your runners. Your cloud. Your control.
@@ -16,17 +18,27 @@ Flora는 iOS, Android, Web 앱의 빌드·서명·환경설정·스토어·OTA·
 
 **현재 상태: 로컬 Foundation 구현.** 타깃 검증, 설정 스냅샷, SQLite Job/lease/fence, synthetic artifact·Release 이력과 CLI가 구현되었습니다. 로그인, 실제 Runner daemon/native build, Vault, OTA, 스토어 업로드, Cloudflare 배포, Dashboard와 AI 코드 수정은 아직 구현되지 않았습니다.
 
-[로컬 설치·실행 가이드](docs/development/local-foundation.ko.md)의 명령은 실행할 수 있습니다. 제품 기획서의 나머지 명령·화면은 향후 목표입니다.
+[처음 실행하기: 준비 → 설치 → 결과 확인 → 문제 해결](docs/getting-started.ko.md)부터 따라 해보세요. 지금 체험하는 것은 **터미널에서 동작하는 로컬 Foundation**입니다. 웹 화면이나 접속 URL은 아직 없으며, 기획서의 나머지 명령·화면은 향후 목표입니다.
+
+## 지금 직접 실행하기
+
+먼저 [Node.js 24.19.0](https://nodejs.org/en/download/archive/v24.19.0)과 [Git](https://git-scm.com/install/)을 준비합니다. Node에 포함된 npm을 사용하므로 pnpm 전역 설치는 필요 없습니다. macOS/Linux 터미널, Windows PowerShell 또는 명령 프롬프트에서 한 줄씩 실행합니다.
 
 ```sh
-pnpm install --frozen-lockfile --ignore-scripts
-pnpm check
-pnpm platform job simulate --file examples/local-workflow.json --scenario runner-replacement
+git clone https://github.com/uulab-official/flora.git
+cd flora
+npm exec --yes --package=pnpm@11.19.0 -- pnpm install --frozen-lockfile --ignore-scripts
+npm exec --yes --package=pnpm@11.19.0 -- pnpm check
+npm exec --yes --package=pnpm@11.19.0 -- pnpm platform job simulate --file examples/local-workflow.json --scenario runner-replacement
 ```
 
-Node 24.19.0 / pnpm 11.19.0 기준입니다. 기존 pnpm 없이 시작하는 방법도 실행 가이드에 있습니다. 실제 클라우드 리소스나 credential을 만들지 않습니다.
+확인할 결과는 `check`의 **48 tests / 48 pass / 0 fail**, simulation의 `mode: "local-simulation"`, Job의 `status: "success"`, `attemptCount: 2`, `fence: 2`, `rejectedOperations`의 `LEASE_STALE`입니다. 오래된 실행권을 거부한 정상 결과이며 실제 앱 빌드 성공이 아닙니다. 임시 SQLite DB는 실행이 끝나면 제거됩니다.
+
+Windows에서 `npm.ps1` 실행 정책 오류가 나면 위 명령의 `npm`만 `npm.cmd`로 바꾸세요. 보안 정책을 낮출 필요가 없습니다. [전체 시작 가이드](docs/getting-started.ko.md)에 정확한 예상 출력과 복구 방법이 있습니다. API key·로그인·클라우드 계정은 필요하지 않습니다. 최초 설치는 공개 패키지를 내려받으므로 인터넷 연결이 필요합니다.
 
 ## 문서
+
+처음 방문했다면 [한국어 시작 가이드](docs/getting-started.ko.md) / [English quick start](README.en.md#try-the-local-foundation) → [CLI·데이터 계약 상세](docs/development/local-foundation.ko.md) 순서로 읽습니다.
 
 1. [왜 만드는가: 개발 의도와 제품 원칙](docs/product/intent.ko.md)
 2. [통합 기획서: 전체 제품 범위](docs/product/integrated-plan.ko.md)
