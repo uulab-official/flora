@@ -19,6 +19,10 @@ on:
       - 'scripts/build-cloudflare.mjs'
       - 'scripts/dashboard-qa/**'
       - 'scripts/hosted-qa/**'
+      - 'docs/development/password-hosting.ko.md'
+      - 'docs/release/password-hosting-evidence.md'
+      - 'README.md'
+      - 'README.en.md'
       - '.github/workflows/hosted-rendered.yml'
   workflow_dispatch:
 permissions:

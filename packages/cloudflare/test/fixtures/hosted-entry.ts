@@ -126,6 +126,24 @@ export class HostedFixtureAuth {
 export default {
   async fetch(request: Request, env: FloraEnv): Promise<Response> {
     const path = new URL(request.url).pathname;
+    if (path === "/__test/declared-size-probe") {
+      // Test metadata rejection inside workerd: a huge known-length TCP upload may
+      // otherwise reset the local emulator socket when the front rejects it unread.
+      const input = await request.json() as { path: string; length: number };
+      let reads = 0, authorityCalls = 0;
+      const body = new ReadableStream<Uint8Array>({ pull(controller) {
+        reads++; controller.error(new Error("Unexpected declared-oversize body read"));
+      } }, { highWaterMark: 0 });
+      const headers = new Headers(request.headers);
+      headers.set("Content-Length", String(input.length));
+      const result = await worker.fetch(new Request(env.FLORA_ORIGIN + input.path, { method: "POST", headers, body }), {
+        ...env, ASSETS: assetBinding as unknown as FloraEnv["ASSETS"], FLORA_AUTH: {
+          idFromName() { authorityCalls++; throw new Error("Unexpected declared-oversize authority call"); },
+          get() { throw new Error("Unexpected declared-oversize authority lookup"); },
+        } as unknown as FloraEnv["FLORA_AUTH"],
+      });
+      return Response.json({ status: result.status, body: await result.json(), reads, authorityCalls });
+    }
     if (path === "/__test/front-probe") {
       let calls = 0, sameRequest = false, reads = 0;
       const body = new ReadableStream<Uint8Array>({ pull(c) { reads++; c.error(new Error("Front touched upload")); } }, { highWaterMark: 0 });

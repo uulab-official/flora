@@ -184,14 +184,23 @@ test("csrf_survives_reload_and_concurrent_tabs", async t => {
 
 test("storage_failure_never_authenticates", async t => {
   const cap = capability(), h = await harness(t, cap.setup), first = await enroll(h, cap);
-  await h.control({ failStorage: true });
-  for (const response of [await h.call("/api/auth/session", undefined, { Cookie: first.cookie }), await h.call("/api/auth/login", { email, password: first.secret })]) {
+  const injected = await h.control({ failStorage: true });
+  assert.equal(injected.status, 200);
+  assert.equal(await injected.text(), "ok");
+  const deniedSession = await h.call("/api/auth/session", undefined, { Cookie: first.cookie });
+  const deniedLogin = await h.call("/__test/auth-before-body", { email, password: first.secret });
+  for (const response of [deniedSession, deniedLogin]) {
     assert.equal(response.status, 503);
     assert.deepEqual(await response.json(), { error: "AUTH_UNAVAILABLE" });
     assert.equal(response.headers.getSetCookie().length, 0);
   }
-  await h.control({ failStorage: false });
-  assert.equal((await h.call("/api/auth/session", undefined, { Cookie: first.cookie })).status, 200);
+  assert.equal(deniedLogin.headers.get("X-Flora-Test-Body-Reads"), "0");
+  const restored = await h.control({ failStorage: false });
+  assert.equal(restored.status, 200);
+  assert.equal(await restored.text(), "ok");
+  const current = await h.call("/api/auth/session", undefined, { Cookie: first.cookie });
+  assert.equal(current.status, 200);
+  assert.deepEqual(await current.json(), first.data);
 });
 
 test("configured_identity_and_exact_origin_fail_closed", async t => {

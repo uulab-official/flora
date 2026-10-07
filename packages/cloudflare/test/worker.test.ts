@@ -3,7 +3,7 @@ import type { TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
 import { access, readFile } from "node:fs/promises";
-import { createTestRuntime } from "./runtime.ts";
+import { createTestRuntime, streamedTestBody } from "./runtime.ts";
 import { bundleBytes, syntheticBaseline, syntheticSourceBundle } from "../../../tests/dogfood-fixtures.ts";
 import { parseSourceBundle } from "@app-ops/dogfood";
 import type { HostedState } from "../src/contracts.ts";
@@ -21,7 +21,7 @@ async function harness(t: TestContext) {
   await runtime.d1.exec(migration.replace(/^--.*$/gm, "").split(/;\s*(?=CREATE|INSERT|PRAGMA|$)/).filter(s => s.trim()).map(s => s.replace(/\s*\n\s*/g, " ").trim() + ";").join("\n"));
   await runtime.d1.prepare("INSERT INTO flora_deployment(singleton,owner_id,origin,db_identity) VALUES(1,?,?,?)").bind("synthetic-owner", origin, "synthetic-db").run();
   let cookie = "", csrf = "";
-  const call = (path: string, body?: string | Uint8Array, headers: Record<string, string> = {}, method = body === undefined ? "GET" : "POST") => runtime.fetch(origin + path, { method, headers: { Cookie: cookie, ...(body === undefined ? {} : { Origin: origin, "Content-Type": "application/json", "X-Flora-CSRF": csrf }), ...headers }, ...(body === undefined ? {} : { body }) });
+  const call = (path: string, body?: string | Uint8Array | ReadableStream<Uint8Array>, headers: Record<string, string> = {}, method = body === undefined ? "GET" : "POST") => runtime.fetch(origin + path, { method, headers: { Cookie: cookie, ...(body === undefined ? {} : { Origin: origin, "Content-Type": "application/json", "X-Flora-CSRF": csrf }), ...headers }, ...(body === undefined ? {} : { body, duplex: "half" }) });
   const control = async (body: unknown) => call("/__test/control", JSON.stringify(body));
   const enroll = await call("/api/auth/enroll", JSON.stringify({ email, password: secret, confirmation: secret, token: token.toString("base64url") }));
   assert.equal(enroll.status, 200);
@@ -157,7 +157,12 @@ test("body_limits_are_exact", async t => {
   const snapshot = await (await h.call("/api/sources", bundleBytes(syntheticSourceBundle()))).json() as { id: string };
   for (const [path, limit] of [["/api/sources", 1048576], ["/api/baselines?snapshotId=" + snapshot.id, 131072], ["/api/head", 4096]] as const) {
     assert.equal((await h.call(path, " ".repeat(limit))).status, 400, path);
-    assert.equal((await h.call(path, " ".repeat(limit + 1))).status, 413, path);
+    const oversized = await h.call(path, streamedTestBody(" ".repeat(limit + 1)));
+    assert.equal(oversized.status, 413, path);
+    assert.deepEqual(await oversized.json(), { error: "BODY_TOO_LARGE" }, path);
+    const declared = await h.call("/__test/declared-size-probe", JSON.stringify({ path, length: limit + 1 }));
+    assert.equal(declared.status, 200, path);
+    assert.deepEqual(await declared.json(), { status: 413, body: { error: "BODY_TOO_LARGE" }, reads: 0, authorityCalls: 0 }, path);
   }
   const response = await h.call("/__test/body-probe", undefined, { "X-Flora-CSRF": h.csrf });
   assert.deepEqual(await response.json(), { missing: 400, lying: 413, mismatched: 400, cancelled: 400, writes: 1 });

@@ -6,7 +6,7 @@ import type { D1Database } from "@cloudflare/workers-types";
 import type { InventorySnapshot } from "@app-ops/dogfood";
 import type { HostedState, SafeLog } from "../src/contracts.ts";
 import { bundleBytes, replaceSourceFile, syntheticBaseline, syntheticSourceBundle } from "../../../tests/dogfood-fixtures.ts";
-import { createTestRuntime } from "./runtime.ts";
+import { createTestRuntime, streamedTestBody } from "./runtime.ts";
 
 const origin = "https://flora.example.test", email = "owner@example.test", start = 1_800_000_000_000;
 const sourceLimit = 1_048_576, baselineLimit = 131_072, responseLimit = 1_048_576;
@@ -51,10 +51,10 @@ async function harness(t: test.TestContext) {
   await db.prepare("INSERT INTO flora_deployment(singleton,owner_id,origin,db_identity) VALUES(1,?,?,?)")
     .bind("synthetic-owner", origin, "synthetic-db").run();
   let jar = "", csrf = "";
-  const call = (path: string, body?: Uint8Array | string, headers: Record<string, string> = {}) => runtime.fetch(origin + path, {
+  const call = (path: string, body?: Uint8Array | string | ReadableStream<Uint8Array>, headers: Record<string, string> = {}) => runtime.fetch(origin + path, {
     method: body === undefined ? "GET" : "POST",
     headers: { Cookie: jar, ...(body === undefined ? {} : { Origin: origin, "Content-Type": "application/json", "X-Flora-CSRF": csrf }), ...headers },
-    ...(body === undefined ? {} : { body }),
+    ...(body === undefined ? {} : { body, duplex: "half" }),
   });
   const control = (value: unknown) => call("/__test/control", JSON.stringify(value));
   await control({ now: start });
@@ -80,6 +80,20 @@ async function responseJson<T>(response: { status: number; headers: Pick<Headers
 }
 
 // Removing hosted admission or reserializing baseline bytes breaks these assertions.
+test("declared_oversize_rejects_before_reading_or_forwarding", async t => {
+  const h = await harness(t), before = await h.capacity();
+  for (const [path, length] of [
+    ["/api/sources", sourceLimit + 1],
+    ["/api/baselines?snapshotId=inventory_synthetic", baselineLimit + 1],
+    ["/api/head", 4_097],
+  ] as const) {
+    const result = await h.call("/__test/declared-size-probe", JSON.stringify({ path, length }));
+    assert.equal(result.status, 200, path);
+    assert.deepEqual(await result.json(), { status: 413, body: { error: "BODY_TOO_LARGE" }, reads: 0, authorityCalls: 0 }, path);
+  }
+  assert.deepEqual(await h.capacity(), before);
+});
+
 test("supported_size_synthetic_envelopes_keep_limits", async t => {
   const h = await harness(t);
   for (const [index, size] of [752_158, sourceLimit].entries()) {
@@ -114,7 +128,9 @@ test("supported_size_synthetic_envelopes_keep_limits", async t => {
     ["/api/baselines?snapshotId=" + first.id, baselineBytes(await h.snapshot(first.id), baselineLimit + 1, "over")],
     ["/api/head", sizedJson(observation, 4_097)],
   ] as const) {
-    assert.equal((await h.call(path, bytes)).status, 413);
+    t.diagnostic("Streamed one-byte-over boundary: " + path.split("?", 1)[0] + " (" + bytes.length + " bytes)");
+    const response = await h.call(path, streamedTestBody(bytes));
+    assert.deepEqual(await responseJson(response, 413), { error: "BODY_TOO_LARGE" }, path);
   }
   assert.deepEqual(await h.capacity(), afterHead);
   assert.equal(before!.snapshot_count, 2);

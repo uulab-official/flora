@@ -65,6 +65,10 @@ test("hosted render workflow stays public standard Linux, read-only, pinned and 
   assert.match(workflow, /actions\/checkout@d23441a48e516b6c34aea4fa41551a30e30af803/);
   assert.match(workflow, /actions\/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38/);
   assert.match(workflow, /playwright@1\.58\.2/); assert.match(workflow, /--frozen-lockfile --ignore-scripts/);
+  const pushPaths = workflow.split("  workflow_dispatch:")[0]!;
+  for (const path of ["docs/development/password-hosting.ko.md", "docs/release/password-hosting-evidence.md", "README.md", "README.en.md"]) {
+    assert.ok(pushPaths.includes("      - '" + path + "'"), "Hosted release guidance must trigger exact-commit render evidence: " + path);
+  }
   assert.ok(!/upload-artifact|runs-on:.*self-hosted|secrets\.|sudo|sysctl|apparmor|pull_request_target|wrangler deploy/.test(workflow));
 });
 

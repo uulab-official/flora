@@ -73,6 +73,21 @@ export class FixtureAuth {
       }
       return new Response("ok");
     }
+    if (new URL(request.url).pathname === "/__test/auth-before-body") {
+      // Consume only the outer fixture envelope. A real login can fail closed
+      // before reading its body; sending that denial during a local HTTP upload
+      // otherwise races Miniflare/undici connection reuse on some platforms.
+      const bytes = new Uint8Array(await request.arrayBuffer());
+      let reads = 0;
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) { reads++; controller.enqueue(bytes); controller.close(); },
+      }, { highWaterMark: 0 });
+      const response = await this.authority.fetch(new Request(new URL("/api/auth/login", request.url), {
+        method: "POST", headers: request.headers, body,
+      }));
+      response.headers.set("X-Flora-Test-Body-Reads", String(reads));
+      return response;
+    }
     if (new URL(request.url).pathname === "/__test/unread-body") {
       let reads = 0;
       const body = new ReadableStream<Uint8Array>({ pull(controller) { reads++; controller.error(new Error("Unexpected body read")); } }, { highWaterMark: 0 });
