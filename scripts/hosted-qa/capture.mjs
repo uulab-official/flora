@@ -1,3 +1,4 @@
+import { verifySurfaceDepth } from "../dashboard-qa/surface-depth.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { access, mkdtemp, mkdir, rm } from "node:fs/promises";
@@ -118,6 +119,7 @@ try {
       });
       checks.push("at-least-four-complete-mobile-app-rows");
     }
+    const surfaceDepth = await verifySurfaceDepth(page);
     const bytes = await page.screenshot({ type: "png", fullPage, animations: "disabled" });
     assert.ok(bytes.length <= LIMITS.fileBytes, "SCREENSHOT_BYTE_LIMIT"); files.push({ name: `synthetic-hosted-${name}.png`, bytes });
     assert.ok(files.length < LIMITS.files && files.reduce((sum, file) => sum + file.bytes.length, 0) <= LIMITS.totalBytes, "EVIDENCE_TOTAL_BYTE_LIMIT");
@@ -126,7 +128,7 @@ try {
       assert.ok(typography.bodyPx >= 13 && typography.bodyPx <= 14, "DENSE_BODY_TYPE_REQUIRED");
       assert.ok(typography.headingPx >= 20 && typography.headingPx <= 22, "DENSE_HEADING_TYPE_REQUIRED");
     }
-    captures.push({ name, viewport: page.viewportSize(), fullPage, horizontalOverflow: false, koreanFont, typography, ...(appDensity ? { appDensity } : {}) });
+    captures.push({ name, viewport: page.viewportSize(), fullPage, horizontalOverflow: false, surfaceDepth, koreanFont, typography, ...(appDensity ? { appDensity } : {}) });
   }
   async function both(page, name, fullPage = false) {
     await page.setViewportSize({ width: 1487, height: 1058 }); await capture(page, "desktop-" + name, fullPage);
