@@ -1,0 +1,35 @@
+{
+  "name": "@app-ops/dashboard",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "license": "Apache-2.0",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./service": {
+      "types": "./dist/service.d.ts",
+      "default": "./dist/service.js"
+    },
+    "./blocked-provider": {
+      "types": "./dist/blocked-provider.d.ts",
+      "default": "./dist/blocked-provider.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@app-ops/core": "workspace:*",
+    "@app-ops/config": "workspace:*",
+    "@app-ops/dogfood": "workspace:*",
+    "@app-ops/runner-protocol": "workspace:*"
+  },
+  "files": [
+    "dist",
+    "public"
+  ]
+}

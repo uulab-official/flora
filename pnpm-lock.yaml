@@ -17,9 +17,15 @@ importers:
       '@app-ops/core':
         specifier: workspace:*
         version: link:packages/core
+      '@app-ops/dashboard':
+        specifier: workspace:*
+        version: link:packages/dashboard
       '@app-ops/db':
         specifier: workspace:*
         version: link:packages/db
+      '@app-ops/dogfood':
+        specifier: workspace:*
+        version: link:packages/dogfood
       '@app-ops/runner-protocol':
         specifier: workspace:*
         version: link:packages/runner-protocol
@@ -53,6 +59,21 @@ importers:
 
   packages/core: {}
 
+  packages/dashboard:
+    dependencies:
+      '@app-ops/config':
+        specifier: workspace:*
+        version: link:../config
+      '@app-ops/core':
+        specifier: workspace:*
+        version: link:../core
+      '@app-ops/dogfood':
+        specifier: workspace:*
+        version: link:../dogfood
+      '@app-ops/runner-protocol':
+        specifier: workspace:*
+        version: link:../runner-protocol
+
   packages/db:
     dependencies:
       '@app-ops/config':
@@ -61,15 +82,30 @@ importers:
       '@app-ops/core':
         specifier: workspace:*
         version: link:../core
+      '@app-ops/dogfood':
+        specifier: workspace:*
+        version: link:../dogfood
       '@app-ops/runner-protocol':
         specifier: workspace:*
         version: link:../runner-protocol
+
+  packages/dogfood:
+    dependencies:
+      '@app-ops/config':
+        specifier: workspace:*
+        version: link:../config
+      '@app-ops/core':
+        specifier: workspace:*
+        version: link:../core
 
   packages/runner-protocol:
     dependencies:
       '@app-ops/core':
         specifier: workspace:*
         version: link:../core
+      '@app-ops/dogfood':
+        specifier: workspace:*
+        version: link:../dogfood
 
 packages:
 

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as store from "@app-ops/db";
@@ -18,7 +19,7 @@ test("migration is idempotent and checks its checksum", () => {
           n: number;
         }
       ).n,
-      1,
+      2,
     );
     db.prepare("update schema_migrations set checksum=?").run("bad");
     assert.throws(() => store.migrate(db), { code: "MIGRATION_MISMATCH" });
@@ -156,4 +157,34 @@ test("source storage validates before reading accessor properties", async () => 
   } finally {
     db.close();
   }
+});
+
+
+test("upgrades a 0001-only database and verifies both migration checksums", () => {
+  const first = readFileSync(new URL("../migrations/0001_foundation.sql", import.meta.url), "utf8");
+  for (const badVersion of [1, 2]) {
+    const db = store.openDatabase(":memory:");
+    try {
+      db.exec("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, checksum TEXT NOT NULL) STRICT");
+      db.exec(first);
+      db.prepare("INSERT INTO schema_migrations VALUES(1,?)").run(createHash("sha256").update(first).digest("hex"));
+      store.migrate(db);
+      assert.equal((db.prepare("SELECT count(*) n FROM schema_migrations").get() as { n: number }).n, 2);
+      assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE name='dashboard_server_owner'").get());
+      db.prepare("UPDATE schema_migrations SET checksum='bad' WHERE version=?").run(badVersion);
+      assert.throws(() => store.migrate(db), { code: "MIGRATION_MISMATCH" });
+    } finally { db.close(); }
+  }
+});
+
+test("migration failure rolls back all new schema and rejects noncontiguous versions", () => {
+  const db = store.openDatabase(":memory:");
+  try {
+    db.exec("CREATE TABLE inventory_snapshots(id TEXT)");
+    assert.throws(() => store.migrate(db), { code: "CONFLICT" });
+    assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE name='organizations'").get(), undefined);
+    assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE name='schema_migrations'").get(), undefined);
+    db.exec("DROP TABLE inventory_snapshots; CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,checksum TEXT NOT NULL) STRICT; INSERT INTO schema_migrations VALUES(2,'x')");
+    assert.throws(() => store.migrate(db), { code: "MIGRATION_MISMATCH" });
+  } finally { db.close(); }
 });

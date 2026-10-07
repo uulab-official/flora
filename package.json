@@ -25,6 +25,8 @@
     "@app-ops/config": "workspace:*",
     "@app-ops/db": "workspace:*",
     "@app-ops/runner-protocol": "workspace:*",
-    "@app-ops/cli": "workspace:*"
+    "@app-ops/cli": "workspace:*",
+    "@app-ops/dogfood": "workspace:*",
+    "@app-ops/dashboard": "workspace:*"
   }
 }

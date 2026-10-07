@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Flora · 앱 검증 작업실</title>
+  <link rel="stylesheet" href="/app.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <a class="skip" href="#workspace">본문으로 이동</a>
+  <header class="topbar"><div class="brand"><span class="brand-mark" aria-hidden="true">✳</span> flora <span class="brand-divider"></span><span class="brand-caption">앱 검증 작업실</span></div><span class="local-pill"><span aria-hidden="true">●</span> 로컬 · 비공개 세션</span></header>
+  <main>
+    <section class="page-heading"><div><p class="eyebrow">SOURCE & VERIFICATION</p><h1>앱의 지금을, 근거와 함께</h1><p class="lede">반입한 소스와 개발 결과를 살펴보고, 실행 가능 여부를 확인하세요.</p></div><div class="import-action"><label class="button primary" for="source-file">＋ 소스 JSON 가져오기</label><input id="source-file" type="file" accept=".json,application/json" class="file-input" aria-label="소스 JSON 가져오기"><p>일회성 snapshot · 최대 2 MiB</p></div></section>
+    <div id="notice" class="notice" role="status" aria-live="polite"></div>
+    <button id="retry-button" class="button secondary retry-button" type="button" hidden>이력 다시 불러오기</button>
+    <div id="workspace" tabindex="-1" aria-busy="true">
+      <section id="empty" class="empty-card" hidden></section>
+      <div id="dashboard-content" hidden>
+        <section class="card revision-card"><div class="section-top"><div><p class="eyebrow">01 · SOURCE SNAPSHOT</p><h2 id="app-name"></h2></div><span id="freshness" class="badge"></span></div><div class="revision-row"><div class="field"><label for="snapshot-select">Revision · 반입 이력</label><select id="snapshot-select"></select></div><div id="source-meta" class="source-meta"></div></div><p id="trust-note" class="trust-note"></p><details class="source-details"><summary>소스 근거 확인</summary><div id="source-details"></div></details></section>
+        <div class="dashboard-grid"><section class="card flavors-card"><div class="section-top"><div><p class="eyebrow">02 · APP FLAVOR</p><h2>Flavor 살펴보기 <span id="flavor-count" class="count"></span></h2></div></div><label class="field-label" for="flavor-select">관람할 flavor</label><select id="flavor-select"></select><div id="flavor-detail"></div><p class="quiet-note">Flavor 선택은 관람용입니다. 고정된 4개 테스트가 선택한 flavor를 검사했다는 뜻은 아닙니다.</p></section>
+        <section class="card runtime-card"><p class="eyebrow">03 · DECLARED RUNTIME</p><h2>런타임 선언 <span class="badge neutral">평가하지 않음</span></h2><div id="runtime"></div></section></div>
+        <section class="card verification-card"><div class="section-top"><div><p class="eyebrow">04 · VERIFICATION</p><h2>검증과 실행</h2></div><div class="actions"><label class="button secondary" for="baseline-file">개발 baseline 가져오기</label><input id="baseline-file" class="file-input" type="file" accept=".json,application/json" aria-label="개발 baseline 가져오기"><button id="run-button" class="button primary" type="button">실행 가능 여부 확인</button></div></div><div class="verification-grid"><div id="profile"></div><div id="provider"></div></div></section>
+        <section class="history-section"><div class="section-top"><div><p class="eyebrow">05 · EVIDENCE HISTORY</p><h2>검증 이력</h2></div><span class="subtle">선택한 revision의 기록</span></div><div class="history-grid"><div class="card history-column"><h3>개발 baseline <span class="badge neutral">사용자 반입</span></h3><p class="subtle">개발 환경에서 수집한 결과의 내부 일치성</p><div id="baseline-history"></div></div><div class="card history-column"><h3>실행 결과 <span class="badge neutral">Flora 요청</span></h3><p class="subtle">검증된 실행 환경의 요청 및 결과</p><div id="run-history"></div></div></div></section>
+      </div>
+    </div>
+    <footer>Flora local dogfood <span>·</span> 브라우저 OS와 실행 OS는 별개입니다. iOS 실행에는 검증된 macOS/Xcode Runner가 필요합니다.</footer>
+  </main>
+</body>
+</html>

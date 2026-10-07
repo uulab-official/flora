@@ -1,5 +1,5 @@
 {
-  "name": "@app-ops/runner-protocol",
+  "name": "@app-ops/dogfood",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -11,6 +11,6 @@
   },
   "dependencies": {
     "@app-ops/core": "workspace:*",
-    "@app-ops/dogfood": "workspace:*"
+    "@app-ops/config": "workspace:*"
   }
 }

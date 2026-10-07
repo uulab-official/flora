@@ -1,0 +1,55 @@
+name: Synthetic dashboard rendering
+on:
+  push:
+    branches: [main, 'verify/flora-dogfood-*']
+    paths:
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'tsconfig*.json'
+      - 'packages/core/**'
+      - 'packages/config/**'
+      - 'packages/dashboard/**'
+      - 'packages/dogfood/**'
+      - 'packages/db/**'
+      - 'packages/runner-protocol/**'
+      - 'tests/dogfood-fixtures.ts'
+      - 'tests/dashboard-qa.test.ts'
+      - 'scripts/dashboard-qa/**'
+      - '.github/workflows/dashboard-rendered.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: dashboard-rendered-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  synthetic-render:
+    # Standard Linux on a public repository only. No larger/self-hosted runner.
+    if: github.event.repository.private == false && github.event.repository.visibility == 'public' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/verify/flora-dogfood-'))
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+      PWDEBUG: '0'
+      DEBUG: ''
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.19.0
+      - name: Install frozen workspace without lifecycle scripts
+        run: npm exec --yes --package=pnpm@11.19.0 -- pnpm install --frozen-lockfile --ignore-scripts
+      - name: Build and check harness contracts
+        run: |
+          npm exec --yes --package=pnpm@11.19.0 -- pnpm build
+          npm exec --yes --package=pnpm@11.19.0 -- pnpm typecheck
+          node scripts/test.mjs tests/dashboard-qa.test.ts
+      - name: Install pinned development-only browser driver
+        run: npm install --prefix "$RUNNER_TEMP/flora-dashboard-qa-tools" --ignore-scripts --no-audit --no-fund --package-lock=false playwright@1.58.2
+      - name: Render local synthetic states with Chrome sandbox enabled
+        env:
+          FLORA_QA_PLAYWRIGHT_MODULE: ${{ runner.temp }}/flora-dashboard-qa-tools/node_modules/playwright/index.mjs
+        run: node scripts/dashboard-qa/capture.mjs
