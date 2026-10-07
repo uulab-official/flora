@@ -1,2 +1,12 @@
 packages:
   - packages/*
+engineStrict: true
+ignoreScripts: true
+allowBuilds:
+  esbuild@0.28.1: false
+  esbuild@0.28.2: false
+  workerd@1.20261006.1: false
+minimumReleaseAgeExclude:
+  - '@cloudflare/workers-types@5.20261007.1'
+  - miniflare@5.20261006.0-alpha
+  - wrangler@4.148.0

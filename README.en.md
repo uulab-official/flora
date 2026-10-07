@@ -14,6 +14,8 @@ Flora is an Apache-2.0 project working toward a shared control plane for iOS, An
 
 The dashboard binds only to 127.0.0.1 and uses a one-time bootstrap followed by a private local session. Organization authentication, real Runner registration/daemon, AI code editing, Vault, native builds, signing, Store uploads, OTA and Cloudflare deployments remain future work. The product execution provider is blocked; imported evidence and simulated success are not verified isolated execution or app deployment.
 
+A separate Cloudflare path implements single-owner password login, private source/baseline imports and history, with local synthetic Worker/DO/D1 tests. Actual Free account capacity/performance, production deployment/domain/TLS, owner enrollment and private-file uploads remain unverified. See the [hosting development guide (Korean)](docs/development/password-hosting.ko.md) and [release evidence and open gates](docs/release/password-hosting-evidence.md). The hosted path does not run a Runner.
+
 Web AI code editing is now a user-approved product priority. The [detailed milestone proposal](docs/proposals/web-ai/next-slice-spec.ko.md) and [architecture addendum](docs/proposals/web-ai/architecture-addendum.ko.md), currently in Korean, still await design review; their publication does not mean those features shipped.
 
 ## Try the local foundation

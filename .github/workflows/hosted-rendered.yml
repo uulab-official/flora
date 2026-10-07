@@ -1,0 +1,61 @@
+name: Synthetic hosted rendering
+on:
+  push:
+    branches: [main, 'verify/flora-hosted-*']
+    paths:
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'tsconfig*.json'
+      - 'packages/core/**'
+      - 'packages/config/**'
+      - 'packages/dashboard/**'
+      - 'packages/dogfood/**'
+      - 'packages/db/**'
+      - 'packages/runner-protocol/**'
+      - 'packages/cloudflare/**'
+      - 'tests/dogfood-fixtures.ts'
+      - 'tests/hosted-qa.test.ts'
+      - 'scripts/build-cloudflare.mjs'
+      - 'scripts/dashboard-qa/**'
+      - 'scripts/hosted-qa/**'
+      - '.github/workflows/hosted-rendered.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: hosted-rendered-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  synthetic-render:
+    # Standard Linux on a public repository only. No larger/self-hosted runner.
+    if: github.event.repository.private == false && github.event.repository.visibility == 'public' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/verify/flora-hosted-'))
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+      PWDEBUG: '0'
+      DEBUG: ''
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.19.0
+      - name: Install frozen workspace without lifecycle scripts
+        run: npm exec --yes --package=pnpm@11.19.0 -- pnpm install --frozen-lockfile --ignore-scripts
+      - name: Build and check hosted harness contracts
+        run: |
+          npm exec --yes --package=pnpm@11.19.0 -- pnpm build
+          npm exec --yes --package=pnpm@11.19.0 -- pnpm typecheck
+          node scripts/test.mjs tests/hosted-qa.test.ts tests/dashboard-qa.test.ts
+      - name: Install pinned development-only browser driver
+        run: npm install --prefix "$RUNNER_TEMP/flora-hosted-qa-tools" --ignore-scripts --no-audit --no-fund --package-lock=false playwright@1.58.2
+      - name: Prepare Korean fonts in the job temporary directory
+        run: bash scripts/dashboard-qa/fonts.sh
+      - name: Render synthetic hosted composition with Chrome sandbox enabled
+        env:
+          FLORA_QA_FONTCONFIG: ${{ runner.temp }}/flora-dashboard-qa-fonts/fonts.conf
+          FLORA_QA_PLAYWRIGHT_MODULE: ${{ runner.temp }}/flora-hosted-qa-tools/node_modules/playwright/index.mjs
+        run: node scripts/hosted-qa/capture.mjs

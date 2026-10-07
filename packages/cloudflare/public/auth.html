@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Flora · 비공개 작업실 로그인</title>
+  <link rel="stylesheet" href="/auth.css">
+  <script type="module" src="/auth.js"></script>
+</head>
+<body>
+  <a class="skip" href="#auth-form">본문으로 이동</a>
+  <header class="auth-brand"><span aria-hidden="true">✳</span> flora <span class="private-label">비공개 앱 작업실</span></header>
+  <main class="auth-shell">
+    <section class="auth-card" aria-labelledby="auth-title">
+      <p class="eyebrow">PRIVATE WORKSPACE</p>
+      <h1 id="auth-title">소유자 로그인</h1>
+      <p id="auth-description" class="description">설정된 소유자 계정으로 로그인하면 반입한 앱 정보와 이력을 다시 볼 수 있습니다.</p>
+      <div id="auth-status" class="auth-status" role="status" aria-live="polite" hidden></div>
+      <form id="auth-form" method="post" action="/api/auth/login" novalidate>
+        <div id="setup-fields" hidden>
+          <label for="setup-mode">설정 목적</label>
+          <select id="setup-mode"><option value="enroll">최초 비밀번호 등록</option><option value="recover">소유자 비밀번호 복구</option></select>
+          <label for="token">소유자 승인 코드</label>
+          <input id="token" type="password" autocomplete="off" spellcheck="false" autocapitalize="none" aria-describedby="setup-note" disabled>
+          <p id="setup-note" class="field-note">소유자 관리 경로에서 발급한 일회용 코드가 필요합니다. 발급 후 10분 동안만 유효하며 서버에서 등록·복구 권한을 확인합니다.</p>
+        </div>
+        <label for="email">소유자 이메일</label>
+        <input id="email" type="email" autocomplete="username" inputmode="email" autocapitalize="none" spellcheck="false" required>
+        <label for="password">비밀번호</label>
+        <input id="password" type="password" autocomplete="current-password" required aria-describedby="password-note">
+        <p id="password-note" class="field-note">비밀번호 붙여넣기를 사용할 수 있습니다.</p>
+        <div id="confirmation-fields" hidden>
+          <label for="confirmation">비밀번호 다시 입력</label>
+          <input id="confirmation" type="password" autocomplete="new-password" disabled>
+        </div>
+        <button id="auth-submit" type="submit" disabled>로그인</button>
+      </form>
+      <noscript><p class="auth-status">로그인하려면 브라우저에서 JavaScript를 사용할 수 있어야 합니다.</p></noscript>
+      <nav class="auth-links" aria-label="계정 메뉴"><a id="setup-link" href="/setup">승인 코드로 등록·복구</a><a id="auth-login-link" href="/login" hidden>로그인으로 돌아가기</a></nav>
+    </section>
+    <p class="auth-footer">Flora · 소스와 개발 baseline을 보관하는 비공개 공간</p>
+  </main>
+</body>
+</html>

@@ -18,6 +18,8 @@ Flora는 iOS, Android, Web 앱의 빌드·서명·환경설정·스토어·OTA·
 
 **현재 상태: 로컬 Foundation과 앱 검증 화면.** 타깃·설정·SQLite Job/lease/fence, 정적 앱 snapshot과 개발 baseline import, 이력과 보호된 loopback Dashboard/CLI를 제공합니다. 기본 실행 provider는 blocked입니다. 조직 로그인, 실제 Runner/native build, Vault, OTA, 스토어 업로드, Cloudflare 배포와 AI 코드 수정은 후속 단계입니다.
 
+별도 Cloudflare 경로에는 단일 소유자 비밀번호 로그인과 비공개 source/baseline 반입·이력 조회를 구현하고 로컬 Worker/DO/D1 합성 테스트를 추가했습니다. 실제 Free 계정 용량·성능, 운영 배포·도메인/TLS, 소유자 등록과 비공개 파일 업로드는 아직 미검증입니다. [비밀번호 보호 웹 반입 개발 가이드](docs/development/password-hosting.ko.md)와 [출시 증거·남은 조건](docs/release/password-hosting-evidence.md)을 확인하세요. 호스팅 경로에서는 Runner를 실행하지 않습니다.
+
 [처음 실행하기: 준비 → 설치 → 결과 확인 → 문제 해결](docs/getting-started.ko.md)부터 따라 해보세요. [가상의 앱으로 웹 화면 열기](docs/development/dogfood.ko.md)는 계정이나 실제 저장소 없이 체험할 수 있습니다. 현재 컴퓨터의 loopback URL이며 공개 서비스 주소가 아닙니다.
 
 ## 지금 직접 실행하기

@@ -1,0 +1,24 @@
+{
+  "name": "@app-ops/cloudflare",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "license": "Apache-2.0",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node ../../scripts/build-cloudflare.mjs",
+    "build:hosted": "node ../../scripts/build-cloudflare.mjs",
+    "test:hosted": "node --test test/worker.test.ts test/hosted-ui.test.ts"
+  },
+  "dependencies": {
+    "@app-ops/dogfood": "workspace:*",
+    "@app-ops/core": "workspace:*",
+    "@app-ops/config": "workspace:*",
+    "@app-ops/dashboard": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261007.1",
+    "esbuild": "0.28.2",
+    "miniflare": "5.20261006.0-alpha",
+    "wrangler": "4.148.0"
+  }
+}

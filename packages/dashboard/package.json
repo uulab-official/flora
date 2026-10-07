@@ -13,6 +13,10 @@
       "types": "./dist/service.d.ts",
       "default": "./dist/service.js"
     },
+    "./import-service": {
+      "types": "./dist/import-service.d.ts",
+      "default": "./dist/import-service.js"
+    },
     "./blocked-provider": {
       "types": "./dist/blocked-provider.d.ts",
       "default": "./dist/blocked-provider.js"

@@ -185,3 +185,8 @@ export interface DogfoodStore {
   expireVerification(fence: VerificationFence, now: number): Promise<VerificationRecord>;
   finishTimeout(recordId: string, cleanupConfirmed: boolean, now: number): Promise<VerificationRecord>;
 }
+
+/** Import-only storage port; contains no selection or Runner lifecycle operations. */
+export type ImportStore = Pick<DogfoodStore,
+  "saveInventory" | "getInventory" | "saveHeadObservation" | "getHeadObservation" | "persistBaseline"
+>;

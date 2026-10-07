@@ -1,9 +1,10 @@
 import { DomainError, ensure, object, text } from "@app-ops/core";
 import { freeze } from "@app-ops/config";
-import { assertParsedBaseline, assessReport, CONFIG_RUNTIME_SMOKE_V1, deriveFreshness, parseBaselineBundle, parseSourceBundle } from "@app-ops/dogfood";
+import { assertParsedBaseline, assessReport, CONFIG_RUNTIME_SMOKE_V1, deriveFreshness } from "@app-ops/dogfood";
 import type { DogfoodStore, Freshness, HeadObservation, InventorySnapshot, VerificationCompletion, VerificationFence, VerificationProfile, VerificationRecord } from "@app-ops/dogfood";
 import { capabilities, selectProvider, VERIFICATION_CHECKS } from "@app-ops/runner-protocol";
 import type { CapabilityReport, CleanupReport, ExecutionRequirements, ProviderResult, VerificationProvider } from "@app-ops/runner-protocol";
+import { createImportService } from "./import-service.js";
 
 export interface DashboardState {
   snapshots: InventorySnapshot[];
@@ -78,6 +79,7 @@ interface Attempt {
  * branches exist solely for injected contract-test providers until adapter review.
  */
 export async function createDogfoodService(store: DogfoodStore, providers: readonly VerificationProvider[], now: () => number): Promise<DogfoodService> {
+  const imports = createImportService(store, now);
   const registered = [...providers];
   const identities = registered.map(provider => text(provider.id, 256));
   ensure(new Set(identities).size === identities.length);
@@ -278,19 +280,15 @@ export async function createDogfoodService(store: DogfoodStore, providers: reado
   return {
     async importSource(bytes) {
       open();
-      const snapshot = await store.saveInventory(await parseSourceBundle(bytes, now()));
+      const snapshot = await imports.importSource(bytes);
       lastImportedId = snapshot.id;
       return snapshot;
     },
     async importBaseline(snapshotId, bytes) {
       open();
-      ensure(bytes instanceof Uint8Array && bytes.length <= 2 * 1024 * 1024);
-      const owned = Uint8Array.from(bytes);
-      const snapshot = await store.getInventory(snapshotId); ensure(snapshot, "NOT_FOUND");
-      const evidence = await parseBaselineBundle(owned, snapshot);
-      return store.persistBaseline({ snapshotId, evidence, assessment: assessReport(evidence, CONFIG_RUNTIME_SMOKE_V1), now: now() });
+      return imports.importBaseline(snapshotId, bytes);
     },
-    async importHead(observation) { open(); await store.saveHeadObservation(observation); },
+    async importHead(observation) { open(); await imports.importHead(observation); },
     async getState(snapshotId) {
       const snapshots = await store.listInventory();
       const selectedSnapshotId = snapshotId ?? lastImportedId ?? snapshots.at(-1)?.id ?? null;

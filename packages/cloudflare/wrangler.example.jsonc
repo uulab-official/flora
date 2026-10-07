@@ -1,0 +1,51 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "flora-private-imports",
+  "main": "dist/hosted/worker.js",
+  "compatibility_date": "2026-10-07",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "workers_dev": false,
+  "preview_urls": false,
+  "build": {
+    "command": "node ../../scripts/build-cloudflare.mjs --deployment-config wrangler.jsonc"
+  },
+  "assets": {
+    "directory": "dist/hosted/public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none",
+    "not_found_handling": "none"
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "FLORA_AUTH",
+        "class_name": "FloraAuth"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "FloraAuth"
+      ]
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "FLORA_DB",
+      "database_name": "REPLACE_WITH_EXISTING_DATABASE_NAME",
+      "database_id": "REPLACE_WITH_EXISTING_DATABASE_UUID",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "vars": {
+    "FLORA_ORIGIN": "https://REPLACE_WITH_OWNER_CONTROLLED_ORIGIN.invalid",
+    "FLORA_OWNER_ID": "REPLACE_WITH_PERSISTED_OWNER_ID",
+    "FLORA_OWNER_EMAIL": "REPLACE_WITH_OWNER_EMAIL@example.invalid",
+    "FLORA_DB_IDENTITY": "REPLACE_WITH_PROVISIONED_DATABASE_IDENTITY"
+  }
+}
