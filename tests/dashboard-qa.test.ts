@@ -1,12 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { encodeEvidence, decodeEvidence, LIMITS } from "../scripts/dashboard-qa/evidence.mjs";
 import { createQaHarness } from "../scripts/dashboard-qa/server.mjs";
+import { navigateBootstrapDocument } from "../scripts/dashboard-qa/navigation.mjs";
 
 const png = Buffer.from("89504e470d0a1a0a00000000", "hex");
 const commit = "a".repeat(40);
@@ -65,8 +66,11 @@ test("evidence total-file and total-byte ceilings fail before anything can be em
   assert.throws(() => encodeEvidence(Array.from({ length: 9 }, (_, index) => ({ name: `synthetic-${index}.png`, bytes: large })), commit));
 });
 
-test("private decoder writes no files for invalid evidence and verified files use restrictive permissions", () => {
-  const directory = mkdtempSync(join(tmpdir(), "flora-qa-decoder-"));
+for (const aliased of [false, true]) test(`private decoder rejects invalid evidence and contains verified files from ${aliased ? "an aliased" : "a direct"} working directory`, () => {
+  const temporary = mkdtempSync(join(tmpdir(), "flora-qa-decoder-"));
+  const physical = join(temporary, "physical"); mkdirSync(physical);
+  const directory = aliased ? join(temporary, "alias") : physical;
+  if (aliased) symlinkSync(physical, directory, process.platform === "win32" ? "junction" : "dir");
   const decoder = fileURLToPath(new URL("../scripts/dashboard-qa/decode.mjs", import.meta.url));
   const log = join(directory, "job.log");
   try {
@@ -76,8 +80,27 @@ test("private decoder writes no files for invalid evidence and verified files us
     writeFileSync(log, encodeEvidence(evidence(), commit).join("\n"));
     const decoded = JSON.parse(execFileSync(process.execPath, [decoder, log, commit], { cwd: directory, encoding: "utf8" }));
     assert.equal(decoded.verifiedCommit, commit); assert.equal(decoded.files, 2);
-    assert.ok(decoded.privateDirectory.startsWith(join(directory, ".superpowers") + "/") || process.platform === "win32" && decoded.privateDirectory.startsWith(join(directory, ".superpowers") + "\\"));
+    // Child cwd may canonicalize aliases such as macOS /var -> /private/var.
+    assert.equal(realpathSync(dirname(decoded.privateDirectory)), realpathSync(join(directory, ".superpowers")));
     const output = join(decoded.privateDirectory, "synthetic-desktop-empty.png"); assert.deepEqual(readFileSync(output), png);
     if (process.platform !== "win32") assert.equal(statSync(output).mode & 0o777, 0o600);
-  } finally { rmSync(directory, { recursive: true, force: true }); }
+  } finally { rmSync(temporary, { recursive: true, force: true }); }
+});
+
+
+test("bootstrap navigation starts a fresh document even when the unauthorized page has the same URL path", async () => {
+  let current = "http://127.0.0.1:4567/"; let bootstrapStarts = 0;
+  const target = current + "#" + "a".repeat(64); const navigations: string[] = [];
+  await navigateBootstrapDocument({ async goto(url, options) {
+    assert.equal(options.waitUntil, "domcontentloaded"); navigations.push(url);
+    const previous = new URL(current); const next = new URL(url);
+    const sameDocument = previous.origin === next.origin && previous.pathname === next.pathname && previous.search === next.search;
+    current = url;
+    if (!sameDocument && next.hash) bootstrapStarts++;
+  } }, target);
+  assert.equal(bootstrapStarts, 1, "hash-only navigation cannot restart the rejected session client");
+  assert.deepEqual(navigations, ["about:blank", target]); assert.equal(current, target);
+  const capture = readFileSync(new URL("../scripts/dashboard-qa/capture.mjs", import.meta.url), "utf8");
+  assert.match(capture, /await navigateBootstrapDocument\(page, harness\.bootstrapUrl\)/);
+  assert.ok(!capture.includes("page.goto(harness.bootstrapUrl"));
 });

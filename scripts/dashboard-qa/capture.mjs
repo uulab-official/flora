@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createQaHarness } from "./server.mjs";
 import { encodeEvidence, LIMITS } from "./evidence.mjs";
+import { navigateBootstrapDocument } from "./navigation.mjs";
 
 // Deliberately CI-only. A failed sandbox launch is a failed render gate; no retry
 // with weaker settings, OS changes, alternate provider, or public binding exists.
@@ -58,7 +59,7 @@ try {
   let release; const gate = new Promise(resolve => { release = resolve; });
   const delayedSession = async route => { await gate; await route.continue(); };
   await page.route("**/api/session", delayedSession);
-  await page.goto(harness.bootstrapUrl, { waitUntil: "domcontentloaded" });
+  await navigateBootstrapDocument(page, harness.bootstrapUrl);
   await page.getByRole("status").filter({ hasText: "불러오는 중" }).waitFor(); assert.equal(new URL(page.url()).hash, ""); await both("loading");
   release(); await page.getByText("첫 소스 snapshot을 가져오세요").waitFor(); await page.unroute("**/api/session", delayedSession); checks.push("bootstrap-erased-before-exchange");
   phase = "empty-and-input-error";
