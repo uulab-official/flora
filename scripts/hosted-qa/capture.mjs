@@ -31,7 +31,8 @@ try {
   assert.ok(!commandLine.arguments.some(value => /^--(?:no-sandbox|disable-setuid-sandbox|disable-web-security|single-process|ignore-certificate-errors|allow-insecure-localhost)(?:=|$)/.test(value))); await cdp.detach();
   let externalRequests = 0, pageErrors = 0, bridgeErrors = 0, logRequests = 0, lifecycleRequests = 0;
   let loseNextBaselineResponse = false, lostReceipt, logoutGate, logGate;
-  const files = [], captures = [], checks = [], importDigests = [];
+  const files = [], captures = [], checks = [], importDigests = [], targetChecks = [];
+  let pageScaleEvidence;
   async function sessionPage(clock = false) {
     const context = await browser.newContext({ viewport: { width: 1487, height: 1058 }, deviceScaleFactor: 1, serviceWorkers: "block" });
     await context.route("**/*", async route => {
@@ -59,6 +60,7 @@ try {
   const first = await sessionPage(), second = await sessionPage(true);
   async function capture(page, name, fullPage = false) {
     assert.equal(new URL(page.url()).search, ""); assert.equal(new URL(page.url()).hash, "");
+    assert.equal(await page.evaluate(() => window.visualViewport?.scale), 1, "REFERENCE_SCALE_MUST_BE_ONE");
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false, "HORIZONTAL_OVERFLOW");
     await page.evaluate(() => document.fonts.ready);
     await page.evaluate(() => window.scrollTo(0, 0));
@@ -91,6 +93,56 @@ try {
     await (await mobile.isVisible() ? mobile : page.locator("#nav-" + view)).click();
     await page.locator("#view-" + view).waitFor({ state: "visible" });
     for (const other of ["apps", "sources", "history", "account"].filter(value => value !== view)) assert.equal(await page.locator("#view-" + other).isHidden(), true);
+  }
+  async function mobileTargets(page, state, selectors) {
+    assert.equal(page.viewportSize().width, 390, "MOBILE_VIEWPORT_REQUIRED");
+    const targets = [];
+    for (const selector of selectors) {
+      const matches = page.locator(selector); let checked = 0;
+      for (let index = 0; index < await matches.count(); index++) {
+        const control = matches.nth(index);
+        if (!await control.isVisible() || !await control.isEnabled()) continue;
+        await control.scrollIntoViewIfNeeded();
+        const box = await control.boundingBox();
+        assert.ok(box && box.width >= 44 && box.height >= 44, "MOBILE_TOUCH_TARGET_REQUIRED");
+        // Trial clicks check real pointer actionability without toggling a
+        // disclosure, changing a page or opening an import file chooser.
+        await control.click({ trial: true });
+        targets.push({ selector, index, width: box.width, height: box.height }); checked++;
+      }
+      assert.ok(checked > 0, "VISIBLE_ENABLED_MOBILE_TARGET_REQUIRED");
+    }
+    targetChecks.push({ state, viewport: page.viewportSize(), minimumCssPx: 44, targets });
+  }
+  async function twofoldPageScale(page, appButtons) {
+    const session = await page.context().newCDPSession(page);
+    try {
+      // Browser visual page scaling, not a CSS transform or OS text zoom.
+      await session.send("Emulation.setPageScaleFactor", { pageScaleFactor: 2 });
+      await page.waitForFunction(() => Math.abs((window.visualViewport?.scale ?? 0) - 2) < 0.01);
+      const metrics = await session.send("Page.getLayoutMetrics");
+      assert.ok(Math.abs(metrics.cssVisualViewport.scale - 2) < 0.01, "OBSERVED_TWO_FOLD_SCALE_REQUIRED");
+      assert.ok(Math.abs(metrics.cssLayoutViewport.clientWidth / metrics.cssVisualViewport.clientWidth - 2) < 0.05, "VISUAL_VIEWPORT_MUST_SHRINK");
+      const search = page.locator("#app-search");
+      await search.scrollIntoViewIfNeeded(); await search.click({ trial: true });
+      await search.fill("Sample App 4"); assert.equal(await appButtons.count(), 1);
+      await page.locator("#flavor-row-sample-4").click();
+      await page.locator("#app-detail").waitFor({ state: "visible" });
+      await page.locator("#detail-close").click(); assert.equal(await page.locator("#app-detail").isHidden(), true);
+      await search.fill(""); assert.equal(await appButtons.count(), 10);
+      const observedScale = await page.evaluate(() => window.visualViewport?.scale);
+      assert.ok(Math.abs(observedScale - 2) < 0.01, "SCALE_MUST_REMAIN_DURING_INTERACTION");
+      pageScaleEvidence = { method: "CDP Emulation.setPageScaleFactor", requestedScale: 2, observedScale,
+        layoutWidth: metrics.cssLayoutViewport.clientWidth, visualWidth: metrics.cssVisualViewport.clientWidth,
+        usableControls: ["app search", "open app detail", "close app detail", "clear search"] };
+    } finally {
+      try {
+        await session.send("Emulation.setPageScaleFactor", { pageScaleFactor: 1 });
+        await page.waitForFunction(() => Math.abs((window.visualViewport?.scale ?? 0) - 1) < 0.01);
+      } finally { await session.detach(); }
+    }
+    pageScaleEvidence.restoredScale = await page.evaluate(() => window.visualViewport?.scale);
+    checks.push("observed-cdp-twofold-page-scale-with-usable-controls");
   }
   async function authenticate(page, setup, token = harness.token) {
     await page.locator("#email").fill(harness.email); await page.locator("#password").fill(harness.password);
@@ -156,7 +208,9 @@ try {
   assert.equal(await page.locator("#app-sort").inputValue(), "name-asc");
   assert.equal(await appButtons.first().locator("strong").innerText(), "Sample App 1");
   assert.equal(await appButtons.count(), 10);
+  await mobileTargets(page, "apps-first-page", ["#app-next", "#app-search", "#app-source-filter", "#app-sort"]);
   await page.locator("#app-next").click(); assert.equal(await appButtons.count(), 1);
+  await mobileTargets(page, "apps-second-page", ["#app-previous"]);
   await page.locator("#app-previous").click(); assert.equal(await appButtons.count(), 10);
   await page.locator("#app-search").fill("Sample App 4"); assert.equal(await appButtons.count(), 1);
   await page.locator("#flavor-row-sample-4").click();
@@ -190,13 +244,19 @@ try {
   await page.locator("#baseline-history pre").filter({ hasText: "synthetic result" }).waitFor(); assert.equal(logRequests, 1);
   await page.locator("#baseline-history summary").focus();
   assert.equal(await page.locator("#baseline-history summary").evaluate(node => node === document.activeElement), true);
-  await page.setViewportSize({ width: 390, height: 844 }); await capture(page, "mobile-history");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mobileTargets(page, "history-disclosures-and-imports", ["#view-history summary", 'label[for="baseline-file"]', 'label[for="source-file"]']);
+  await capture(page, "mobile-history");
   await navigate(page, "sources");
+  await mobileTargets(page, "source-disclosure-and-controls", ["#view-sources summary", "#snapshot-select", 'label[for="source-file"]']);
   await page.locator(".source-details > summary").click();
   assert.ok((await page.locator("#source-details").innerText()).includes(source.files[0].sha256));
   assert.ok((await page.locator("#runtime").innerText()).includes("1.2.3"));
   await both(page, "sources"); checks.push("source-hash-disclosure-and-declared-runtime");
   await navigate(page, "apps");
+  phase = "mobile-twofold-page-scale";
+  await twofoldPageScale(page, appButtons);
+  phase = "approved-apps-reference-state";
   // Exact approved interaction state, with the requested denser type/table:
   // eleven declared flavors, one source, one source-scoped imported baseline,
   // Sample App 4 selected, no search, ascending app name, and detail closed.
@@ -209,11 +269,9 @@ try {
   await page.locator('label[for="source-file"]').first().waitFor({ state: "visible" });
   await page.locator("#app-search").waitFor({ state: "visible" });
   await both(page, "apps");
-  for (const selector of ["#mobile-apps", "#mobile-sources", "#mobile-history", '#app-rows button[id^="flavor-row-"]']) {
-    const box = await page.locator(selector).first().boundingBox(); assert.ok(box && box.height >= 44 && box.width >= 44, "MOBILE_TOUCH_TARGET_REQUIRED");
-  }
+  await mobileTargets(page, "apps-navigation-and-rows", ["#mobile-apps", "#mobile-sources", "#mobile-history", "#mobile-account", '#app-rows button[id^="flavor-row-"]', "#app-rows .row-arrow"]);
   assert.equal(await page.locator('meta[name="viewport"]').getAttribute("content"), "width=device-width, initial-scale=1");
-  checks.push("original-source-baseline-ui-upload", "eleven-flavors-one-source", "exact-baseline-envelope-digest", "lazy-log-fetch-and-keyboard-focus", "desktop-and-mobile-three-view-navigation", "mobile-touch-targets-and-system-zoom");
+  checks.push("original-source-baseline-ui-upload", "eleven-flavors-one-source", "exact-baseline-envelope-digest", "lazy-log-fetch-and-keyboard-focus", "desktop-and-mobile-three-view-navigation", "measured-mobile-targets-and-actionability", "viewport-metadata-allows-user-scaling");
 
   phase = "lost-response-idempotent-recovery";
   await navigate(page, "history");
@@ -227,12 +285,16 @@ try {
   phase = "history-and-snapshot-pagination";
   for (let attempt = 3; attempt <= 21; attempt++) await upload(page, "baseline", await harness.baseline(0, attempt));
   assert.equal(await page.locator("#baseline-history .record").count(), 20);
+  await mobileTargets(page, "history-next-page", ["#history-next"]);
   await page.locator("#history-next").click(); await ready(page); assert.equal(await page.locator("#baseline-history .record").count(), 1);
+  await mobileTargets(page, "history-previous-page", ["#history-previous"]);
   await page.locator("#history-previous").click(); await ready(page); assert.equal(await page.locator("#baseline-history .record").count(), 20);
   for (let index = 1; index <= 20; index++) await upload(page, "source", harness.source(index));
   await navigate(page, "sources");
   const newestId = await page.locator("#snapshot-select").inputValue();
+  await mobileTargets(page, "source-next-page", ["#snapshot-next"]);
   await page.locator("#snapshot-next").click(); await ready(page); assert.equal(await page.locator("#snapshot-select").inputValue(), newestId);
+  await mobileTargets(page, "source-previous-page", ["#snapshot-previous"]);
   await page.locator("#snapshot-select").selectOption(source.id); await ready(page); assert.equal(await page.locator("#baseline-history .record").count(), 20);
   await page.locator("#snapshot-previous").click(); await ready(page); assert.equal(await page.locator("#snapshot-select").inputValue(), source.id);
   checks.push("twenty-entry-history-pages", "snapshot-pages-retain-selection", "older-snapshot-history-restored");
@@ -294,7 +356,7 @@ try {
   assert.equal(externalRequests, 0); assert.equal(harness.outboundRequests(), 0); assert.equal(pageErrors, 0); assert.equal(bridgeErrors, 0); assert.equal(lifecycleRequests, 0);
   files.push({ name: "synthetic-hosted-evidence.json", bytes: Buffer.from(JSON.stringify({ syntheticOnly: true, commit: process.env.GITHUB_SHA,
     browser: await browser.version(), browserSandboxRequested: true, unsafeSandboxFlagsAbsent: true,
-    sourceEvidence: harness.sourceEvidence, importDigests,
+    sourceEvidence: harness.sourceEvidence, importDigests, targetChecks, pageScaleEvidence,
     visualTarget: {
       desktop: { sha256: "87822d71c7531c20e038955642279c79eba9cf9bb8bc1c48b7560cc25086d813", width: 1487, height: 1058 },
       mobile: { sha256: "828923f82f1337aca78ee2eabb79c969c5083d8876362995b2d9430c886f7617", sourceWidth: 853, sourceHeight: 1844, viewportWidth: 390, viewportHeight: 844 },
@@ -304,7 +366,7 @@ try {
       pixelReview: "required after decoding; interaction assertions alone are not visual approval",
     },
     transport: "synthetic HTTPS route interception into production Worker, SQLite DO and D1; real response cookies",
-    unverified: ["deployed DNS/TLS", "Cloudflare Free account/resource capacity", "deployed CPU/memory/latency", "wall-clock server expiry during browser run"],
+    unverified: ["deployed DNS/TLS", "Cloudflare Free account/resource capacity", "deployed CPU/memory/latency", "wall-clock server expiry during browser run", "native pinch gesture", "OS text zoom", "browser toolbar zoom"],
     externalRequests, workerOutboundRequests: harness.outboundRequests(), pageErrors, bridgeErrors, lifecycleRequests, captures, checks }, null, 2)) });
   phase = "evidence-encoding";
   for (const line of encodeEvidence(files, process.env.GITHUB_SHA)) console.log(line);

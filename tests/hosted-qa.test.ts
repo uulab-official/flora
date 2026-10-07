@@ -95,6 +95,19 @@ test("hosted capture requires sandbox and actual cookie/font proof without secur
   assert.ok(!/ignoreHTTPSErrors|bypassCSP|addCookies\(|console\.(?:log|error)\(error\)|args:\s*\[/.test(capture));
 });
 
+test("hosted mobile QA requires measured disclosures, pagination and observed page scale", async () => {
+  const capture = await readFile(new URL("../scripts/hosted-qa/capture.mjs", import.meta.url), "utf8");
+  for (const selector of ["#view-sources summary", "#view-history summary", "#snapshot-next", "#snapshot-previous", "#history-next", "#history-previous"]) {
+    assert.ok(capture.includes('"' + selector + '"'), "Measured mobile coverage must include " + selector);
+  }
+  assert.match(capture, /async function mobileTargets/);
+  assert.match(capture, /boundingBox\(\)/); assert.match(capture, /click\(\{ trial: true \}\)/);
+  assert.match(capture, /Emulation\.setPageScaleFactor/); assert.match(capture, /pageScaleFactor: 2/);
+  assert.match(capture, /Page\.getLayoutMetrics/); assert.match(capture, /cssVisualViewport\.scale/);
+  assert.match(capture, /visualViewport\?\.scale/); assert.match(capture, /pageScaleFactor: 1/);
+  assert.ok(!/\.style\.(?:zoom|transform)|setAttribute\(["']style["']|mobile-touch-targets-and-system-zoom/.test(capture));
+});
+
 test("hosted composition requires real enrollment, preserves original import receipts and revokes sessions", async () => {
   const { createHostedQaHarness } = await import("../scripts/hosted-qa/runtime.mjs");
   const harness = await createHostedQaHarness();

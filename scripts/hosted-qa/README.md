@@ -77,7 +77,7 @@ through Chrome DevTools, then checks horizontal overflow.
 - Real desktop/sidebar and mobile/bottom Apps, Source and History navigation;
   declared version with explicitly unconnected deployment, error and revenue
 - Original upload byte equality, exact original-baseline envelope digest, lazy
-  logs, keyboard focus, 44px mobile targets and unrestricted system zoom
+  logs, keyboard focus, measured 44px mobile targets and 2× CDP page scaling
 - A dropped response after a real committed baseline write, reload, and duplicate retry preserving the receipt
 - Twenty-entry history pages with 21 baseline records and 21 source snapshots; selected snapshot retained across pages
 - A consumed setup token rejected in a second independent browser context, password login, and revisiting the same D1 records/log
@@ -104,6 +104,36 @@ text of at least 12px, 20–22px headings and more rows/comparison columns than 
 original reference. This is a density refinement, not fabricated operational
 metrics. Source SHA-256 values identify both approved reference images in the
 JSON summary; the review must open those exact images alongside this Apps pair.
+
+## Mobile target and page-scale evidence
+
+At 390×844, the browser measures actual bounding boxes for displayed, enabled
+controls and requires at least 44 CSS pixels in both dimensions. Each target is
+scrolled into view and checked with Playwright's trial click for real pointer
+actionability. Coverage includes every visible Source and History disclosure,
+snapshot selection, source/baseline import labels, app search/filter/sort, all
+rendered app-row buttons and arrows, bottom navigation, and enabled forward/back
+buttons on the app, source and history pages. Disabled controls are excluded;
+each requested selector must still yield at least one measured target. The JSON
+summary records selector, index and measured dimensions without adding images.
+
+The existing CDP session also calls
+[`Emulation.setPageScaleFactor`](https://chromedevtools.github.io/devtools-protocol/tot/Emulation/#method-setPageScaleFactor)
+with factor 2. Both `window.visualViewport.scale` and
+[`Page.getLayoutMetrics`](https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-getLayoutMetrics)
+must report the observed scale, and the visual viewport must shrink accordingly.
+At that scale, the browser searches for a flavor, opens/closes its detail and
+clears the search using ordinary actionable controls. A finally block restores
+factor 1, and every reference screenshot independently requires scale 1.
+
+This exercises CDP visual page scaling. It does not prove native pinch gestures,
+OS text zoom or browser-toolbar zoom; those remain explicitly unverified in the
+summary. The viewport meta tag is checked separately as metadata. No CSS zoom,
+transform, security flag or forced click substitutes for observed scaling. If
+the runner's Chrome cannot perform the CDP operation or the controls are not
+usable at 2×, the gate fails instead of claiming a zoom pass. Source contract
+tests alone do not establish measured targets or zoom; actual CI remains the
+required execution evidence.
 
 ## Evidence and review
 
