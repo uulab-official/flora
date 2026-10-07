@@ -4,6 +4,19 @@ import { readFile } from "node:fs/promises";
 import { bridgeRequest, SYNTHETIC_ORIGIN } from "../scripts/hosted-qa/transport.mjs";
 import { createResponseGate } from "../scripts/hosted-qa/response-gate.mjs";
 
+test("only exact generic brand and icon assets are public", async () => {
+  const { routeRequest, HttpFailure } = await import("../packages/cloudflare/dist/http.js");
+  for (const path of ["/brand.png", "/icons.svg"]) {
+    assert.deepEqual(routeRequest(new Request(SYNTHETIC_ORIGIN + path)), { kind: "public-asset", path, limit: 0 });
+    for (const [suffix, status] of [["?v=1", 400], ["/", 404]] as const) {
+      assert.throws(() => routeRequest(new Request(SYNTHETIC_ORIGIN + path + suffix)), error => error instanceof HttpFailure && error.status === status);
+    }
+    assert.throws(() => routeRequest(new Request(SYNTHETIC_ORIGIN + path, { method: "POST" })), error => error instanceof HttpFailure && error.status === 405);
+  }
+  for (const path of ["/", "/app.js", "/app.css"]) assert.equal(routeRequest(new Request(SYNTHETIC_ORIGIN + path)).kind, "private-asset");
+  for (const path of ["/public/brand.png", "/%62rand.png", "/icons.svg.json"]) assert.throws(() => routeRequest(new Request(SYNTHETIC_ORIGIN + path)), error => error instanceof HttpFailure && error.status === 404);
+});
+
 test("hosted response gate proves arrival, blocks delivery until release and has a deadline", async () => {
   const gate = createResponseGate(1000); let delivered = false;
   const work = (async () => { await gate.hold(); delivered = true; gate.finish(); })();
@@ -86,12 +99,26 @@ test("hosted composition requires real enrollment, preserves original import rec
   const { createHostedQaHarness } = await import("../scripts/hosted-qa/runtime.mjs");
   const harness = await createHostedQaHarness();
   try {
+    const { createHash } = await import("node:crypto");
+    assert.ok(harness.sourceEvidence, "The runtime must identify the exact rendered Worker and asset bytes");
+    assert.match(harness.sourceEvidence.workerSha256, /^[a-f0-9]{64}$/);
+    for (const [name, digest] of Object.entries(harness.sourceEvidence.assetSha256)) assert.equal(digest, createHash("sha256").update(await readFile(new URL("../packages/cloudflare/public/" + name, import.meta.url))).digest("hex"));
     const call = (path: string, body?: Uint8Array | string, headers: Record<string, string> = {}) => harness.fetch(SYNTHETIC_ORIGIN + path, {
       method: body === undefined ? "GET" : "POST", headers: { ...(body === undefined ? {} : { "Content-Type": "application/json", Origin: SYNTHETIC_ORIGIN }), ...headers },
       ...(body === undefined ? {} : { body }),
     });
     assert.equal((await call("/api/state")).status, 401);
     for (const path of ["/app.js", "/app.css"]) assert.equal((await call(path)).status, 401);
+    for (const [path, mime] of [["/brand.png", "image/png"], ["/icons.svg", "image/svg+xml; charset=utf-8"]]) {
+      const asset = await call(path!); assert.equal(asset.status, 200);
+      const headers = new Headers([...asset.headers]);
+      assert.equal(headers.get("Content-Type"), mime);
+      assert.equal(headers.get("Cache-Control"), "no-store");
+      assert.equal(headers.get("Content-Security-Policy"), "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'");
+      assert.deepEqual(Buffer.from(await asset.arrayBuffer()), await readFile(new URL("../packages/cloudflare/public" + path, import.meta.url)));
+      assert.equal((await call(path + "?cache=1")).status, 400);
+      assert.equal((await call(path + "/")).status, 404);
+    }
     const setup = JSON.stringify({ email: harness.email, password: harness.password, confirmation: harness.password, token: harness.token });
     const first = await call("/api/auth/enroll", setup); assert.equal(first.status, 200);
     const cookies = first.headers.getSetCookie(); assert.equal(cookies.length, 2);
@@ -102,6 +129,7 @@ test("hosted composition requires real enrollment, preserves original import rec
     }
     const session = await first.json() as { csrfToken: string; expiresAt: number };
     const auth = { Cookie: cookies.map(value => value.split(";", 1)[0]).join("; "), "X-Flora-CSRF": session.csrfToken };
+    assert.equal(await (await call("/app.css", undefined, auth)).text(), await readFile(new URL("../packages/cloudflare/public/app.css", import.meta.url), "utf8"));
     assert.equal((await call("/api/auth/enroll", setup)).status, 403);
     const empty = await (await call("/api/state", undefined, auth)).json() as { selected: unknown; snapshots: { items: unknown[] } };
     assert.equal(empty.selected, null); assert.equal(empty.snapshots.items.length, 0);
@@ -114,7 +142,6 @@ test("hosted composition requires real enrollment, preserves original import rec
     const duplicate = await call("/api/baselines?snapshotId=" + selected.id, baselineBytes, auth);
     assert.equal(duplicate.status, 201); assert.equal((await duplicate.json() as { id: string }).id, receipt.id);
     const state = await (await call("/api/state", undefined, auth)).json() as { selected: { id: string }; history: { items: { id: string; evidenceDigest: string }[] } };
-    const { createHash } = await import("node:crypto");
     assert.equal(state.selected.id, selected.id); assert.equal(state.history.items.length, 1);
     assert.equal(state.history.items[0]!.evidenceDigest, createHash("sha256").update(baselineBytes).digest("hex"));
     const second = await call("/api/auth/login", JSON.stringify({ email: harness.email, password: harness.password })); assert.equal(second.status, 200);
@@ -123,6 +150,8 @@ test("hosted composition requires real enrollment, preserves original import rec
     assert.equal((await (await call("/api/state", undefined, { Cookie: secondCookie })).json() as { selected: { id: string } }).selected.id, selected.id);
     assert.equal((await call("/api/auth/logout", "{}", auth)).status, 200);
     assert.equal((await call("/api/state", undefined, auth)).status, 401);
+    for (const path of ["/", "/app.js", "/app.css"]) assert.equal((await call(path, undefined, auth)).status, 401);
+    for (const path of ["/brand.png", "/icons.svg"]) assert.equal((await call(path)).status, 200);
     assert.equal((await call("/api/state", undefined, { Cookie: secondCookie })).status, 200);
     assert.equal(harness.outboundRequests(), 0);
   } finally { await harness.close(); }

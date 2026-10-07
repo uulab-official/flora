@@ -31,6 +31,7 @@ class Document {
     }
   }
   createElement(tag: string) { return new Element(tag); }
+  createElementNS(_namespace: string, tag: string) { return new Element(tag); }
   getElementById(id: string): Element {
     const find = (node: Element): Element | undefined => node.id === id ? node : node.children.map(find).find(Boolean);
     for (const node of this.nodes.values()) { const match = find(node); if (match) return match; }
@@ -270,4 +271,101 @@ test("auth_style_keeps_keyboard_focus_and_readable_contrast", () => {
   for (const [color, background] of [["#1e2c2b", "#f5f6f4"], ["#145d4d", "#fff"], ["#52665a", "#fff"], ["#52665a", "#f5f6f4"], ["#536b5c", "#fff"], ["#244537", "#fbfcfa"], ["#fff", "#145d4d"], ["#fff", "#114f42"], ["#8a5225", "#fff2e9"]]) {
     const values = [luminance(color!), luminance(background!)].sort((a, b) => b - a); assert.ok((values[0]! + .05) / (values[1]! + .05) >= 4.5, color + " on " + background);
   }
+});
+
+function multipleFlavors(count = 11) {
+  const data = state();
+  data.selected.flavors = Array.from({ length: count }, (_, index) => ({ id: `sample-${index + 1}`, appName: fact(`Sample App ${index + 1}`), productType: fact("demo"), declaredPackage: fact(`example.sample${index + 1}`) }));
+  data.selected.selectedFlavor = "sample-1";
+  return data;
+}
+
+test("console_reports_one_imported_source_and_declared_flavors_without_live_metrics", async () => {
+  const data = multipleFlavors(); const app = await controller(data);
+  assert.equal(app.document.getElementById("app-count").textContent, "11");
+  assert.equal(app.document.getElementById("source-count").textContent, "1");
+  const rows = app.document.getElementById("app-rows").children;
+  assert.equal(rows.length, 10); assert.ok(rows[0]!.textContent.includes("Sample App 1"));
+  assert.ok(rows[0]!.textContent.includes("synthetic/app")); assert.ok(rows[0]!.textContent.includes("1.0.0"));
+  assert.equal((rows[0]!.textContent.match(/미연결/g) ?? []).length, 3);
+  assert.ok(!rows[0]!.textContent.includes("통과"));
+  assert.ok(app.document.getElementById("app-pagination").textContent.includes("11개 flavor")); app.client.close();
+});
+
+test("console_search_sort_and_local_paging_use_imported_facts_without_requests", async () => {
+  const app = await controller(multipleFlavors()); const count = app.calls.length;
+  await app.document.getElementById("app-next").dispatch("click");
+  assert.equal(app.document.getElementById("app-rows").children.length, 1);
+  assert.ok(app.document.getElementById("app-rows").textContent.includes("Sample App 11"));
+  const search = app.document.getElementById("app-search"); search.value = "example.sample3"; await search.dispatch("input");
+  assert.equal(app.document.getElementById("app-rows").children.length, 1);
+  assert.ok(app.document.getElementById("app-rows").textContent.includes("Sample App 3"));
+  search.value = "no matching app"; await search.dispatch("input"); assert.equal(app.document.getElementById("app-empty").hidden, false);
+  search.value = ""; await search.dispatch("input"); const sort = app.document.getElementById("app-sort"); sort.value = "name-desc"; await sort.dispatch("change");
+  assert.ok(app.document.getElementById("app-rows").children[0]!.textContent.includes("Sample App 11"));
+  assert.equal(app.calls.length, count); app.client.close();
+});
+
+test("console_navigation_and_row_details_preserve_source_scoped_history", async () => {
+  const data = multipleFlavors(); data.history.items = [record()]; const app = await controller(data); const calls = app.calls.length;
+  await app.document.getElementById("flavor-row-sample-2").dispatch("click");
+  assert.equal(app.document.getElementById("app-detail").hidden, false);
+  assert.equal(app.document.getElementById("flavor-select").value, "sample-2");
+  assert.ok(app.document.getElementById("flavor-detail").textContent.includes("example.sample2"));
+  assert.ok(app.document.getElementById("flavor-detail").textContent.includes("선언 버전1.0.0"));
+  assert.ok(app.document.getElementById("flavor-detail").textContent.includes("package.json · /version"));
+  await app.document.getElementById("detail-close").dispatch("click"); assert.equal(app.document.getElementById("app-detail").hidden, true);
+  for (const view of ["sources", "history", "apps"]) {
+    await app.document.getElementById("nav-" + view).dispatch("click");
+    for (const other of ["sources", "history", "apps"]) assert.equal(app.document.getElementById("view-" + other).hidden, other !== view);
+    assert.equal(app.document.getElementById("nav-" + view).getAttribute("aria-current"), "page");
+  }
+  await app.document.getElementById("mobile-history").dispatch("click"); assert.equal(app.document.getElementById("view-history").hidden, false);
+  assert.ok(app.document.getElementById("history-scope").textContent.includes("synthetic/app"));
+  assert.ok(app.document.getElementById("history-scope").textContent.includes("flavor의 실행 결과가 아닙니다"));
+  assert.equal(app.calls.length, calls); app.client.close();
+});
+
+test("console_empty_source_never_invents_apps_or_metrics", async () => {
+  const data: any = state(); data.selected = null; data.snapshots.items = [];
+  const app = await controller(data); assert.equal(app.document.getElementById("empty").hidden, false);
+  assert.equal(app.document.getElementById("dashboard-content").hidden, true);
+  assert.equal(app.document.getElementById("app-count").textContent, "0");
+  assert.equal(app.document.getElementById("source-count").textContent, "0"); app.client.close();
+});
+
+test("console_session_close_erases_table_detail_search_and_recent_history", async () => {
+  const data = multipleFlavors(); data.history.items = [record()]; const app = await controller(data);
+  const search = app.document.getElementById("app-search"); search.value = "Sample App 2"; await search.dispatch("input");
+  await app.document.getElementById("flavor-row-sample-2").dispatch("click"); app.client.close();
+  assert.equal(search.value, ""); assert.ok(!app.document.text.includes("Sample App")); assert.ok(!app.document.text.includes("synthetic/app"));
+  assert.ok(!app.document.text.includes("baseline_a")); assert.equal(app.document.getElementById("app-detail").hidden, true);
+  assert.equal(app.document.getElementById("app-rows").children.length, 0);
+});
+
+test("console_landing_naturally_orders_names_while_explicit_source_order_preserves_provenance", async () => {
+  const data = multipleFlavors(); data.selected.flavors.sort((a, b) => a.id.localeCompare(b.id));
+  const originalIds = data.selected.flavors.map(flavor => flavor.id); const app = await controller(data);
+  const rowNames = () => app.document.getElementById("app-rows").children.map(row => row.children[0]!.textContent);
+  assert.equal(app.document.getElementById("app-sort").value, "name-asc");
+  for (let index = 0; index < 4; index++) assert.ok(rowNames()[index]!.includes(`Sample App ${index + 1}`));
+  const sort = app.document.getElementById("app-sort"); sort.value = "source-order"; await sort.dispatch("change");
+  assert.ok(rowNames()[1]!.includes("Sample App 10")); assert.ok(rowNames()[2]!.includes("Sample App 11"));
+  assert.deepEqual(data.selected.flavors.map(flavor => flavor.id), originalIds); app.client.close();
+});
+
+test("expiry_during_console_render_cannot_repopulate_private_dom_or_clear_expiry_notice", async () => {
+  const { startClient } = await loadApp(); const document = new Document("index.html"); const data = state(); data.history.items = [record()];
+  const deadline = now + 10; let reads = 0; let calls = 0;
+  const client = await startClient({ document, now: () => ++reads < 4 ? deadline - 1 : deadline,
+    fetch: async (url: string) => { calls++; return response(url === "/api/auth/session" ? { csrfToken: randomBytes(32).toString("base64url"), expiresAt: deadline } : data); },
+    setTimeout: () => 1, clearTimeout() {}, addEventListener() {}, location: { replace() {} } });
+  assert.ok(reads >= 4);
+  for (const id of ["app-name", "freshness", "snapshot-select", "snapshot-page", "source-meta", "trust-note", "source-details", "flavor-count", "flavor-select", "flavor-detail", "runtime", "profile", "provider", "history-page", "baseline-history", "empty", "app-count", "source-count", "app-rows", "app-pagination", "app-page-number", "app-search", "app-source-filter", "mobile-source-name", "mobile-flavor-count", "detail-title", "history-scope", "recent-history"]) {
+    assert.equal(document.getElementById(id).textContent, "", `${id} must remain erased`);
+    assert.equal(document.getElementById(id).value, "", `${id} must not retain a private value`);
+  }
+  for (const id of ["dashboard-content", "app-detail", "view-account", "empty"]) assert.equal(document.getElementById(id).hidden, true, `${id} must remain hidden`);
+  assert.ok(document.getElementById("notice").textContent.includes("만료")); assert.equal(document.getElementById("login-link").hidden, false);
+  await client.refresh(); assert.equal(calls, 2); client.close();
 });

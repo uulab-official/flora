@@ -16,8 +16,11 @@ page origins are blocked, service workers are blocked, and workerd's outbound
 service rejects and counts external attempts. Any such attempt fails the gate.
 
 Only the static-assets binding is a test adapter, serving the exact checked-in
-hosted HTML/JS/auth CSS and existing dashboard app CSS. The production Worker
-still performs its private-asset session check. A local D1 database is migrated
+hosted HTML/JS/CSS, generic Flora mark and licensed icon sprite. The console CSS
+comes from `packages/cloudflare/public/app.css`; legacy dashboard CSS is not used.
+Only exact `/brand.png` and `/icons.svg` routes join the public auth assets.
+Private HTML, JavaScript and CSS retain the production Worker's live session
+check, strict routing, no-store headers and unchanged CSP. A local D1 database is migrated
 and receives a synthetic deployment identity. There are no test auth routes,
 success-response stubs, authority subclass, forced session inserts, direct data
 imports, or manual browser cookie injection. Enrollment and login run native
@@ -69,7 +72,12 @@ through Chrome DevTools, then checks horizontal overflow.
 - Public login, rejected setup token, real enrollment, private empty state
 - Cleared auth fields, unchanged Unicode/whitespace password, real cookies and CSRF
 - Invalid JSON upload followed by successful original source/baseline file imports
-- Eleven flavors, exact original-baseline envelope digest, lazy logs and keyboard focus
+- Eleven declared flavors from one source; searchable and sortable ten-row table,
+  source filtering, empty search, paging, selected-flavor detail and close
+- Real desktop/sidebar and mobile/bottom Apps, Source and History navigation;
+  declared version with explicitly unconnected deployment, error and revenue
+- Original upload byte equality, exact original-baseline envelope digest, lazy
+  logs, keyboard focus, 44px mobile targets and unrestricted system zoom
 - A dropped response after a real committed baseline write, reload, and duplicate retry preserving the receipt
 - Twenty-entry history pages with 21 baseline records and 21 source snapshots; selected snapshot retained across pages
 - A consumed setup token rejected in a second independent browser context, password login, and revisiting the same D1 records/log
@@ -78,17 +86,33 @@ through Chrome DevTools, then checks horizontal overflow.
 - Absolute-expiry DOM clearing using only the second browser's test clock
 - No page exceptions, bridge failures, app outbound network or run/cancel/bootstrap calls
 
-Fifteen PNGs are captured: desktop/mobile login, invalid setup, empty state,
-upload error, populated view, second session and logout, plus mobile expiry.
-Only the initial one-baseline populated view uses full-page screenshots; long
-paginated lists use bounded viewport images.
+Fifteen bounded viewport PNGs are captured: desktop login and app detail;
+desktop/mobile empty, upload error, Apps, Source, logout and expiry; mobile
+History. Invalid setup and independent-session revisit remain full interaction
+checks without extra images. Desktop is 1487×1058 and mobile is 390×844, both at
+device scale factor 1. No full-page capture can inflate long paginated records.
+
+The Apps pair matches the selected reference interaction state: eleven declared
+flavors, one source, one source-scoped baseline, Sample App 4 selected, closed
+detail, empty search, ascending app name, first page. The first import must land
+in this default name order before the harness exercises other sorts. This keeps
+the actual landing view aligned with Sample App 1, 2 and 3 in the reference;
+the parser's canonical flavor identifier order remains unchanged. The mobile 853×1844 reference
+normalizes proportionally to 390×843; the runtime viewport adds one pixel of
+height. The approved refinement deliberately uses 13–14px body text, auxiliary
+text of at least 12px, 20–22px headings and more rows/comparison columns than the
+original reference. This is a density refinement, not fabricated operational
+metrics. Source SHA-256 values identify both approved reference images in the
+JSON summary; the review must open those exact images alongside this Apps pair.
 
 ## Evidence and review
 
 The existing dashboard-qa evidence encoder/decoder is reused without changes:
 at most 16 files including the JSON summary, 512 KiB per file, 4 MiB total,
 4096-character base64 chunks, and at most 8 MiB raw log input. SHA-256 manifest
-checks bind every file and the exact commit. Evidence is emitted only after all
+checks bind every file and the exact commit. The summary also records SHA-256
+of every served asset, the Worker bundle, and each original uploaded envelope.
+Evidence is emitted only after all
 interaction checks pass. Failures print only an allowlisted phase/category;
 passwords, setup tokens, cookies, CSRF values, request bodies and raw browser
 errors are never printed. Do not enable Playwright debug logging or traces.

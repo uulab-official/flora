@@ -31,9 +31,9 @@ try {
   assert.ok(!commandLine.arguments.some(value => /^--(?:no-sandbox|disable-setuid-sandbox|disable-web-security|single-process|ignore-certificate-errors|allow-insecure-localhost)(?:=|$)/.test(value))); await cdp.detach();
   let externalRequests = 0, pageErrors = 0, bridgeErrors = 0, logRequests = 0, lifecycleRequests = 0;
   let loseNextBaselineResponse = false, lostReceipt, logoutGate, logGate;
-  const files = [], captures = [], checks = [];
+  const files = [], captures = [], checks = [], importDigests = [];
   async function sessionPage(clock = false) {
-    const context = await browser.newContext({ viewport: { width: 1440, height: 1050 }, deviceScaleFactor: 1, serviceWorkers: "block" });
+    const context = await browser.newContext({ viewport: { width: 1487, height: 1058 }, deviceScaleFactor: 1, serviceWorkers: "block" });
     await context.route("**/*", async route => {
       const request = route.request(); const url = new URL(request.url());
       if (url.origin !== SYNTHETIC_ORIGIN || url.username || url.password) { externalRequests++; await route.abort(); return; }
@@ -61,6 +61,9 @@ try {
     assert.equal(new URL(page.url()).search, ""); assert.equal(new URL(page.url()).hash, "");
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false, "HORIZONTAL_OVERFLOW");
     await page.evaluate(() => document.fonts.ready);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    assert.equal(await page.locator("img").evaluateAll(nodes => nodes.filter(node => node.getClientRects().length).every(node => node.complete && node.naturalWidth > 0)), true, "VISIBLE_IMAGE_NOT_LOADED");
+    assert.equal(await page.locator("svg use").evaluateAll(nodes => nodes.filter(node => node.getClientRects().length).every(node => { const box = node.getBBox(); return box.width > 0 && box.height > 0; })), true, "VISIBLE_ICON_NOT_LOADED");
     const fontCdp = await page.context().newCDPSession(page); await fontCdp.send("DOM.enable"); await fontCdp.send("CSS.enable");
     const root = await fontCdp.send("DOM.getDocument");
     const heading = await fontCdp.send("DOM.querySelector", { nodeId: root.root.nodeId, selector: "h1" });
@@ -69,14 +72,25 @@ try {
     const bytes = await page.screenshot({ type: "png", fullPage, animations: "disabled" });
     assert.ok(bytes.length <= LIMITS.fileBytes, "SCREENSHOT_BYTE_LIMIT"); files.push({ name: `synthetic-hosted-${name}.png`, bytes });
     assert.ok(files.length < LIMITS.files && files.reduce((sum, file) => sum + file.bytes.length, 0) <= LIMITS.totalBytes, "EVIDENCE_TOTAL_BYTE_LIMIT");
-    captures.push({ name, viewport: page.viewportSize(), fullPage, horizontalOverflow: false, koreanFont });
+    const typography = await page.evaluate(() => ({ bodyPx: parseFloat(getComputedStyle(document.body).fontSize), headingPx: parseFloat(getComputedStyle(document.querySelector("h1")).fontSize) }));
+    if (name.endsWith("-apps")) {
+      assert.ok(typography.bodyPx >= 13 && typography.bodyPx <= 14, "DENSE_BODY_TYPE_REQUIRED");
+      assert.ok(typography.headingPx >= 20 && typography.headingPx <= 22, "DENSE_HEADING_TYPE_REQUIRED");
+    }
+    captures.push({ name, viewport: page.viewportSize(), fullPage, horizontalOverflow: false, koreanFont, typography });
   }
   async function both(page, name, fullPage = false) {
-    await page.setViewportSize({ width: 1440, height: 1050 }); await capture(page, "desktop-" + name, fullPage);
+    await page.setViewportSize({ width: 1487, height: 1058 }); await capture(page, "desktop-" + name, fullPage);
     await page.setViewportSize({ width: 390, height: 844 }); await capture(page, "mobile-" + name, fullPage);
   }
   async function ready(page) {
     await page.waitForFunction(() => document.getElementById("workspace")?.getAttribute("aria-busy") === "false" && document.getElementById("source-file")?.disabled === false);
+  }
+  async function navigate(page, view) {
+    const mobile = page.locator("#mobile-" + view);
+    await (await mobile.isVisible() ? mobile : page.locator("#nav-" + view)).click();
+    await page.locator("#view-" + view).waitFor({ state: "visible" });
+    for (const other of ["apps", "sources", "history", "account"].filter(value => value !== view)) assert.equal(await page.locator("#view-" + other).isHidden(), true);
   }
   async function authenticate(page, setup, token = harness.token) {
     await page.locator("#email").fill(harness.email); await page.locator("#password").fill(harness.password);
@@ -97,25 +111,32 @@ try {
   }
   async function upload(page, kind, bytes) {
     await ready(page);
+    if (kind === "baseline") await navigate(page, "history");
     const pending = page.waitForResponse(response => new URL(response.url()).pathname === "/api/" + (kind === "source" ? "sources" : "baselines") && response.request().method() === "POST");
     await page.locator("#" + kind + "-file").setInputFiles({ name: "synthetic-" + kind + ".json", mimeType: "application/json", buffer: bytes });
-    const response = await pending; assert.equal(response.status(), 201); const receipt = await response.json(); await ready(page); return receipt;
+    const response = await pending; assert.equal(response.status(), 201);
+    const transported = response.request().postDataBuffer(); assert.deepEqual(transported, bytes, "ORIGINAL_IMPORT_BYTES_REQUIRED");
+    importDigests.push({ kind, bytes: bytes.length, sha256: createHash("sha256").update(transported).digest("hex") });
+    const receipt = await response.json(); await ready(page); return receipt;
   }
   async function cleared(page) {
     assert.equal(await page.locator("#dashboard-content").isHidden(), true);
-    for (const id of ["app-name", "source-details", "snapshot-select", "flavor-select", "baseline-history", "provider"]) assert.equal(await page.locator("#" + id).textContent(), "");
+    for (const id of ["app-name", "source-details", "snapshot-select", "flavor-select", "baseline-history", "provider", "app-rows", "flavor-detail", "detail-title", "recent-history", "history-scope", "app-source-filter", "app-count", "source-count"]) assert.equal(await page.locator("#" + id).textContent(), "");
+    assert.equal(await page.locator("#app-detail").isHidden(), true);
+    assert.equal(await page.locator("#app-search").inputValue(), "");
     assert.equal(await page.locator("#source-file").isDisabled(), true); assert.equal(await page.locator("#baseline-file").isDisabled(), true);
-    assert.equal(await page.locator("body").innerText().then(text => text.includes("example/synthetic-app")), false);
+    const text = await page.locator("body").textContent();
+    assert.equal(text.includes("example/synthetic-app") || text.includes("Sample App"), false, "PRIVATE_TEXT_REMAINED_IN_DOM");
   }
 
   const page = first.page;
   phase = "public-login-and-invalid-setup";
-  await page.goto(harness.origin + "/login"); await page.locator("#auth-submit").waitFor(); await both(page, "login");
+  await page.goto(harness.origin + "/login"); await page.locator("#auth-submit").waitFor(); await capture(page, "desktop-login");
   await page.locator("#setup-link").click();
   assert.equal((await authenticate(page, true, "X".repeat(43))).status(), 403);
   await page.locator("#auth-status[role=alert]").waitFor();
   for (const id of ["password", "confirmation", "token"]) assert.equal(await page.locator("#" + id).inputValue(), "");
-  assert.equal((await first.context.cookies()).length, 0); await both(page, "invalid-setup"); checks.push("invalid-setup-rejected-by-authority");
+  assert.equal((await first.context.cookies()).length, 0); checks.push("invalid-setup-rejected-by-authority");
 
   phase = "real-enrollment-and-empty-state";
   assert.equal((await authenticate(page, true)).status(), 200); await page.waitForURL(harness.origin + "/"); await ready(page);
@@ -129,17 +150,73 @@ try {
   await page.locator("#source-file").setInputFiles({ name: "synthetic-invalid.json", mimeType: "application/json", buffer: Buffer.from("{") });
   assert.equal((await invalidResponse).status(), 400); await page.locator("#notice[role=alert]").waitFor(); await both(page, "upload-error");
   const source = await upload(page, "source", harness.source()); assert.equal(await page.locator("#snapshot-select").inputValue(), source.id);
-  assert.equal(await page.locator("#flavor-select option").count(), 11); await page.locator("#flavor-select").selectOption("sample-4");
+  phase = "apps-search-sort-pagination-and-detail";
+  await navigate(page, "apps");
+  const appButtons = page.locator('#app-rows button[id^="flavor-row-"]');
+  assert.equal(await page.locator("#app-sort").inputValue(), "name-asc");
+  assert.equal(await appButtons.first().locator("strong").innerText(), "Sample App 1");
+  assert.equal(await appButtons.count(), 10);
+  await page.locator("#app-next").click(); assert.equal(await appButtons.count(), 1);
+  await page.locator("#app-previous").click(); assert.equal(await appButtons.count(), 10);
+  await page.locator("#app-search").fill("Sample App 4"); assert.equal(await appButtons.count(), 1);
+  await page.locator("#flavor-row-sample-4").click();
+  await page.locator("#app-detail").waitFor({ state: "visible" });
+  assert.equal(await page.locator("#flavor-select option").count(), 11);
+  assert.equal(await page.locator("#flavor-select").inputValue(), "sample-4");
   assert.ok((await page.locator("#flavor-detail").innerText()).includes("Sample App 4"));
+  assert.ok((await page.locator("#app-detail").innerText()).includes("1.2.3"));
+  await page.setViewportSize({ width: 1487, height: 1058 }); await capture(page, "desktop-app-detail");
+  await page.locator("#detail-close").click(); assert.equal(await page.locator("#app-detail").isHidden(), true);
+  await page.locator("#app-search").fill("no-such-synthetic-flavor"); assert.equal(await appButtons.count(), 0);
+  await page.locator("#app-search").fill(""); assert.equal(await appButtons.count(), 10);
+  await page.locator("#app-sort").selectOption("name-desc"); assert.ok((await appButtons.first().innerText()).includes("Sample App 11"));
+  await page.locator("#app-sort").selectOption("source-order");
+  const sourceFilter = await page.locator("#app-source-filter option").last().getAttribute("value");
+  assert.ok(sourceFilter); await page.locator("#app-source-filter").selectOption(sourceFilter); assert.equal(await appButtons.count(), 10);
+  await page.locator("#app-source-filter").selectOption({ index: 0 });
+  const rows = await page.locator("#app-rows tr").allTextContents();
+  assert.equal(rows.length, 10);
+  for (const row of rows) {
+    assert.ok(row.includes("1.2.3") && row.includes("example/synthetic-app"));
+    assert.equal(row.match(/미연결/g)?.length, 3, "UNKNOWN_DEPLOYMENT_ERROR_REVENUE_REQUIRED");
+  }
+  await page.locator("#app-sort").selectOption("name-asc");
+  checks.push("search-clear-and-empty-results", "source-filter-and-name-sort", "ten-row-flavor-pagination", "app-detail-selection-and-close", "declared-version-and-unknown-operations-metrics");
+
+  phase = "original-baseline-and-console-navigation";
   const baselineBytes = await harness.baseline(), baseline = await upload(page, "baseline", baselineBytes);
   assert.equal(baseline.evidence.evidenceDigest, createHash("sha256").update(baselineBytes).digest("hex"));
   assert.equal(logRequests, 0); await page.locator("#baseline-history summary").click();
   await page.locator("#baseline-history pre").filter({ hasText: "synthetic result" }).waitFor(); assert.equal(logRequests, 1);
   await page.locator("#baseline-history summary").focus();
   assert.equal(await page.locator("#baseline-history summary").evaluate(node => node === document.activeElement), true);
-  await both(page, "populated", true); checks.push("original-source-baseline-ui-upload", "eleven-flavors", "exact-baseline-envelope-digest", "lazy-log-fetch-and-keyboard-focus");
+  await page.setViewportSize({ width: 390, height: 844 }); await capture(page, "mobile-history");
+  await navigate(page, "sources");
+  await page.locator(".source-details > summary").click();
+  assert.ok((await page.locator("#source-details").innerText()).includes(source.files[0].sha256));
+  assert.ok((await page.locator("#runtime").innerText()).includes("1.2.3"));
+  await both(page, "sources"); checks.push("source-hash-disclosure-and-declared-runtime");
+  await navigate(page, "apps");
+  // Exact approved interaction state, with the requested denser type/table:
+  // eleven declared flavors, one source, one source-scoped imported baseline,
+  // Sample App 4 selected, no search, ascending app name, and detail closed.
+  await page.setViewportSize({ width: 1487, height: 1058 });
+  assert.equal(await page.locator("#app-sort").inputValue(), "name-asc");
+  assert.equal(await appButtons.first().locator("strong").innerText(), "Sample App 1");
+  await page.locator("#flavor-row-sample-4").click(); await page.locator("#detail-close").click();
+  assert.equal(await page.locator("#app-search").inputValue(), "");
+  assert.equal(await appButtons.count(), 10);
+  await page.locator('label[for="source-file"]').first().waitFor({ state: "visible" });
+  await page.locator("#app-search").waitFor({ state: "visible" });
+  await both(page, "apps");
+  for (const selector of ["#mobile-apps", "#mobile-sources", "#mobile-history", '#app-rows button[id^="flavor-row-"]']) {
+    const box = await page.locator(selector).first().boundingBox(); assert.ok(box && box.height >= 44 && box.width >= 44, "MOBILE_TOUCH_TARGET_REQUIRED");
+  }
+  assert.equal(await page.locator('meta[name="viewport"]').getAttribute("content"), "width=device-width, initial-scale=1");
+  checks.push("original-source-baseline-ui-upload", "eleven-flavors-one-source", "exact-baseline-envelope-digest", "lazy-log-fetch-and-keyboard-focus", "desktop-and-mobile-three-view-navigation", "mobile-touch-targets-and-system-zoom");
 
   phase = "lost-response-idempotent-recovery";
+  await navigate(page, "history");
   const lostBytes = await harness.baseline(0, 2); loseNextBaselineResponse = true;
   await page.locator("#baseline-file").setInputFiles({ name: "synthetic-baseline.json", mimeType: "application/json", buffer: lostBytes });
   await page.locator("#notice[role=alert]").filter({ hasText: "반입 완료 여부" }).waitFor(); assert.ok(lostReceipt);
@@ -153,6 +230,7 @@ try {
   await page.locator("#history-next").click(); await ready(page); assert.equal(await page.locator("#baseline-history .record").count(), 1);
   await page.locator("#history-previous").click(); await ready(page); assert.equal(await page.locator("#baseline-history .record").count(), 20);
   for (let index = 1; index <= 20; index++) await upload(page, "source", harness.source(index));
+  await navigate(page, "sources");
   const newestId = await page.locator("#snapshot-select").inputValue();
   await page.locator("#snapshot-next").click(); await ready(page); assert.equal(await page.locator("#snapshot-select").inputValue(), newestId);
   await page.locator("#snapshot-select").selectOption(source.id); await ready(page); assert.equal(await page.locator("#baseline-history .record").count(), 20);
@@ -166,20 +244,24 @@ try {
   await second.page.locator("#auth-login-link").click(); assert.equal((await authenticate(second.page, false)).status(), 200);
   await second.page.waitForURL(harness.origin + "/"); await ready(second.page);
   const secondSession = await cookieProof(second.context, second.page); assert.notEqual(firstSession, secondSession);
+  await navigate(second.page, "sources");
   assert.equal(await second.page.locator("#snapshot-select").inputValue(), newestId);
   await second.page.locator("#snapshot-next").click(); await ready(second.page);
   await second.page.locator("#snapshot-select").selectOption(source.id); await ready(second.page);
   assert.equal(await second.page.locator("#baseline-history .record").count(), 20);
+  await navigate(second.page, "history");
   await second.page.locator("#history-next").click(); await ready(second.page);
   assert.ok((await second.page.locator("#baseline-history").innerText()).includes(baseline.id));
   await second.page.locator("#baseline-history summary").click(); await second.page.locator("#baseline-history pre").filter({ hasText: "synthetic result" }).waitFor();
-  await both(second.page, "second-session"); checks.push("independent-session-revisits-d1-history-and-log");
+  checks.push("independent-session-revisits-d1-history-and-log");
 
   phase = "logout-immediate-clearing-and-revocation";
+  await navigate(page, "history");
   const oldCookie = (await first.context.cookies()).map(cookie => cookie.name + "=" + cookie.value).join("; ");
   logGate = createResponseGate(); logoutGate = createResponseGate();
   try {
     await page.locator("#baseline-history summary").first().click(); await logGate.entered;
+    await navigate(page, "account");
     const logoutResponse = page.waitForResponse(response => new URL(response.url()).pathname === "/api/auth/logout");
     await page.locator("#logout-button").click(); await logoutGate.entered;
     // The real authority has revoked the session, but neither the logout
@@ -208,10 +290,19 @@ try {
   assert.ok(Number.isSafeInteger(expiresAt) && expiresAt > browserNow);
   await second.page.clock.fastForward(expiresAt - browserNow + 1);
   await second.page.locator("#notice[role=alert]").filter({ hasText: "만료" }).waitFor(); await cleared(second.page);
-  await capture(second.page, "mobile-expired"); checks.push("browser-clock-absolute-expiry-clears-dom");
+  await both(second.page, "expired"); checks.push("browser-clock-absolute-expiry-clears-dom");
   assert.equal(externalRequests, 0); assert.equal(harness.outboundRequests(), 0); assert.equal(pageErrors, 0); assert.equal(bridgeErrors, 0); assert.equal(lifecycleRequests, 0);
   files.push({ name: "synthetic-hosted-evidence.json", bytes: Buffer.from(JSON.stringify({ syntheticOnly: true, commit: process.env.GITHUB_SHA,
     browser: await browser.version(), browserSandboxRequested: true, unsafeSandboxFlagsAbsent: true,
+    sourceEvidence: harness.sourceEvidence, importDigests,
+    visualTarget: {
+      desktop: { sha256: "87822d71c7531c20e038955642279c79eba9cf9bb8bc1c48b7560cc25086d813", width: 1487, height: 1058 },
+      mobile: { sha256: "828923f82f1337aca78ee2eabb79c969c5083d8876362995b2d9430c886f7617", sourceWidth: 853, sourceHeight: 1844, viewportWidth: 390, viewportHeight: 844 },
+      state: "apps; 11 declared flavors; 1 source; 1 source-scoped baseline; Sample App 4 selected; detail closed; empty search; ascending app name; first page",
+      approvedRefinement: "13–14px body, minimum 12px auxiliary text, 20–22px heading, denser rows and unknown deployment/error/revenue comparisons",
+      referenceNormalization: "Mobile reference proportionally normalizes to 390×843; capture is 390×844. Density refinement intentionally shows more rows than the original reference.",
+      pixelReview: "required after decoding; interaction assertions alone are not visual approval",
+    },
     transport: "synthetic HTTPS route interception into production Worker, SQLite DO and D1; real response cookies",
     unverified: ["deployed DNS/TLS", "Cloudflare Free account/resource capacity", "deployed CPU/memory/latency", "wall-clock server expiry during browser run"],
     externalRequests, workerOutboundRequests: harness.outboundRequests(), pageErrors, bridgeErrors, lifecycleRequests, captures, checks }, null, 2)) });

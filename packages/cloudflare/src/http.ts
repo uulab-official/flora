@@ -7,6 +7,7 @@ export type Route = { kind: "public-asset" | "private-asset" | "auth" | "hosted"
 const assets: Record<string, { kind: "public-asset" | "private-asset"; file: string }> = {
   "/login": { kind: "public-asset", file: "/auth.html" }, "/setup": { kind: "public-asset", file: "/auth.html" },
   "/auth.js": { kind: "public-asset", file: "/auth.js" }, "/auth.css": { kind: "public-asset", file: "/auth.css" },
+  "/brand.png": { kind: "public-asset", file: "/brand.png" }, "/icons.svg": { kind: "public-asset", file: "/icons.svg" },
   "/": { kind: "private-asset", file: "/index.html" }, "/app.js": { kind: "private-asset", file: "/app.js" }, "/app.css": { kind: "private-asset", file: "/app.css" },
 };
 export function routeRequest(request: Request, internal = false): Route {

@@ -1,5 +1,5 @@
 const LABELS = { passed: "통과", failed: "실패", invalid: "증거 불충분", blocked: "차단됨", interrupted: "중단됨" };
-const PRIVATE_FIELDS = ["app-name", "freshness", "snapshot-select", "snapshot-page", "source-meta", "trust-note", "source-details", "flavor-count", "flavor-select", "flavor-detail", "runtime", "profile", "provider", "history-page", "baseline-history", "empty"];
+const PRIVATE_FIELDS = ["app-name", "freshness", "snapshot-select", "snapshot-page", "source-meta", "trust-note", "source-details", "flavor-count", "flavor-select", "flavor-detail", "runtime", "profile", "provider", "history-page", "baseline-history", "empty", "app-count", "source-count", "app-rows", "app-pagination", "app-page-number", "app-search", "app-source-filter", "mobile-source-name", "mobile-flavor-count", "detail-title", "history-scope", "recent-history"];
 function safe(value, max = 2048) {
   const cleaned = String(value ?? "—").replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, "");
   const bytes = new TextEncoder().encode(cleaned); const suffix = "\n… 표시 제한에 따라 생략됨";
@@ -7,6 +7,7 @@ function safe(value, max = 2048) {
 }
 function element(document, tag, text, className = "") { const node = document.createElement(tag); if (text !== undefined) node.textContent = safe(text, tag === "pre" ? 65_536 : 2048); node.className = className; return node; }
 function pair(document, label, value, mono = false) { const row = element(document, "div", undefined, "fact-row"); row.append(element(document, "span", label, "fact-label"), element(document, "span", value, (mono ? "mono " : "") + "fact-value")); return row; }
+function icon(document, name) { const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg"); svg.setAttribute("class", "icon"); svg.setAttribute("aria-hidden", "true"); const use = document.createElementNS("http://www.w3.org/2000/svg", "use"); use.setAttribute("href", "/icons.svg#icon-" + name); svg.append(use); return svg; }
 function date(value) { const parsed = new Date(value); return Number.isNaN(parsed.getTime()) ? "시각 알 수 없음" : parsed.toLocaleString("ko-KR", { timeZone: "UTC", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) + " UTC"; }
 function select(document, id, items, value) { const node = document.getElementById(id); node.replaceChildren(...items.map(([id, text]) => { const option = element(document, "option", text); option.value = id; return option; })); node.value = value ?? ""; }
 function validState(value) {
@@ -19,6 +20,7 @@ export async function startClient(env) {
   const now = () => env.now?.() ?? Date.now();
   let csrf = ""; let expiresAt = 0; let expiryTimer; let closed = false; let busy = false; let reading = false; let generation = 0; let viewGeneration = 0; let data = null; let selectedId = null;
   let snapshotCursors = [null]; let historyCursors = [null];
+  let currentView = "apps"; let appPage = 0; let filteredCount = 0; let detailTrigger = null; const pageSize = 10;
   const requests = new Set(); const logs = new Map();
 
   function notice(text = "", error = false, retry = false) {
@@ -38,12 +40,16 @@ export async function startClient(env) {
     node("history-previous").disabled = closed || busy || reading || historyCursors.length < 2;
     node("history-next").disabled = closed || busy || reading || !data?.history.nextCursor;
     node("retry-button").disabled = closed || busy || reading;
+    for (const id of ["app-search", "app-source-filter", "app-sort"]) node(id).disabled = closed || !data?.selected || busy;
+    node("app-previous").disabled = closed || appPage === 0;
+    node("app-next").disabled = closed || (appPage + 1) * pageSize >= filteredCount;
+    for (const view of ["apps", "sources", "history", "account"]) for (const prefix of ["nav-", "mobile-"]) node(prefix + view).disabled = closed || !csrf;
   }
   function erase() {
     viewGeneration++;
     for (const id of PRIVATE_FIELDS) { node(id).replaceChildren(); node(id).value = ""; }
     for (const id of ["source-file", "baseline-file"]) node(id).value = "";
-    node("dashboard-content").hidden = true; node("empty").hidden = true;
+    node("dashboard-content").hidden = true; node("empty").hidden = true; node("app-detail").hidden = true; node("view-account").hidden = true; appPage = 0; filteredCount = 0; detailTrigger = null;
     data = null; selectedId = null; logs.clear(); snapshotCursors = [null]; historyCursors = [null];
   }
   function close(message = "") {
@@ -92,11 +98,69 @@ export async function startClient(env) {
     const selected = data?.selected; if (!selected) return;
     const flavor = selected.flavors.find(item => item.id === node("flavor-select").value) ?? selected.flavors[0];
     node("flavor-detail").replaceChildren();
-    if (flavor) for (const [label, fact] of [["앱 이름", flavor.appName], ["제품 유형", flavor.productType], ["패키지 선언", flavor.declaredPackage]]) node("flavor-detail").append(pair(document, label, fact.value), element(document, "p", `${fact.provenance.path} · ${fact.provenance.pointer}`, "source-pointer mono"));
+    node("detail-title").textContent = flavor ? safe(flavor.appName.value) : "앱 상세";
+    if (flavor) for (const [label, fact] of [["앱 이름", flavor.appName], ["제품 유형", flavor.productType], ["패키지 선언", flavor.declaredPackage], ...(selected.runtime.appVersion ? [["선언 버전", selected.runtime.appVersion]] : [])]) node("flavor-detail").append(pair(document, label, fact.value), element(document, "p", `${fact.provenance.path} · ${fact.provenance.pointer}`, "source-pointer mono"));
+  }
+  function showView(view, focus = false) {
+    if (!active() || !["apps", "sources", "history", "account"].includes(view)) return;
+    currentView = view;
+    const labels = { apps: ["앱", "반입한 앱과 설정을 한곳에서 확인하세요."], sources: ["소스", "반입한 소스의 revision과 선언된 설정을 확인하세요."], history: ["반입 이력", "선택한 소스 revision에 반입된 개발 결과입니다."], account: ["설정", "비공개 작업실의 계정과 반입 범위를 확인하세요."] };
+    node("view-title").textContent = labels[view][0]; node("view-label").textContent = labels[view][0]; node("view-description").textContent = labels[view][1];
+    for (const other of Object.keys(labels)) {
+      node("view-" + other).hidden = other !== view;
+      for (const prefix of ["nav-", "mobile-"]) { const button = node(prefix + other); button.setAttribute("aria-current", other === view ? "page" : "false"); button.className = (prefix === "nav-" ? "nav-item" : "") + (other === view ? " active" : ""); }
+    }
+    node("dashboard-content").hidden = !data?.selected || view === "account";
+    node("empty").hidden = Boolean(data?.selected) || view === "account";
+    if (focus) node("workspace").focus();
+  }
+  function openFlavor(id, trigger) {
+    if (!active() || !data?.selected?.flavors.some(flavor => flavor.id === id)) return;
+    node("flavor-select").value = id; renderFlavor(); detailTrigger = trigger;
+    node("app-detail").hidden = false; node("detail-title").focus();
+  }
+  function renderTable() {
+    const selected = data?.selected; if (!selected) return;
+    const query = node("app-search").value.trim().toLocaleLowerCase();
+    const source = node("app-source-filter").value;
+    let flavors = selected.flavors.filter(flavor => (!source || source === "all" || source === selected.id) && [flavor.appName.value, flavor.id, flavor.declaredPackage.value, selected.repository.fullName].some(value => String(value).toLocaleLowerCase().includes(query)));
+    const sort = node("app-sort").value;
+    if (sort === "name-asc" || sort === "name-desc") flavors = [...flavors].sort((a, b) => String(a.appName.value).localeCompare(String(b.appName.value), "ko", { numeric: true }) * (sort === "name-desc" ? -1 : 1));
+    filteredCount = flavors.length; appPage = Math.min(appPage, Math.max(0, Math.ceil(filteredCount / pageSize) - 1));
+    const shown = flavors.slice(appPage * pageSize, (appPage + 1) * pageSize);
+    node("app-rows").replaceChildren(...shown.map(flavor => {
+      const row = element(document, "tr"); const nameCell = element(document, "td", undefined, "name-cell");
+      const button = element(document, "button", undefined, "app-open"); button.type = "button"; button.id = "flavor-row-" + flavor.id; button.setAttribute("aria-label", `${safe(flavor.appName.value)} 상세 보기`);
+      const index = selected.flavors.findIndex(item => item.id === flavor.id);
+      const monogram = String(flavor.appName.value).trim().split(/\s+/).map(part => Array.from(part)[0] ?? "").slice(0, 2).join("").toLocaleUpperCase() || Array.from(flavor.id).slice(0, 2).join("");
+      const label = element(document, "span", undefined, "app-label"); label.append(element(document, "strong", flavor.appName.value), element(document, "span", flavor.id, "app-id"), element(document, "span", selected.runtime.appVersion?.value ?? "선언 없음", "mobile-version"));
+      const mark = element(document, "span", monogram, "app-monogram tone-" + index % 6); mark.setAttribute("aria-hidden", "true"); button.append(mark, label); button.addEventListener("click", () => openFlavor(flavor.id, button)); nameCell.append(button); row.append(nameCell);
+      row.append(element(document, "td", selected.repository.fullName, "source-cell"), element(document, "td", selected.runtime.appVersion?.value ?? "선언 없음", "version-cell"));
+      const status = element(document, "td", undefined, "state-cell"); status.append(element(document, "span", "반입됨", "badge")); row.append(status);
+      for (const metric of ["배포", "오류", "수익"]) { const cell = element(document, "td", "미연결", "metric-cell"); cell.setAttribute("aria-label", metric + " 미연결"); row.append(cell); }
+      const arrow = element(document, "td", undefined, "arrow-cell"); const detail = element(document, "button", undefined, "icon-button row-arrow"); detail.type = "button"; detail.setAttribute("aria-label", `${safe(flavor.appName.value)} 상세 보기`); detail.append(icon(document, "chevron-right")); detail.addEventListener("click", () => openFlavor(flavor.id, detail)); arrow.append(detail); row.append(arrow); return row;
+    }));
+    node("app-empty").hidden = shown.length > 0;
+    node("app-pagination").textContent = `${selected.flavors.length}개 flavor 중 ${query ? `검색 ${filteredCount}개 · ` : ""}${shown.length ? appPage * pageSize + 1 : 0}–${appPage * pageSize + shown.length}개 표시`;
+    node("app-page-number").textContent = `${appPage + 1} / ${Math.max(1, Math.ceil(filteredCount / pageSize))}`;
+    controls();
+  }
+  function renderConsole() {
+    const selected = data.selected;
+    node("app-count").textContent = String(selected?.flavors.length ?? 0); node("source-count").textContent = selected ? "1" : "0";
+    if (!selected) { showView(currentView); return; }
+    select(document, "app-source-filter", [["all", "모든 소스"], [selected.id, selected.repository.fullName]], "all");
+    node("mobile-source-name").textContent = safe(selected.repository.fullName); node("mobile-flavor-count").textContent = selected.flavors.length + " flavor";
+    node("history-scope").textContent = safe(`${selected.repository.fullName} · ${selected.commitSha.slice(0, 12)} 소스 기준입니다. 선택한 flavor의 실행 결과가 아닙니다.`);
+    const recent = node("recent-history"); recent.replaceChildren();
+    const entries = [{ at: selected.importedAt, text: "소스 스냅샷 반입", name: "file" }, ...data.history.items.map(record => ({ at: record.createdAt, text: "개발 baseline 반입 · " + (LABELS[record.state] ?? "상태 알 수 없음") + (record.assessment ? ` · 파일 ${record.assessment.files}개 / 테스트 ${record.assessment.tests}개` : ""), name: "file" }))].sort((a, b) => b.at - a.at).slice(0, 3);
+    for (const entry of entries) { const row = element(document, "div", undefined, "recent-row"); row.append(icon(document, entry.name), element(document, "time", date(entry.at)), element(document, "span", entry.text)); recent.append(row); }
+    renderTable(); showView(currentView);
   }
   function render() {
-    const selected = data.selected; viewGeneration++; logs.clear();
-    node("dashboard-content").hidden = !selected; node("empty").hidden = Boolean(selected);
+    const selected = data.selected; viewGeneration++; logs.clear(); node("app-detail").hidden = true; detailTrigger = null; renderConsole();
+    if (!active() || !data) return;
+    node("dashboard-content").hidden = !selected || currentView === "account"; node("empty").hidden = Boolean(selected) || currentView === "account";
     if (!selected) {
       node("empty").replaceChildren(element(document, "p", "SOURCE SNAPSHOT", "eyebrow"), element(document, "h2", "첫 소스 snapshot을 가져오세요"), element(document, "p", "소스 JSON에서 앱·flavor·런타임 선언을 확인합니다. 최대 1 MiB의 원본 파일을 선택해 주세요."), element(document, "p", "반입은 파일 안의 코드를 실행하지 않습니다.", "subtle")); controls(); return;
     }
@@ -142,7 +206,9 @@ export async function startClient(env) {
       const next = await api("/api/state" + (query.size ? "?" + query : ""));
       if (!active() || version !== generation) return false;
       if (!validState(next) || (selectedId && next.selected?.id !== selectedId)) throw new Error("INVALID_STATE");
-      data = next; selectedId = data.selected?.id ?? null; snapshotCursors = nextSnapshots; historyCursors = nextHistory; render(); notice(); return true;
+      data = next; selectedId = data.selected?.id ?? null; snapshotCursors = nextSnapshots; historyCursors = nextHistory; render();
+      if (!active()) return false;
+      notice(); return true;
     } catch (error) { if (!closed && version === generation) failure(error); return false; }
     finally { if (version === generation) { reading = false; controls(); } }
   }
@@ -196,6 +262,12 @@ export async function startClient(env) {
     try { await api("/api/auth/logout", "{}", value); if (version === generation) notice("로그아웃했습니다. 다시 보려면 로그인해 주세요."); }
     catch (error) { if (version === generation) notice(error.status === 401 ? "세션이 종료되었습니다. 다시 보려면 로그인해 주세요." : "화면은 비웠지만 서버 로그아웃을 확인하지 못했습니다. 연결을 확인하고 페이지를 새로 연 뒤 로그아웃을 다시 시도해 주세요.", error.status !== 401); }
   }
+  for (const view of ["apps", "sources", "history", "account"]) for (const prefix of ["nav-", "mobile-"]) node(prefix + view).addEventListener("click", () => showView(view, true));
+  for (const [id, event] of [["app-search", "input"], ["app-source-filter", "change"], ["app-sort", "change"]]) node(id).addEventListener(event, () => { if (!active()) return; appPage = 0; renderTable(); });
+  for (const [id, direction] of [["app-previous", -1], ["app-next", 1]]) node(id).addEventListener("click", () => { if (!active()) return; appPage = Math.max(0, appPage + direction); renderTable(); });
+  node("detail-close").addEventListener("click", () => { node("app-detail").hidden = true; detailTrigger?.focus(); detailTrigger = null; });
+  node("detail-source").addEventListener("click", () => showView("sources", true));
+  node("recent-history-link").addEventListener("click", () => showView("history", true));
   node("source-file").addEventListener("change", event => importFile("source", event.target.files?.[0]));
   node("baseline-file").addEventListener("change", event => importFile("baseline", event.target.files?.[0]));
   node("snapshot-select").addEventListener("change", event => chooseSnapshot(event.target.value));
@@ -218,6 +290,7 @@ export async function startClient(env) {
     } catch (error) { failure(error); }
     finally { reading = false; controls(); }
   }
+  node("app-sort").value = "name-asc";
   await initialize();
   return { refresh, chooseSnapshot, pageSnapshots: direction => page("snapshots", direction), pageHistory: direction => page("history", direction), importFile, logout, close: () => close() };
 }

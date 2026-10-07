@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { parseSourceBundle } from "@app-ops/dogfood";
 import { syntheticSourceBundle, syntheticBaseline } from "../../tests/dogfood-fixtures.ts";
 import { SYNTHETIC_ORIGIN } from "./transport.mjs";
+import { HOSTED_ASSETS } from "../build-cloudflare.mjs";
 
 const require = createRequire(new URL("../../packages/cloudflare/package.json", import.meta.url));
 const { build } = require("esbuild");
@@ -17,11 +18,12 @@ export async function createHostedQaHarness() {
   const directory = await mkdtemp(join(tmpdir(), "flora-hosted-qa-"));
   let mf; let outbound = 0;
   try {
-    const assets = new Map();
-    for (const name of ["index.html", "auth.html", "app.js", "auth.js", "auth.css"]) {
-      assets.set("/" + name, await readFile(new URL("../../packages/cloudflare/public/" + name, import.meta.url)));
+    const assets = new Map(), assetSha256 = {};
+    for (const name of HOSTED_ASSETS) {
+      const bytes = await readFile(new URL("../../packages/cloudflare/public/" + name, import.meta.url));
+      assets.set("/" + name, bytes);
+      assetSha256[name] = createHash("sha256").update(bytes).digest("hex");
     }
-    assets.set("/app.css", await readFile(new URL("../../packages/dashboard/public/app.css", import.meta.url)));
     const output = await build({ entryPoints: [fileURLToPath(new URL("../../packages/cloudflare/src/worker.ts", import.meta.url))],
       bundle: true, format: "esm", platform: "browser", target: "es2023", external: ["cloudflare:*", "node:*"], write: false, metafile: true, logLevel: "silent" });
     const script = output.outputFiles[0]?.text;
@@ -42,8 +44,9 @@ export async function createHostedQaHarness() {
         const path = new URL(request.url).pathname;
         const bytes = assets.get(path);
         if (!bytes || !["GET", "HEAD"].includes(request.method)) return new Response(null, { status: 404 });
-        const mime = path.endsWith(".html") ? "text/html" : path.endsWith(".js") ? "text/javascript" : "text/css";
-        return new Response(request.method === "HEAD" ? null : bytes, { headers: { "Content-Type": mime + "; charset=utf-8" } });
+        const mime = path.endsWith(".png") ? "image/png" : path.endsWith(".svg") ? "image/svg+xml; charset=utf-8"
+          : path.endsWith(".html") ? "text/html; charset=utf-8" : path.endsWith(".js") ? "text/javascript; charset=utf-8" : "text/css; charset=utf-8";
+        return new Response(request.method === "HEAD" ? null : bytes, { headers: { "Content-Type": mime } });
       } },
       outboundService: () => { outbound++; return new Response("Synthetic network boundary", { status: 503 }); },
     }));
@@ -60,6 +63,7 @@ export async function createHostedQaHarness() {
     }
     return {
       origin: SYNTHETIC_ORIGIN, email, password, token, source,
+      sourceEvidence: { workerSha256: createHash("sha256").update(script).digest("hex"), assetSha256 },
       fetch: runtime.dispatchFetch.bind(runtime), outboundRequests: () => outbound,
       async baseline(sourceIndex = 0, attempt = 1) {
         if (!Number.isSafeInteger(attempt) || attempt < 1 || attempt > 500) throw new Error("SYNTHETIC_FIXTURE_ATTEMPT");

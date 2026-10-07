@@ -17,6 +17,7 @@ on:
       - 'tests/dogfood-fixtures.ts'
       - 'tests/hosted-qa.test.ts'
       - 'scripts/build-cloudflare.mjs'
+      - 'scripts/build-cloudflare.d.mts'
       - 'scripts/dashboard-qa/**'
       - 'scripts/hosted-qa/**'
       - 'docs/development/password-hosting.ko.md'

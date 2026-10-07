@@ -9,6 +9,7 @@ process.env.WRANGLER_LOG_PATH ??= join(packageRoot, "dist/hosted-build.log");
 process.env.WRANGLER_SEND_METRICS = "false";
 const require = createRequire(join(packageRoot, "package.json"));
 const { build } = require("esbuild");
+export const HOSTED_ASSETS = Object.freeze(["index.html", "app.js", "app.css", "auth.html", "auth.js", "auth.css", "brand.png", "icons.svg"]);
 
 /** Official pinned Wrangler parser; this does not create or access an account. */
 export async function validateExampleConfig(file = join(packageRoot, "wrangler.example.jsonc")) {
@@ -53,9 +54,8 @@ export async function buildHosted() {
   const code = await readFile(join(outdir, "worker.js"), "utf8");
   if (/node:(?:sqlite|http|https|fs|child_process)|setInterval|__test\//.test(code)) throw new Error("FORBIDDEN_HOSTED_BUNDLE_INPUT");
   await writeFile(join(outdir, "meta.json"), JSON.stringify(output.metafile, null, 2) + "\n");
-  for (const file of ["index.html", "app.js", "auth.html", "auth.js", "auth.css"]) await copyFile(join(packageRoot, "public", file), join(publicDir, file));
-  await copyFile(join(root, "packages/dashboard/public/app.css"), join(publicDir, "app.css"));
-  console.log("Hosted bundle and six assets built; configuration validated locally. No deployment performed.");
+  for (const file of HOSTED_ASSETS) await copyFile(join(packageRoot, "public", file), join(publicDir, file));
+  console.log("Hosted bundle and eight assets built; configuration validated locally. No deployment performed.");
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
