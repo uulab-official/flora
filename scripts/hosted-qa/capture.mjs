@@ -42,7 +42,7 @@ try {
       if (/^\/api\/baselines\/[^/]+\/log$/.test(url.pathname)) logRequests++;
       if (/\/(?:run|runs|cancel|bootstrap)(?:\/|$)/.test(url.pathname)) lifecycleRequests++;
       try {
-        const response = await bridgeRequest(request, harness.fetch);
+        const response = await bridgeRequest(request, harness.httpFetch);
         if (loseNextBaselineResponse && url.pathname === "/api/baselines" && request.method() === "POST" && response.status === 201) {
           loseNextBaselineResponse = false; lostReceipt = JSON.parse(response.body.toString()).id;
           await route.abort("failed"); return;
@@ -348,7 +348,8 @@ try {
     // The real authority has revoked the session, but neither the logout
     // response nor the earlier private log has been delivered to this page.
     await cleared(page); assert.equal((await first.context.cookies()).length, 2);
-    assert.equal((await harness.fetch(harness.origin + "/api/state", { headers: { Cookie: oldCookie } })).status, 401);
+    const revoked = await harness.httpFetch(harness.origin + "/api/state", { headers: { Cookie: oldCookie } });
+    assert.equal(revoked.status, 401); assert.deepEqual(await revoked.json(), { error: "UNAUTHENTICATED" });
     logGate.release(); await logGate.finished;
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     await cleared(page);
@@ -384,8 +385,8 @@ try {
       referenceNormalization: "Mobile reference proportionally normalizes to 390×843; capture is 390×844. Density gate requires at least four complete mobile app rows above the fixed navigation.",
       pixelReview: "required after decoding; interaction assertions alone are not visual approval",
     },
-    transport: "synthetic HTTPS route interception into production Worker, SQLite DO and D1; real response cookies",
-    unverified: ["deployed DNS/TLS", "Cloudflare Free account/resource capacity", "deployed CPU/memory/latency", "wall-clock server expiry during browser run", "native pinch gesture", "OS text zoom", "browser toolbar zoom"],
+    transport: "synthetic HTTPS interception via ordinary local HTTP into production Worker, SQLite DO and D1; real response cookies",
+    unverified: ["workerd#7634 rejected-upload transport risk", "deployed upload rejection/retry recovery", "deployed DNS/TLS", "Cloudflare Free account/resource capacity", "deployed CPU/memory/latency", "wall-clock server expiry during browser run", "native pinch gesture", "OS text zoom", "browser toolbar zoom"],
     externalRequests, workerOutboundRequests: harness.outboundRequests(), pageErrors, bridgeErrors, lifecycleRequests, captures, checks }, null, 2)) });
   phase = "evidence-encoding";
   for (const line of encodeEvidence(files, process.env.GITHUB_SHA)) console.log(line);

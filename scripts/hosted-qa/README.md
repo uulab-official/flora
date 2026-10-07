@@ -10,8 +10,10 @@ read private app data. A passing run is not a claim of a deployed service.
 
 The browser sees `https://flora.example.test`, a reserved synthetic origin.
 Playwright intercepts every page request, forwards its original byte buffer and
-headers to local Miniflare `dispatchFetch`, then fulfills the production response
-status, headers and bytes. Redirects are not followed by the bridge. All other
+headers through the harness's ordinary local HTTP method into Miniflare's real
+listener, then fulfills the production response status, headers and bytes.
+The harness alone sets Miniflare's original-URL metadata to the synthetic HTTPS
+URL. Redirects are not followed by the bridge. All other
 page origins are blocked, service workers are blocked, and workerd's outbound
 service rejects and counts external attempts. Any such attempt fails the gate.
 
@@ -43,6 +45,63 @@ Cloudflare routing/static-asset infrastructure, Workers Free activation or
 account quotas, deployed CPU/memory/latency, or a real one-hour session wait.
 Browser clock advancement checks the frontend's absolute-expiry DOM clearing;
 server expiry is covered separately by authority tests.
+
+## Ordinary HTTP acceptance and unresolved runtime gate
+
+The non-browser composition test uses `httpFetch`: Node's ordinary `fetch` to
+Miniflare's actual loopback HTTP listener. The harness validates both the exact
+synthetic input origin and the `http://127.0.0.1:<port>` runtime destination,
+overwrites Miniflare's exported original-URL metadata itself, preserves original
+request bytes, and always uses manual redirects. It does not create a custom
+connection pool, force a fresh socket, delay, or retry a request. The production
+Worker, auth DO, D1, admission rules, and response attributes are unchanged.
+
+That acceptance test sends the complete CSRF-rejected source followed by a valid
+source and baseline upload. It also deliberately loses delivery after a real
+committed HTTP write, checks that existing records remain intact, and verifies
+that an explicit same-envelope retry returns the same receipt without another
+record. This deliberate delivery failure is separate from a runtime reset. The
+browser already checks its corresponding uncertain-result notice, explicit
+reload/reupload, receipt identity, and two-record count without another capture.
+
+The former `dispatchFetch` composition remains executable as a separate
+characterization, with the same real API sequence and response-consumption gate:
+
+```sh
+FLORA_HOSTED_QA_TRANSPORT=dispatch node --test --test-name-pattern=composition tests/hosted-qa.test.ts
+node scripts/hosted-qa/characterize-rejected-upload.mjs dispatch default do
+node scripts/hosted-qa/characterize-rejected-upload.mjs direct default do
+node scripts/hosted-qa/characterize-rejected-upload.mjs native default do
+```
+
+The small characterization contains no Flora code or D1. Each invocation sends
+at most 100 rejected/accepted/accepted sequences, stops at the first error, and
+prints only synthetic request/socket metadata and dependency versions. `direct`
+uses Miniflare's installed undici directly; `native` uses Node's built-in fetch.
+It is not a retry-until-green gate. A passing sample leaves the upstream risk open.
+
+On 2026-10-07, Linux x64 with Node 24.19.0, Miniflare 5.20261006.0-alpha,
+workerd 1.20261006.1, and Miniflare's undici 7.29.1 reproduced `ECONNRESET`
+without Flora or D1. In one bounded eight-process comparison, four dispatch
+cases failed after 13, 46, 34, and 19 completed requests; four direct HTTP cases
+completed 300 requests each. A trace shows a fully received 403, then an accepted
+POST reusing the same socket before a peer reset. Direct HTTP controls also
+observed socket closure after DO rejection, so their pass does not fix workerd.
+Node 24.19.0's native fetch uses undici 7.29.0; no dependency version was changed.
+
+[workerd issue #7634](https://github.com/cloudflare/workerd/issues/7634) independently
+reports the same class of unread-body/service-binding reset and remains open.
+The actual hosted composition also failed on Linux and macOS. Reading its 18
+previously unread response bodies was necessary cleanup, but did not eliminate
+this reset. Do not remove the characterization, weaken pre-auth admission, drain
+denied production uploads, or label an HTTP acceptance pass as a runtime fix.
+
+The upstream transport risk and undeployed Free-edge behavior remain separate,
+unresolved release gates. Source review and local/CI HTTP passes cannot close
+them. An authorized real-account deployment must repeat rejected full upload →
+valid upload, honest failure feedback, and same-envelope recovery while checking
+that pre-existing records and receipt identity survive. No deployment is part of
+this gate.
 
 ## CI and cost boundary
 

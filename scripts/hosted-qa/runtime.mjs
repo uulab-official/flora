@@ -11,7 +11,7 @@ import { HOSTED_ASSETS } from "../build-cloudflare.mjs";
 
 const require = createRequire(new URL("../../packages/cloudflare/package.json", import.meta.url));
 const { build } = require("esbuild");
-const { convertV4MiniflareOptions, Miniflare } = require("miniflare");
+const { convertV4MiniflareOptions, CoreHeaders, Miniflare } = require("miniflare");
 
 /** No test authentication substitute: production Worker + FloraAuth + real D1. */
 export async function createHostedQaHarness() {
@@ -50,7 +50,8 @@ export async function createHostedQaHarness() {
       } },
       outboundService: () => { outbound++; return new Response("Synthetic network boundary", { status: 503 }); },
     }));
-    const runtime = mf, db = await runtime.getD1Database("FLORA_DB");
+    const runtime = mf, runtimeUrl = await runtime.ready, db = await runtime.getD1Database("FLORA_DB");
+    if (runtimeUrl.protocol !== "http:" || runtimeUrl.hostname !== "127.0.0.1" || !runtimeUrl.port || runtimeUrl.username || runtimeUrl.password) throw new Error("LOOPBACK_RUNTIME_REQUIRED");
     const migration = await readFile(new URL("../../packages/cloudflare/migrations/0001_private_imports.sql", import.meta.url), "utf8");
     await db.exec(migration.replace(/^--.*$/gm, "").split(/;\s*(?=CREATE|INSERT|PRAGMA|$)/).filter(value => value.trim()).map(value => value.replace(/\s*\n\s*/g, " ").trim() + ";").join("\n"));
     await db.prepare("INSERT INTO flora_deployment(singleton,owner_id,origin,db_identity) VALUES(1,?,?,?)")
@@ -64,7 +65,18 @@ export async function createHostedQaHarness() {
     return {
       origin: SYNTHETIC_ORIGIN, email, password, token, source,
       sourceEvidence: { workerSha256: createHash("sha256").update(script).digest("hex"), assetSha256 },
-      fetch: runtime.dispatchFetch.bind(runtime), outboundRequests: () => outbound,
+      dispatchFetch: runtime.dispatchFetch.bind(runtime), outboundRequests: () => outbound,
+      async httpFetch(input, init = {}) {
+        const url = new URL(input);
+        if (url.origin !== SYNTHETIC_ORIGIN || url.username || url.password || url.hash) throw new Error("SYNTHETIC_ORIGIN_REQUIRED");
+        const headers = new Headers(init.headers);
+        // Miniflare's supported original-URL header preserves the production
+        // origin admission while the ordinary HTTP client connects to loopback.
+        headers.set(CoreHeaders.ORIGINAL_URL, url.href);
+        const destination = new URL(runtimeUrl);
+        destination.pathname = url.pathname; destination.search = url.search;
+        return fetch(destination, { ...init, headers, redirect: "manual" });
+      },
       async baseline(sourceIndex = 0, attempt = 1) {
         if (!Number.isSafeInteger(attempt) || attempt < 1 || attempt > 500) throw new Error("SYNTHETIC_FIXTURE_ATTEMPT");
         const snapshot = await parseSourceBundle(source(sourceIndex), issuedAt);

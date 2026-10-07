@@ -131,7 +131,8 @@ test("hosted capture requires sandbox and actual cookie/font proof without secur
   assert.match(capture, /chromiumSandbox: true/); assert.match(capture, /channel: "chrome"/);
   assert.match(capture, /Browser\.getBrowserCommandLine/); assert.match(capture, /CSS\.getPlatformFontsForNode/);
   assert.match(capture, /cookie\.secure/); assert.match(capture, /cookie\.httpOnly/); assert.match(capture, /cookie\.sameSite, "Strict"/);
-  assert.match(capture, /bridgeRequest\(request, harness\.fetch\)/);
+  assert.match(capture, /bridgeRequest\(request, harness\.httpFetch\)/);
+  assert.ok(!/harness\.(?:fetch|dispatchFetch)\(/.test(capture));
   assert.match(capture, /encodeEvidence\(files, process\.env\.GITHUB_SHA\)/);
   assert.ok(!/ignoreHTTPSErrors|bypassCSP|addCookies\(|console\.(?:log|error)\(error\)|args:\s*\[/.test(capture));
 });
@@ -149,20 +150,53 @@ test("hosted mobile QA requires measured disclosures, pagination and observed pa
   assert.ok(!/\.style\.(?:zoom|transform)|setAttribute\(["']style["']|mobile-touch-targets-and-system-zoom/.test(capture));
 });
 
-test("hosted composition requires real enrollment, preserves original import receipts and revokes sessions", async () => {
+const compositionTransport = process.env.FLORA_HOSTED_QA_TRANSPORT ?? "http";
+test("hosted " + compositionTransport + " composition requires real enrollment, preserves original import receipts and revokes sessions", async () => {
   const { createHostedQaHarness } = await import("../scripts/hosted-qa/runtime.mjs");
   const harness = await createHostedQaHarness();
   try {
+    assert.equal(typeof harness.httpFetch, "function", "Ordinary local HTTP must be separate from dispatchFetch characterization");
+    assert.ok(["http", "dispatch"].includes(compositionTransport), "Choose http acceptance or dispatch characterization explicitly");
+    const send = compositionTransport === "dispatch" ? harness.dispatchFetch : harness.httpFetch;
     const { createHash } = await import("node:crypto");
     assert.ok(harness.sourceEvidence, "The runtime must identify the exact rendered Worker and asset bytes");
     assert.match(harness.sourceEvidence.workerSha256, /^[a-f0-9]{64}$/);
     for (const [name, digest] of Object.entries(harness.sourceEvidence.assetSha256)) assert.equal(digest, createHash("sha256").update(await readFile(new URL("../packages/cloudflare/public/" + name, import.meta.url))).digest("hex"));
-    const call = (path: string, body?: Uint8Array | string, headers: Record<string, string> = {}) => harness.fetch(SYNTHETIC_ORIGIN + path, {
-      method: body === undefined ? "GET" : "POST", headers: { ...(body === undefined ? {} : { "Content-Type": "application/json", Origin: SYNTHETIC_ORIGIN }), ...headers },
-      ...(body === undefined ? {} : { body }),
-    });
-    assert.equal((await call("/api/state")).status, 401);
-    for (const path of ["/app.js", "/app.css"]) assert.equal((await call(path)).status, 401);
+    // A status-only assertion leaves the emulator response stream unread. Keep
+    // this lifecycle gate local, and consume every body before the next request.
+    let previous: { label: string; response: Awaited<ReturnType<typeof harness.dispatchFetch>> } | undefined;
+    const assertConsumed = () => {
+      if (previous) assert.ok(previous.response.body === null || previous.response.bodyUsed,
+        "Consume the previous Miniflare response before dispatch: " + previous.label);
+    };
+    const call = async (path: string, body?: Uint8Array | string, headers: Record<string, string> = {}) => {
+      assertConsumed();
+      const method = body === undefined ? "GET" : "POST";
+      const label = method + " " + path.split("?", 1)[0];
+      try {
+        const response = await send(SYNTHETIC_ORIGIN + path, {
+          method, headers: { ...(body === undefined ? {} : { "Content-Type": "application/json", Origin: SYNTHETIC_ORIGIN }), ...headers },
+          ...(body === undefined ? {} : { body }),
+        });
+        previous = { label: label + " -> " + response.status, response };
+        return response;
+      } catch (cause) {
+        throw new Error("Hosted composition transport failed (" + compositionTransport + "): " + label + "; request bytes="
+          + (body === undefined ? 0 : typeof body === "string" ? Buffer.byteLength(body) : body.byteLength)
+          + "; previous=" + (previous?.label ?? "none"), { cause });
+      }
+    };
+    const expectJson = async (response: Awaited<ReturnType<typeof call>>, status: number, body: unknown) => {
+      assert.equal(response.status, status);
+      assert.deepEqual(await response.json(), body);
+    };
+    for (const url of ["http://flora.example.test/", "https://other.example.test/", "https://flora.example.test.evil.test/", "https://user@flora.example.test/", "https://flora.example.test:444/", "file:///tmp/fixture", SYNTHETIC_ORIGIN + "/#fragment"]) {
+      await assert.rejects(harness.httpFetch(url), /SYNTHETIC_ORIGIN_REQUIRED/);
+    }
+    await expectJson(await call("//other.example.test/"), 404, { error: "NOT_FOUND" });
+    await expectJson(await call("/api/state", undefined, { "MF-Original-URL": "https://other.example.test/" }), 401, { error: "UNAUTHENTICATED" });
+    await expectJson(await call("/api/state"), 401, { error: "UNAUTHENTICATED" });
+    for (const path of ["/app.js", "/app.css"]) await expectJson(await call(path), 401, { error: "UNAUTHENTICATED" });
     for (const [path, mime] of [["/brand.png", "image/png"], ["/icons.svg", "image/svg+xml; charset=utf-8"]]) {
       const asset = await call(path!); assert.equal(asset.status, 200);
       const headers = new Headers([...asset.headers]);
@@ -170,8 +204,8 @@ test("hosted composition requires real enrollment, preserves original import rec
       assert.equal(headers.get("Cache-Control"), "no-store");
       assert.equal(headers.get("Content-Security-Policy"), "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'");
       assert.deepEqual(Buffer.from(await asset.arrayBuffer()), await readFile(new URL("../packages/cloudflare/public" + path, import.meta.url)));
-      assert.equal((await call(path + "?cache=1")).status, 400);
-      assert.equal((await call(path + "/")).status, 404);
+      await expectJson(await call(path + "?cache=1"), 400, { error: "INVALID_INPUT" });
+      await expectJson(await call(path + "/"), 404, { error: "NOT_FOUND" });
     }
     const setup = JSON.stringify({ email: harness.email, password: harness.password, confirmation: harness.password, token: harness.token });
     const first = await call("/api/auth/enroll", setup); assert.equal(first.status, 200);
@@ -184,10 +218,10 @@ test("hosted composition requires real enrollment, preserves original import rec
     const session = await first.json() as { csrfToken: string; expiresAt: number };
     const auth = { Cookie: cookies.map(value => value.split(";", 1)[0]).join("; "), "X-Flora-CSRF": session.csrfToken };
     assert.equal(await (await call("/app.css", undefined, auth)).text(), await readFile(new URL("../packages/cloudflare/public/app.css", import.meta.url), "utf8"));
-    assert.equal((await call("/api/auth/enroll", setup)).status, 403);
+    await expectJson(await call("/api/auth/enroll", setup), 403, { error: "SETUP_UNAVAILABLE" });
     const empty = await (await call("/api/state", undefined, auth)).json() as { selected: unknown; snapshots: { items: unknown[] } };
     assert.equal(empty.selected, null); assert.equal(empty.snapshots.items.length, 0);
-    assert.equal((await call("/api/sources", harness.source(), { Cookie: auth.Cookie })).status, 403);
+    await expectJson(await call("/api/sources", harness.source(), { Cookie: auth.Cookie }), 403, { error: "FORBIDDEN" });
     const source = await call("/api/sources", harness.source(), auth); assert.equal(source.status, 201);
     const selected = await source.json() as import("@app-ops/dogfood").InventorySnapshot;
     const baselineBytes = await harness.baseline();
@@ -195,18 +229,44 @@ test("hosted composition requires real enrollment, preserves original import rec
     const receipt = await baseline.json() as { id: string; evidence: { evidenceDigest: string } };
     const duplicate = await call("/api/baselines?snapshotId=" + selected.id, baselineBytes, auth);
     assert.equal(duplicate.status, 201); assert.equal((await duplicate.json() as { id: string }).id, receipt.id);
-    const state = await (await call("/api/state", undefined, auth)).json() as { selected: { id: string }; history: { items: { id: string; evidenceDigest: string }[] } };
+    let state = await (await call("/api/state", undefined, auth)).json() as { selected: { id: string }; history: { items: { id: string; evidenceDigest: string }[] } };
     assert.equal(state.selected.id, selected.id); assert.equal(state.history.items.length, 1);
     assert.equal(state.history.items[0]!.evidenceDigest, createHash("sha256").update(baselineBytes).digest("hex"));
+    // Lose only delivery after a real HTTP write and response. This is a
+    // controlled transport failure, not a claim that workerd's reset is fixed.
+    const lostBytes = await harness.baseline(0, 2); let lostReceipt: string | undefined;
+    await assert.rejects(async () => {
+      const committed = await call("/api/baselines?snapshotId=" + selected.id, lostBytes, auth);
+      assert.equal(committed.status, 201);
+      lostReceipt = (await committed.json() as { id: string }).id;
+      throw new Error("SYNTHETIC_RESPONSE_LOST_AFTER_COMMIT");
+    }, /SYNTHETIC_RESPONSE_LOST_AFTER_COMMIT/);
+    const afterLoss = await (await call("/api/state", undefined, auth)).json() as typeof state;
+    assert.equal(afterLoss.selected.id, selected.id); assert.equal(afterLoss.history.items.length, 2);
+    assert.deepEqual(afterLoss.history.items.find(item => item.id === receipt.id), state.history.items[0]);
+    assert.equal(afterLoss.history.items.find(item => item.id === lostReceipt)?.evidenceDigest, createHash("sha256").update(lostBytes).digest("hex"));
+    // An explicit same-envelope user retry must return the committed receipt.
+    const retried = await call("/api/baselines?snapshotId=" + selected.id, lostBytes, auth);
+    assert.equal(retried.status, 201); assert.equal((await retried.json() as { id: string }).id, lostReceipt);
+    state = await (await call("/api/state", undefined, auth)).json() as typeof state;
+    assert.deepEqual(state, afterLoss);
     const second = await call("/api/auth/login", JSON.stringify({ email: harness.email, password: harness.password })); assert.equal(second.status, 200);
     const secondCookie = second.headers.getSetCookie().map(value => value.split(";", 1)[0]).join("; ");
     assert.notEqual(secondCookie, auth.Cookie);
+    const secondSession = await second.json() as { csrfToken: string; expiresAt: number };
+    assert.notEqual(secondSession.csrfToken, session.csrfToken);
+    assert.ok(secondSession.expiresAt > Date.now());
     assert.equal((await (await call("/api/state", undefined, { Cookie: secondCookie })).json() as { selected: { id: string } }).selected.id, selected.id);
-    assert.equal((await call("/api/auth/logout", "{}", auth)).status, 200);
-    assert.equal((await call("/api/state", undefined, auth)).status, 401);
-    for (const path of ["/", "/app.js", "/app.css"]) assert.equal((await call(path, undefined, auth)).status, 401);
-    for (const path of ["/brand.png", "/icons.svg"]) assert.equal((await call(path)).status, 200);
-    assert.equal((await call("/api/state", undefined, { Cookie: secondCookie })).status, 200);
+    await expectJson(await call("/api/auth/logout", "{}", auth), 200, { ok: true });
+    await expectJson(await call("/api/state", undefined, auth), 401, { error: "UNAUTHENTICATED" });
+    for (const path of ["/", "/app.js", "/app.css"]) await expectJson(await call(path, undefined, auth), 401, { error: "UNAUTHENTICATED" });
+    for (const path of ["/brand.png", "/icons.svg"]) {
+      const asset = await call(path); assert.equal(asset.status, 200);
+      assert.deepEqual(Buffer.from(await asset.arrayBuffer()), await readFile(new URL("../packages/cloudflare/public" + path, import.meta.url)));
+    }
+    const retained = await call("/api/state", undefined, { Cookie: secondCookie }); assert.equal(retained.status, 200);
+    assert.deepEqual(await retained.json(), state);
+    assertConsumed();
     assert.equal(harness.outboundRequests(), 0);
   } finally { await harness.close(); }
 });
