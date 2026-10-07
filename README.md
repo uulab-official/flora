@@ -14,7 +14,7 @@ Flora는 iOS, Android, Web 앱의 빌드·서명·환경설정·스토어·OTA·
 - 특정 개발자 PC가 꺼져 있거나 바뀌어도, 권한이 있는 다른 개발자가 작업을 이어갈 수 있는 조직 공용 Runner
 - 설정과 인증서 파일을 사람마다 복사하지 않아도 되는 팀 운영
 
-**현재 상태: 로컬 Foundation 구현.** 타깃 검증, 설정 스냅샷, SQLite Job/lease/fence, synthetic artifact·Release 이력과 CLI가 구현되었습니다. 로그인, 실제 Runner daemon/native build, Vault, OTA, 스토어 업로드, Cloudflare 배포와 Dashboard는 아직 구현되지 않았습니다.
+**현재 상태: 로컬 Foundation 구현.** 타깃 검증, 설정 스냅샷, SQLite Job/lease/fence, synthetic artifact·Release 이력과 CLI가 구현되었습니다. 로그인, 실제 Runner daemon/native build, Vault, OTA, 스토어 업로드, Cloudflare 배포, Dashboard와 AI 코드 수정은 아직 구현되지 않았습니다.
 
 [로컬 설치·실행 가이드](docs/development/local-foundation.ko.md)의 명령은 실행할 수 있습니다. 제품 기획서의 나머지 명령·화면은 향후 목표입니다.
 
@@ -36,6 +36,7 @@ Node 24.19.0 / pnpm 11.19.0 기준입니다. 기존 pnpm 없이 시작하는 방
 6. [첫 Foundation 설계안](docs/superpowers/specs/2026-10-06-foundation-design.md)
 7. [공식 문서로 확인한 제약과 비용](docs/reference/provider-facts.ko.md)
 8. [Foundation 상세 구현 계획](docs/superpowers/plans/2026-10-06-foundation-implementation.md)
+9. [웹 AI 코드 수정: 검토 대기 중인 상세 설계 제안](docs/proposals/web-ai/next-slice-spec.ko.md) · [아키텍처 추가안](docs/proposals/web-ai/architecture-addendum.ko.md)
 
 ## 완전 오픈소스 원칙
 

@@ -122,5 +122,12 @@
 | A007 | 기획을 GitHub에, 개발 목적을 Notion에 | 저장소 문서를 기술적 기준으로 두고 Notion에 제품 의도/진행 링크 |
 | A008 | Supabase/Appwrite 라이선스를 보고 맞춤 | 공식 LICENSE 확인 후 Apache-2.0 선택, third-party notice 보존 |
 | A009 | 공개 설치가 깨끗한 새 환경에서도 동작 | pinned toolchain/lockfile, sample config, doctor, OS 매트릭스와 실제 검증 표시 |
+| A010 | 웹에서 AI로 코드를 수정하는 흐름을 우선 | private 웹 요청 → 격리 Runner → provider-neutral AI → diff/테스트 → 승인된 GitHub branch·draft PR → 기존 Release 인계. 상세 설계·구현 계획은 별도 검토 |
 
 원문 문구보다 최신 명시적 결정이 우선한다. 원문의 provider 사실은 [2026-10-06 검증 기록](../reference/provider-facts.ko.md)으로 보완한다.
+
+## 2026-10-07: 웹 AI 코드 수정 우선순위 변경
+
+사용자는 웹에서 AI로 코드를 수정하는 방향을 명시적으로 추가했다. 이 결정은 초기 통합 기획 §13/R083의 AI 제외 범위·우선순위를 변경한다. 원래 GitHub·Flavor/Environment·Config/Vault·Build·Store·OTA·Web·Release 운영 목표는 유지한다.
+
+[아키텍처 추가안](../proposals/web-ai/architecture-addendum.ko.md)과 [다음 milestone 상세 설계](../proposals/web-ai/next-slice-spec.ko.md)는 사용자 검토를 위한 제안이다. 방향에 대한 동의와 이 새 상세 설계·구현 계획 승인은 구분하며, 상세 설계와 이후 구현 계획의 검토·실행 방식 결정은 아직 남아 있다. 현재 Foundation에는 AI 코드 수정, 웹 UI, 실제 인증·Runner/provider 연동이 구현되지 않았다. 이번 문서 추가는 기능 출시나 배포를 뜻하지 않는다.
