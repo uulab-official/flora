@@ -21,6 +21,7 @@ export async function verifySurfaceDepth(page) {
     surfaces = await page.evaluate(read);
     for (const surface of surfaces) {
       const flat = surface.disabled || (surface.selector === ".app-table-shell" && page.viewportSize().width <= 760);
+      if ((surface.shadow === "none") !== flat) console.error("FLORA_QA_SURFACE_VALUES " + JSON.stringify({ selector: surface.selector, disabled: surface.disabled, shadow: surface.shadow, transition: surface.transition, flat }));
       assert.equal(surface.shadow === "none", flat, `SURFACE_ELEVATION: ${surface.selector}`);
       assert.ok(surface.transition.split(",").every(value => parseFloat(value) === 0), `REDUCED_MOTION: ${surface.selector}`);
     }
