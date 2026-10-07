@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { assertContrast, contrastStyles } from "../../../tests/css-contrast.ts";
 import { parseSourceBundle, CONFIG_RUNTIME_SMOKE_V1 } from "@app-ops/dogfood";
 import type { DashboardState } from "@app-ops/dashboard/service";
 import { bundleBytes, syntheticSourceBundle } from "../../../tests/dogfood-fixtures.ts";
@@ -226,32 +227,29 @@ test("a stale failed selection cannot replace newer ready content or feedback", 
   }
 });
 
-test("all declared small text colors meet 4.5:1 on their screen backgrounds and text stays readable", () => {
+test("all declared small text colors meet 4.5:1 on their current CSS backgrounds and text stays readable", () => {
   const css = readFileSync(new URL("../public/app.css", import.meta.url), "utf8");
-  const root = css.match(/:root\{([^}]+)\}/)![1]!;
-  const variables = Object.fromEntries([...root.matchAll(/(--[\w-]+):([^;}]+)/g)].map(match => [match[1]!, match[2]!]));
-  const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)];
+  const styles = contrastStyles(css);
+  // These selectors identify the surfaces each text role can actually appear on.
   const backgrounds: Record<string, string[]> = {
-    ":root": ["#f5f6f4"], ".brand-mark": ["#fcfdfb"], ".brand-caption": ["#fcfdfb"], ".local-pill": ["#fcfdfb"], ".eyebrow": ["#f5f6f4", "#ffffff"],
-    ".lede": ["#f5f6f4"], ".import-action p": ["#f5f6f4"], ".primary": ["#145d4d", "#114f42"], ".secondary": ["#ffffff", "#f5f8f4"],
-    ".warning": ["#fbf2df"], ".neutral": ["#edf1ed"], ".success": ["#e3f3e8"], ".progress": ["#e6eff7"], ".field label,.field-label": ["#ffffff"],
-    "select": ["#fbfcfa"], ".fact-label": ["#ffffff"], ".trust-note": ["#f4f7f3"], ".source-details": ["#ffffff"], "summary": ["#ffffff"], ".count": ["#edf2ec"],
-    ".source-pointer": ["#ffffff"], ".quiet-note": ["#ffffff"], ".profile-id": ["#ffffff"], ".subtle": ["#ffffff", "#f5f6f4"], ".warning-text": ["#ffffff"],
-    ".check": ["#f6f7f3"], ".reason": ["#ffffff"], ".empty-history": ["#ffffff"], ".timestamp": ["#ffffff"], ".record-id": ["#ffffff"], ".record-code": ["#ffffff"],
-    ".record-note": ["#ffffff"], ".log": ["#f6f7f4"], ".notice": ["#edf5ed"], ".notice-error": ["#fff2e9"], ".empty-card>p": ["#ffffff"], "footer": ["#f5f6f4"],
+    ":root": [":root"], ".brand-mark": [".topbar"], ".brand-caption": [".topbar"], ".local-pill": [".topbar"], ".eyebrow": [":root", ".card"],
+    ".lede": [":root"], ".import-action p": [":root"], ".primary": [".primary", ".primary:hover"], ".secondary": [".secondary", ".secondary:hover"],
+    ".warning": [".warning"], ".neutral": [".neutral"], ".success": [".success"], ".progress": [".progress"], ".field label,.field-label": [".card"],
+    "select": ["select"], ".fact-label": [".card"], ".trust-note": [".trust-note"], ".source-details": [".card"], "summary": [".card"], ".count": [".count"],
+    ".source-pointer": [".card"], ".quiet-note": [".card"], ".profile-id": [".card"], ".subtle": [".card", ":root"], ".warning-text": [".card"],
+    ".check": [".check"], ".reason": [".card"], ".empty-history": [".card"], ".timestamp": [".card"], ".record-id": [".card"], ".record-code": [".card"],
+    ".record-note": [".card"], ".log": [".log"], ".notice": [".notice"], ".notice-error": [".notice-error"], ".empty-card>p": [".empty-card"], "footer": [":root"],
   };
-  function luminance(hex: string): number { const full = hex.length === 4 ? "#" + [...hex.slice(1)].map(char => char + char).join("") : hex; return [0.2126, 0.7152, 0.0722].reduce((sum, weight, index) => { const channel = parseInt(full.slice(1 + index * 2, 3 + index * 2), 16) / 255; return sum + weight * (channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4); }, 0); }
-  const checked = new Set<string>(); const failures: string[] = [];
-  for (const rule of rules) {
-    const selector = rule[1]!.trim(); const declarations = rule[2]!;
-    const color = declarations.match(/(?:^|;)color:([^;]+)/)?.[1];
-    if (color) {
+  const checked = new Set<string>();
+  for (const { selector, declarations } of styles.rules) {
+    if (/(?:^|;)color:/.test(declarations)) {
       assert.ok(backgrounds[selector], `Explicitly audit the background for ${selector}`); checked.add(selector);
-      const foreground = color.startsWith("var(") ? variables[color.slice(4, -1)]! : color;
-      for (const background of backgrounds[selector]!) { const values = [luminance(foreground), luminance(background)].sort((a, b) => b - a); const ratio = (values[0]! + 0.05) / (values[1]! + 0.05); if (ratio < 4.5) failures.push(`${selector}: ${foreground} on ${background} = ${ratio.toFixed(2)}:1`); }
+      for (const background of backgrounds[selector]!) assertContrast(styles.color(selector), styles.color(background, "background"), 4.5, selector);
     }
     const size = declarations.match(/(?:^|;)font-size:(\d+)px/)?.[1];
     if (size && selector !== ".local-pill span") assert.ok(Number(size) >= 12, `${selector}: ${size}px text is below the 12px screen minimum`);
   }
-  assert.deepEqual(checked, new Set(Object.keys(backgrounds))); assert.deepEqual(failures, []);
+  assert.deepEqual(checked, new Set(Object.keys(backgrounds)));
+  const focus = "button:focus-visible,a:focus-visible,summary:focus-visible,select:focus-visible,.file-input:focus-visible";
+  for (const surface of [":root", ".topbar", ".card", ".trust-note", ".notice"]) assertContrast(styles.color(focus, "outline"), styles.color(surface, "background"), 3, "focus on " + surface);
 });

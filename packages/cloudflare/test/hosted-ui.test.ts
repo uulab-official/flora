@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { assertContrast, contrastStyles } from "../../../tests/css-contrast.ts";
 import { randomBytes } from "node:crypto";
 
 // Synthetic DOM/transport contract tests, not browser or backend integration tests.
@@ -362,10 +363,45 @@ test("generic_conflict_explains_possible_app_or_storage_limit_causes", async () 
 test("auth_style_keeps_keyboard_focus_and_readable_contrast", () => {
   const html = readFileSync(new URL("../public/auth.html", import.meta.url), "utf8"); const css = readFileSync(new URL("../public/auth.css", import.meta.url), "utf8");
   assert.ok(css.includes(":focus-visible")); assert.ok(css.includes("@media(max-width:580px)")); assert.ok(html.includes('lang="ko"')); assert.ok(html.includes('type="password" autocomplete="current-password"'));
-  function luminance(hex: string) { const value = hex.length === 4 ? "#" + [...hex.slice(1)].map(c => c + c).join("") : hex; return [0.2126, 0.7152, 0.0722].reduce((sum, weight, index) => { const c = parseInt(value.slice(1 + index * 2, 3 + index * 2), 16) / 255; return sum + weight * (c <= .04045 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4); }, 0); }
-  for (const [color, background] of [["#1e2c2b", "#f5f6f4"], ["#145d4d", "#fff"], ["#52665a", "#fff"], ["#52665a", "#f5f6f4"], ["#536b5c", "#fff"], ["#244537", "#fbfcfa"], ["#fff", "#145d4d"], ["#fff", "#114f42"], ["#8a5225", "#fff2e9"]]) {
-    const values = [luminance(color!), luminance(background!)].sort((a, b) => b - a); assert.ok((values[0]! + .05) / (values[1]! + .05) >= 4.5, color + " on " + background);
+  const styles = contrastStyles(css);
+  for (const [foreground, backgrounds] of Object.entries({
+    ":root": [":root", ".auth-card"], "a": [".auth-card"], ".private-label": [".auth-brand"], ".auth-brand .private-label": [".auth-brand"],
+    ".auth-brand>span:first-child": [".auth-brand"], ".auth-brand .brand": [".auth-brand"], ".eyebrow": [".auth-card"],
+    ".description": [".auth-card"], "input,select": ["input,select"], ".field-note": [".auth-card"], "button": ["button", "button:hover"],
+    ".auth-status": [".auth-status"], ".auth-footer": [":root"],
+  })) {
+    for (const background of backgrounds) assertContrast(styles.color(foreground), styles.color(background, "background"), 4.5, foreground);
   }
+  for (const surface of [":root", ".auth-card", ".auth-brand", "input,select"]) {
+    assertContrast(styles.color("a:focus-visible,input:focus-visible,select:focus-visible,button:focus-visible", "outline"), styles.color(surface, "background"), 3, "auth focus on " + surface);
+  }
+});
+
+test("shared_blue_palette_uses_actual_control_navigation_and_focus_colors", () => {
+  const app = contrastStyles(readFileSync(new URL("../public/app.css", import.meta.url), "utf8"));
+  const auth = contrastStyles(readFileSync(new URL("../public/auth.css", import.meta.url), "utf8"));
+  const local = contrastStyles(readFileSync(new URL("../../dashboard/public/app.css", import.meta.url), "utf8"));
+  for (const token of ["--accent", "--accent-hover", "--accent-soft", "--accent-subtle", "--focus"]) {
+    assert.equal(app.color(":root", token), auth.color(":root", token), token + " auth");
+    assert.equal(app.color(":root", token), local.color(":root", token), token + " local");
+  }
+  assert.equal(app.color(".primary", "background"), app.color(":root", "--accent"));
+  assert.equal(auth.color("button", "background"), app.color(":root", "--accent"));
+  assert.equal(local.color(".primary", "background"), app.color(":root", "--accent"));
+  for (const [foreground, backgrounds] of Object.entries({
+    ".primary": [".primary", ".primary:hover"], "a": [":root", ".sidebar"],
+    ".nav-item.active": [".nav-item.active", ".nav-item:hover:not(.muted)"],
+    ".nav-item": [".nav-item:hover:not(.muted)"], ".page-number": [".page-number"], ".text-button": [":root"],
+    ".secondary": [".secondary", ".secondary:hover"], ".icon-button:hover:enabled": [".icon-button:hover:enabled"],
+    ".mobile-nav .active": [".mobile-nav"], ".app-open": [".app-table tbody tr:hover,.app-table tbody tr:focus-within"],
+    ".badge.success": [".badge.success"], ".badge.warning": [".badge.warning"],
+  })) {
+    for (const background of backgrounds) assertContrast(app.color(foreground), app.color(background, "background"), 4.5, foreground);
+  }
+  for (const surface of [":root", ".sidebar", ".nav-item.active", ".app-table tbody tr:hover,.app-table tbody tr:focus-within", ".page-number"]) {
+    assertContrast(app.color(":focus-visible", "outline"), app.color(surface, "background"), 3, "console focus on " + surface);
+  }
+  assert.equal(app.value(".brand img", "filter"), auth.value(".auth-brand .brand img", "filter"), "preserve the same logo tint on app and auth");
 });
 
 function multipleFlavors(count = 11) {
