@@ -54,6 +54,10 @@ export async function verifySurfaceDepth(page) {
         }
       }
     } finally { await cdp.detach(); }
+  } catch (error) {
+    const diagnostic = /^(SURFACE_ELEVATION|REDUCED_MOTION|DISABLED_HOVER_ELEVATION|PRIMARY_HOVER_ELEVATION|VISIBLE_KEYBOARD_FOCUS|TABLE_FOCUS_MUST_NOT_BE_CLIPPED)(?:: ([.#a-zA-Z0-9 :_-]+))?/.exec(error?.message ?? "");
+    if (diagnostic) console.error("FLORA_QA_SURFACE_FAILURE " + diagnostic[0]);
+    throw error;
   } finally {
     await page.emulateMedia({ reducedMotion: null });
   }
