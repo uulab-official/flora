@@ -11,6 +11,9 @@ export type ErrorCode =
   | "PERMISSION_DENIED"
   | "PROVIDER_UNCONFIGURED"
   | "PROVIDER_UNSUPPORTED"
+  | "PRIVATE_STORE_UNSAFE"
+  | "STORE_IN_USE"
+  | "INPUT_TOO_LARGE"
   | "MIGRATION_MISMATCH";
 export class DomainError extends Error {
   readonly code: ErrorCode;

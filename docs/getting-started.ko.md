@@ -4,9 +4,9 @@
 
 ## 지금 무엇을 써볼 수 있나요?
 
-지금은 **터미널에서 설정을 검증하고 Job 실행권·Runner 교체·이력을 시험하는 로컬 Foundation**을 사용할 수 있습니다. 실제 SQLite와 TypeScript 코드를 실행하지만 artifact는 모의 JSON metadata입니다.
+지금은 **로컬 Foundation CLI와 보호된 loopback 웹 화면**을 사용할 수 있습니다. 설정·Job/lease를 시험하고, 정적 앱 source snapshot과 반입한 개발 baseline 이력을 봅니다. Foundation artifact는 모의 metadata이며 기본 실행 provider는 blocked입니다.
 
-웹 화면·접속 URL·AI 코드 수정·실제 Runner 등록·native build·Store/OTA/Web 배포는 아직 없습니다. 앱 계정에 로그인하거나 API key, `.env`, 인증서를 넣지 마세요. [웹 AI 상세 설계](proposals/web-ai/next-slice-spec.ko.md)는 검토 대기 중인 다음 단계 제안입니다.
+웹 화면은 현재 컴퓨터의 127.0.0.1에서 엽니다. 공개 접속 서비스·AI 코드 수정·실제 Runner 등록·native build·Store/OTA/Web 배포는 후속 단계입니다. 앱 계정에 로그인하거나 API key, `.env`, 인증서를 넣지 마세요. [웹 AI 상세 설계](proposals/web-ai/next-slice-spec.ko.md)는 검토 대기 중인 다음 단계 제안입니다.
 
 ## 1. 준비
 
@@ -32,10 +32,24 @@ npm exec --yes --package=pnpm@11.19.0 -- pnpm check
 ```
 
 - Node 출력: `v24.19.0`, pnpm 출력: `11.19.0`. `npm --version`은 다른 프로그램의 버전이므로 pnpm 버전과 같을 필요가 없습니다
-- `check`는 패키지 build → typecheck → 테스트를 실행합니다. 현재 Foundation의 마지막 요약은 **48 tests / 48 pass / 0 fail**입니다
+- `check`는 패키지 build → typecheck → 테스트를 실행합니다. 마지막 요약에서 **0 fail**을 확인합니다. 테스트 개수는 revision·OS에 따라 달라집니다
 - clone에는 컴파일된 `dist`가 없습니다. install·check를 마친 뒤 CLI를 실행하세요
 - `npm exec`는 지정한 pnpm을 npm cache에서 실행합니다. 전역 pnpm이나 Corepack을 미리 설정할 필요가 없습니다
 - 전체 검증을 하려면 “Download ZIP” 대신 **Git clone**을 사용하세요. `verify:clean`은 Git이 추적하는 파일 목록이 필요합니다
+
+## 가상의 앱으로 웹 화면 먼저 열기
+
+설치·check 후 아래 명령을 그대로 실행하면 계정·실제 앱 없이 화면을 체험합니다.
+
+```sh
+node scripts/dogfood-demo.mjs
+node scripts/dogfood-demo.mjs --status
+node scripts/dogfood-demo.mjs --serve
+```
+
+같은 컴퓨터의 브라우저로 출력 URL을 엽니다. demo는 `example/synthetic-app`의 가상 source와 2개 파일/4개 테스트 증거를 반입하고 실제 실행은 하지 않습니다. `operator-import`, `development-baseline`, `isolatedExecution: "not_run"`을 구분하세요. UI의 새 실행 요청은 `blocked`가 정상입니다. URL의 일회용 비밀값을 공유하지 마세요. 종료는 Ctrl+C이며 재시작 후에는 새 URL을 사용합니다.
+
+예제는 홈 profile의 `.flora/dogfood/demo.db`를 사용하고 실제 앱의 기본 `state.db`와 분리됩니다. 한 store는 한 앱에 묶이므로 예제 경로에 다른 앱이 이미 있다면 자동 삭제하지 않고 새 private DB 경로를 선택합니다. [앱 import·private store·안전한 실패 상세](development/dogfood.ko.md)에 정확한 형식과 지원 경로가 있습니다. 이후 단계의 기존 Foundation simulation도 계속 사용할 수 있습니다.
 
 ## 3. 환경과 설정 확인하기
 
@@ -105,6 +119,6 @@ npm exec --yes --package=pnpm@11.19.0 -- pnpm verify:clean
 
 ## 검증 범위
 
-2026-10-07에 source revision `02269503`을 새로 clone하고, 빈 HOME·npm cache·pnpm data/cache에서 이 문서의 명령을 Linux로 검증했습니다. 전체 48검사, 세 simulation, toolchain 검사와 clean install이 통과했습니다. 실제 외부 provider·native build 검증은 아닙니다.
+2026-10-07에 source revision `02269503`을 새로 clone하고, 빈 HOME·npm cache·pnpm data/cache에서 이 문서의 명령을 Linux로 검증했습니다. 이 **과거 Foundation-only revision**의 48검사, 세 simulation, toolchain 검사와 clean install이 통과했습니다. 실제 외부 provider·native build 검증은 아닙니다.
 
 [CI](../.github/workflows/ci.yml)는 같은 npm-exec 설치 경로와 Foundation 검사·CLI 예제·clean 설치를 Linux/macOS/Windows에서 실행합니다. 설정 존재를 성공 증거로 대신하지 말고 [사용 중인 revision의 실제 결과](https://github.com/uulab-official/flora/actions/workflows/ci.yml)를 확인하세요.

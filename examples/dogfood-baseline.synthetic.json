@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "sourceDigest": "322172ca699d1ddb7fde3cd79b0e97b168cbae6f60db213af2047740bbf29be3",
+  "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "profileId": "config-runtime-smoke-v1",
+  "attemptKey": "synthetic-attempt-1",
+  "platform": "linux",
+  "architecture": "x64",
+  "sourceRoot": "/work/sample",
+  "reportPath": "/results/vitest.json",
+  "argv": [
+    "node",
+    "./node_modules/vitest/vitest.mjs",
+    "run",
+    "tests/config/runtime.test.ts",
+    "tests/config/experience-runtime.test.ts",
+    "--maxWorkers=1",
+    "--reporter=json",
+    "--outputFile=/results/vitest.json"
+  ],
+  "runtime": {
+    "node": "24.19.0",
+    "npm": "11.11.0",
+    "vitest": "4.0.0",
+    "vite": "7.0.0"
+  },
+  "startedAt": "2026-01-02T03:06:00.000Z",
+  "finishedAt": "2026-01-02T03:06:01.000Z",
+  "durationMs": 1000,
+  "exitCode": 0,
+  "reportBase64": "eyJudW1Ub3RhbFRlc3RTdWl0ZXMiOjQsIm51bVBhc3NlZFRlc3RTdWl0ZXMiOjQsIm51bUZhaWxlZFRlc3RTdWl0ZXMiOjAsIm51bVBlbmRpbmdUZXN0U3VpdGVzIjowLCJudW1Ub3RhbFRlc3RzIjo0LCJudW1QYXNzZWRUZXN0cyI6NCwibnVtRmFpbGVkVGVzdHMiOjAsIm51bVBlbmRpbmdUZXN0cyI6MCwibnVtVG9kb1Rlc3RzIjowLCJzdGFydFRpbWUiOjE3NjczMjMxNjAwMDAsInN1Y2Nlc3MiOnRydWUsInRlc3RSZXN1bHRzIjpbeyJuYW1lIjoiL3dvcmsvc2FtcGxlL3Rlc3RzL2NvbmZpZy9ydW50aW1lLnRlc3QudHMiLCJzdGF0dXMiOiJwYXNzZWQiLCJzdGFydFRpbWUiOjE3NjczMjMxNjAwMDAsImVuZFRpbWUiOjE3NjczMjMxNjA1MDAsImFzc2VydGlvblJlc3VsdHMiOlt7ImFuY2VzdG9yVGl0bGVzIjpbInN5bnRoZXRpYyJdLCJ0aXRsZSI6ImNhc2UgMCIsImZ1bGxOYW1lIjoic3ludGhldGljIGNhc2UgMCIsInN0YXR1cyI6InBhc3NlZCIsImR1cmF0aW9uIjoxMCwiZmFpbHVyZU1lc3NhZ2VzIjpbXX0seyJhbmNlc3RvclRpdGxlcyI6WyJzeW50aGV0aWMiXSwidGl0bGUiOiJjYXNlIDEiLCJmdWxsTmFtZSI6InN5bnRoZXRpYyBjYXNlIDEiLCJzdGF0dXMiOiJwYXNzZWQiLCJkdXJhdGlvbiI6MTAsImZhaWx1cmVNZXNzYWdlcyI6W119XX0seyJuYW1lIjoiL3dvcmsvc2FtcGxlL3Rlc3RzL2NvbmZpZy9leHBlcmllbmNlLXJ1bnRpbWUudGVzdC50cyIsInN0YXR1cyI6InBhc3NlZCIsInN0YXJ0VGltZSI6MTc2NzMyMzE2MDEwMCwiZW5kVGltZSI6MTc2NzMyMzE2MDYwMCwiYXNzZXJ0aW9uUmVzdWx0cyI6W3siYW5jZXN0b3JUaXRsZXMiOlsic3ludGhldGljIl0sInRpdGxlIjoiY2FzZSAwIiwiZnVsbE5hbWUiOiJzeW50aGV0aWMgY2FzZSAwIiwic3RhdHVzIjoicGFzc2VkIiwiZHVyYXRpb24iOjEwLCJmYWlsdXJlTWVzc2FnZXMiOltdfSx7ImFuY2VzdG9yVGl0bGVzIjpbInN5bnRoZXRpYyJdLCJ0aXRsZSI6ImNhc2UgMSIsImZ1bGxOYW1lIjoic3ludGhldGljIGNhc2UgMSIsInN0YXR1cyI6InBhc3NlZCIsImR1cmF0aW9uIjoxMCwiZmFpbHVyZU1lc3NhZ2VzIjpbXX1dfV19",
+  "reportSha256": "337de9a5c9c886ebb3194dffd2a94c18e853ed35333721282014a83da3ce8f29",
+  "sourceHashesBefore": {
+    "config/experience-contract.json": "cb8daed7b30399a1c3c8b83b3b7bee4b774a30fc389afc1d375e4c23a3cc4ae8",
+    "flavors/config.json": "2916cb9bfabb2cd41d565649f998ee0763a01ad94f057de917d197256495ec2d",
+    "package-lock.json": "2dba0ed9edbe84a02c1e0a8c826124df4bc83041333f46370f8a06b07856bc0d",
+    "package.json": "cfe8943755418d0fe6cbcb768492760713ec20bcdcbd7871eaf6367c448d0d17",
+    "src/core/config/runtime.ts": "aeace2d67ef267dee27907fa06fe7c06e846937823aad339de7def4e65bfe631",
+    "src/core/experience/runtime.ts": "aeace2d67ef267dee27907fa06fe7c06e846937823aad339de7def4e65bfe631",
+    "src/core/experience/types.ts": "f87de927447cd0a42f62e1e31a647571ff3bbe195b4666eafc04d463fad61e84",
+    "tests/config/experience-runtime.test.ts": "06129d87f90510fb9a19ad166d0bf82b1f83c35c14f5c19ba0bd0af3ef14d4c2",
+    "tests/config/runtime.test.ts": "06129d87f90510fb9a19ad166d0bf82b1f83c35c14f5c19ba0bd0af3ef14d4c2",
+    "tsconfig.json": "671920f9e86e8620695b89c0328206cb79c2ae66dd7bf466a0644e20d1cfd9f1",
+    "vitest.config.mts": "450f0af4f4c1ecc4c7180f2e364c8a59bfed69dd350fb6b47bce8641c2a37786"
+  },
+  "sourceHashesAfter": {
+    "config/experience-contract.json": "cb8daed7b30399a1c3c8b83b3b7bee4b774a30fc389afc1d375e4c23a3cc4ae8",
+    "flavors/config.json": "2916cb9bfabb2cd41d565649f998ee0763a01ad94f057de917d197256495ec2d",
+    "package-lock.json": "2dba0ed9edbe84a02c1e0a8c826124df4bc83041333f46370f8a06b07856bc0d",
+    "package.json": "cfe8943755418d0fe6cbcb768492760713ec20bcdcbd7871eaf6367c448d0d17",
+    "src/core/config/runtime.ts": "aeace2d67ef267dee27907fa06fe7c06e846937823aad339de7def4e65bfe631",
+    "src/core/experience/runtime.ts": "aeace2d67ef267dee27907fa06fe7c06e846937823aad339de7def4e65bfe631",
+    "src/core/experience/types.ts": "f87de927447cd0a42f62e1e31a647571ff3bbe195b4666eafc04d463fad61e84",
+    "tests/config/experience-runtime.test.ts": "06129d87f90510fb9a19ad166d0bf82b1f83c35c14f5c19ba0bd0af3ef14d4c2",
+    "tests/config/runtime.test.ts": "06129d87f90510fb9a19ad166d0bf82b1f83c35c14f5c19ba0bd0af3ef14d4c2",
+    "tsconfig.json": "671920f9e86e8620695b89c0328206cb79c2ae66dd7bf466a0644e20d1cfd9f1",
+    "vitest.config.mts": "450f0af4f4c1ecc4c7180f2e364c8a59bfed69dd350fb6b47bce8641c2a37786"
+  },
+  "log": "synthetic result\n"
+}

@@ -4,6 +4,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Worker } from "node:worker_threads";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { hostname } from "node:os";
+import { randomUUID } from "node:crypto";
 import * as dbapi from "@app-ops/db";
 import { parseSourceBundle, parseBaselineBundle, assessReport, CONFIG_RUNTIME_SMOKE_V1 as profile } from "@app-ops/dogfood";
 import type { VerificationCompletion, VerificationRecord } from "@app-ops/dogfood";
@@ -16,6 +20,126 @@ async function setup(path = ":memory:") {
   return { db, port, snapshot };
 }
 const blocked: VerificationCompletion = { state: "blocked", code: "RUNNER_UNAVAILABLE", evidence: null, assessment: null };
+
+test("dashboard owner blocks a live or reused PID without recovering active work", async () => {
+  const { db, port, snapshot } = await setup();
+  try {
+    assert.equal(typeof dbapi.acquireDashboardOwner, "function");
+    const owner = { nonce: randomUUID(), pid: process.pid, host: hostname() };
+    dbapi.acquireDashboardOwner(db, owner);
+    const created = await port.createVerification({ snapshotId: snapshot.id, requestKey: "owner-running", now });
+    await port.beginVerification({ recordId: created.record.id, attemptId: "owner-attempt", runnerId: "runner", now, leaseMs: 30_000 });
+    const before = await port.getVerification(created.record.id);
+    const ownerBefore = db.prepare("SELECT * FROM dashboard_server_owner").get();
+    for (const next of [{ ...owner, nonce: randomUUID() }, owner, { ...owner, host: "different-synthetic-host", nonce: randomUUID() }]) {
+      assert.throws(() => dbapi.acquireDashboardOwner(db, next), { code: "STORE_IN_USE", message: "STORE_IN_USE" });
+      assert.deepEqual(await port.getVerification(created.record.id), before);
+      assert.deepEqual(db.prepare("SELECT * FROM dashboard_server_owner").get(), ownerBefore);
+    }
+    // Import and status-style adapter reads never acquire ownership or interrupt attempts.
+    await dbapi.importBaseline(db, snapshot.id, bundleBytes(syntheticBaseline(snapshot)), now + 1);
+    assert.deepEqual(await dbapi.createSqliteDogfoodStore(db).getVerification(created.record.id), before);
+    assert.deepEqual(db.prepare("SELECT * FROM dashboard_server_owner").get(), ownerBefore);
+    dbapi.releaseDashboardOwner(db, randomUUID());
+    assert.deepEqual(db.prepare("SELECT * FROM dashboard_server_owner").get(), ownerBefore);
+    dbapi.releaseDashboardOwner(db, owner.nonce);
+    assert.equal(db.prepare("SELECT * FROM dashboard_server_owner").get(), undefined);
+    dbapi.releaseDashboardOwner(db, owner.nonce);
+  } finally { db.close(); }
+});
+
+test("dashboard ownership replacement requires ESRCH inside the same immediate transaction", async t => {
+  const { db } = await setup();
+  try {
+    assert.equal(typeof dbapi.acquireDashboardOwner, "function");
+    const original = { nonce: randomUUID(), pid: process.pid, host: hostname() };
+    dbapi.acquireDashboardOwner(db, original);
+    const originalRow = db.prepare("SELECT * FROM dashboard_server_owner").get();
+    const candidate = { ...original, nonce: randomUUID() };
+    for (const code of ["EPERM", "EACCES", "EINVAL", "UNKNOWN", undefined]) {
+      const kill = t.mock.method(process, "kill", (pid: number, signal: string | number) => {
+        assert.equal(pid, original.pid); assert.equal(signal, 0); assert.equal(db.isTransaction, true);
+        throw Object.assign(new Error("synthetic-private-details"), { code });
+      });
+      assert.throws(() => dbapi.acquireDashboardOwner(db, candidate), { code: "STORE_IN_USE", message: "STORE_IN_USE" });
+      assert.deepEqual(db.prepare("SELECT * FROM dashboard_server_owner").get(), originalRow);
+      kill.mock.restore();
+    }
+    const kill = t.mock.method(process, "kill", (pid: number, signal: string | number) => {
+      assert.equal(pid, original.pid); assert.equal(signal, 0); assert.equal(db.isTransaction, true);
+      throw Object.assign(new Error("gone"), { code: "ESRCH" });
+    });
+    assert.throws(() => dbapi.acquireDashboardOwner(db, { ...candidate, host: "other-host" }), { code: "STORE_IN_USE" });
+    assert.equal(kill.mock.callCount(), 0);
+    dbapi.acquireDashboardOwner(db, candidate);
+    const replaced = db.prepare("SELECT * FROM dashboard_server_owner").get()!;
+    assert.equal(replaced.nonce, candidate.nonce);
+    dbapi.releaseDashboardOwner(db, original.nonce);
+    assert.deepEqual(db.prepare("SELECT * FROM dashboard_server_owner").get(), replaced);
+  } finally { db.close(); }
+});
+
+test("dashboard owner validates positive process IDs before signal zero", async t => {
+  const { db } = await setup();
+  try {
+    assert.equal(typeof dbapi.acquireDashboardOwner, "function");
+    const kill = t.mock.method(process, "kill", () => { throw new Error("must not probe invalid PID"); });
+    for (const pid of [0, -1, 1.1, Number.NaN, 2 ** 31]) {
+      assert.throws(() => dbapi.acquireDashboardOwner(db, { nonce: randomUUID(), pid, host: hostname() }), { code: "INVALID_INPUT" });
+    }
+    assert.equal(kill.mock.callCount(), 0);
+    assert.equal(db.prepare("SELECT * FROM dashboard_server_owner").get(), undefined);
+  } finally { db.close(); }
+});
+
+test("an exited child owner is replaceable exactly once across concurrent connections", { timeout: 30_000 }, async () => {
+  assert.equal(typeof dbapi.acquireDashboardOwner, "function");
+  const directory = mkdtempSync(join(tmpdir(), "dogfood-owner-race-")), path = join(directory, "state.db");
+  const child = spawn(process.execPath, ["-e", "process.send('ready'); setInterval(() => {}, 1000);"], { stdio: ["ignore", "ignore", "ignore", "ipc"] });
+  const ready = once(child, "message");
+  const { db, port, snapshot } = await setup(path);
+  try {
+    await ready; assert.ok(child.pid);
+    const original = { nonce: randomUUID(), pid: child.pid, host: hostname() };
+    dbapi.acquireDashboardOwner(db, original);
+    assert.throws(() => dbapi.acquireDashboardOwner(db, { ...original, nonce: randomUUID(), pid: process.pid }), { code: "STORE_IN_USE" });
+    const created = await port.createVerification({ snapshotId: snapshot.id, requestKey: "dead-owner-running", now });
+    const fence = await port.beginVerification({ recordId: created.record.id, attemptId: "dead-owner-attempt", runnerId: "runner", now, leaseMs: 30_000 });
+    const exited = once(child, "exit"); child.kill(); await exited;
+    assert.throws(() => process.kill(original.pid, 0), { code: "ESRCH" });
+    const barrier = new SharedArrayBuffer(8), signal = new Int32Array(barrier);
+    const code = `(async () => {
+      const { parentPort, workerData } = require('node:worker_threads');
+      const api = await import(workerData.module); const db = api.openDatabase(workerData.path);
+      const signal = new Int32Array(workerData.barrier); Atomics.add(signal, 0, 1); Atomics.notify(signal, 0); Atomics.wait(signal, 1, 0, 10000);
+      try { api.acquireDashboardOwner(db, workerData.owner); parentPort.postMessage({ nonce: workerData.owner.nonce }); }
+      catch (error) { parentPort.postMessage({ error: error.code || 'UNKNOWN' }); } finally { db.close(); }
+    })();`;
+    const workers = [0, 1].map(() => new Worker(code, { eval: true, workerData: {
+      module: new URL("../dist/index.js", import.meta.url).href, path, barrier, owner: { nonce: randomUUID(), pid: process.pid, host: hostname() },
+    } }));
+    try {
+      const results = workers.map(worker => new Promise<{ nonce?: string; error?: string }>((resolve, reject) => {
+        worker.once("message", resolve); worker.once("error", reject);
+        worker.once("exit", code => { if (code !== 0) reject(new Error(`Worker exit ${code}`)); });
+      }));
+      const deadline = Date.now() + 10_000;
+      while (Atomics.load(signal, 0) < 2 && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 1));
+      assert.equal(Atomics.load(signal, 0), 2); Atomics.store(signal, 1, 1); Atomics.notify(signal, 1, 2);
+      const owners = await Promise.all(results);
+      assert.equal(owners.filter(result => result.nonce).length, 1);
+      assert.deepEqual(owners.filter(result => result.error).map(result => result.error), ["STORE_IN_USE"]);
+      assert.equal((await port.getVerification(created.record.id))!.state, "running");
+      assert.equal(dbapi.interruptVerifications(db, now + 1), 1);
+      assert.equal((await port.getVerification(created.record.id))!.fence, fence.fence + 1);
+      dbapi.releaseDashboardOwner(db, original.nonce);
+      assert.equal(db.prepare("SELECT nonce FROM dashboard_server_owner").get()!.nonce, owners.find(result => result.nonce)!.nonce);
+    } finally { await Promise.all(workers.map(worker => worker.terminate())); }
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) { const exited = once(child, "exit"); child.kill(); await exited; }
+    db.close(); rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
 
 test("inventory binds one app, is immutable, and preserves source/history across reopen", async () => {
   const dir = mkdtempSync(join(tmpdir(), "dogfood-")); const path = join(dir, "state.db");

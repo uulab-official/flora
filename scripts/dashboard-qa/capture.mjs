@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { access, mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createQaHarness } from "./server.mjs";
 import { encodeEvidence, LIMITS } from "./evidence.mjs";
 import { navigateBootstrapDocument } from "./navigation.mjs";
+import { verifyKoreanFontUsage } from "./fonts.mjs";
 
 // Deliberately CI-only. A failed sandbox launch is a failed render gate; no retry
 // with weaker settings, OS changes, alternate provider, or public binding exists.
@@ -16,6 +17,8 @@ try {
   assert.ok(process.env.GITHUB_REF === "refs/heads/main" || process.env.GITHUB_REF?.startsWith("refs/heads/verify/flora-dogfood-"));
   assert.match(process.env.GITHUB_SHA ?? "", /^[a-f0-9]{40}$/);
   assert.ok(process.env.FLORA_QA_PLAYWRIGHT_MODULE);
+  assert.ok(process.env.FLORA_QA_FONTCONFIG);
+  const fontConfig = resolve(process.env.FLORA_QA_FONTCONFIG); await access(fontConfig);
   const { chromium } = await import(pathToFileURL(resolve(process.env.FLORA_QA_PLAYWRIGHT_MODULE)).href);
   temporary = await mkdtemp(join(tmpdir(), "flora-render-"));
   const config = join(temporary, "config"); const cache = join(temporary, "cache");
@@ -23,21 +26,27 @@ try {
   harness = await createQaHarness(); assert.equal(new URL(harness.origin).hostname, "127.0.0.1");
   phase = "sandboxed-chrome-launch";
   browser = await chromium.launch({ channel: "chrome", headless: true, chromiumSandbox: true, timeout: 20_000,
-    env: { ...process.env, XDG_CONFIG_HOME: config, XDG_CACHE_HOME: cache, DEBUG: "", PWDEBUG: "0" } });
+    env: { ...process.env, XDG_CONFIG_HOME: config, XDG_CACHE_HOME: cache, FONTCONFIG_FILE: fontConfig, DEBUG: "", PWDEBUG: "0" } });
   const cdp = await browser.newBrowserCDPSession(); const commandLine = await cdp.send("Browser.getBrowserCommandLine");
   assert.ok(!commandLine.arguments.some(value => /^--(?:no-sandbox|disable-setuid-sandbox|disable-web-security|single-process)(?:=|$)/.test(value))); await cdp.detach();
   const context = await browser.newContext({ viewport: { width: 1440, height: 1050 }, deviceScaleFactor: 1, serviceWorkers: "block" });
   let externalRequests = 0; let pageErrors = 0;
   await context.route("**/*", async route => { if (new URL(route.request().url()).origin !== harness.origin) { externalRequests++; await route.abort(); } else await route.continue(); });
   const page = await context.newPage(); page.setDefaultTimeout(10_000); page.on("pageerror", () => { pageErrors++; });
+  const fontCdp = await context.newCDPSession(page); await fontCdp.send("DOM.enable"); await fontCdp.send("CSS.enable");
   const files = []; const captures = []; const checks = [];
   async function capture(name, fullPage = false) {
     assert.ok(!new URL(page.url()).hash || new URL(page.url()).hash === "#workspace");
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false, "horizontal overflow");
+    await page.evaluate(() => document.fonts.ready);
+    const root = await fontCdp.send("DOM.getDocument");
+    const heading = await fontCdp.send("DOM.querySelector", { nodeId: root.root.nodeId, selector: "h1" });
+    const actualFonts = await fontCdp.send("CSS.getPlatformFontsForNode", { nodeId: heading.nodeId });
+    const koreanFont = verifyKoreanFontUsage(actualFonts.fonts, await page.locator("h1").innerText());
     const bytes = await page.screenshot({ type: "png", fullPage, animations: "disabled" });
     assert.ok(bytes.length <= LIMITS.fileBytes, "SCREENSHOT_BYTE_LIMIT"); files.push({ name: `synthetic-${name}.png`, bytes });
     assert.ok(files.reduce((sum, file) => sum + file.bytes.length, 0) <= LIMITS.totalBytes, "EVIDENCE_TOTAL_BYTE_LIMIT");
-    captures.push({ name, viewport: page.viewportSize(), fullPage, horizontalOverflow: false });
+    captures.push({ name, viewport: page.viewportSize(), fullPage, horizontalOverflow: false, koreanFont });
   }
   async function both(name, fullPage = false) {
     await page.setViewportSize({ width: 1440, height: 1050 }); await capture("desktop-" + name, fullPage);
@@ -114,6 +123,7 @@ try {
   const reason = /No usable sandbox|sandbox.*not supported/i.test(message) ? "BROWSER_SANDBOX_UNAVAILABLE"
     : /Operation not permitted/.test(message) ? "OS_OPERATION_DENIED"
     : /[Ee]xecutable.*(?:doesn't exist|not found)/.test(message) ? "CHROME_UNAVAILABLE"
+    : /KOREAN_FONT_NOT_RENDERED|KOREAN_SAMPLE_REQUIRED/.test(message) ? "KOREAN_FONT_NOT_RENDERED"
     : /SCREENSHOT_BYTE_LIMIT|EVIDENCE_TOTAL_BYTE_LIMIT|INVALID_RENDER_EVIDENCE/.test(message) ? "EVIDENCE_LIMIT_OR_FORMAT"
     : error?.name === "TimeoutError" ? "BROWSER_TIMEOUT" : error?.name === "AssertionError" ? "ASSERTION_FAILED" : "CHECK_FAILED";
   console.error("FLORA_QA_FAILURE " + phase + " " + reason); process.exitCode = 1;

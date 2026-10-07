@@ -49,7 +49,10 @@ jobs:
           node scripts/test.mjs tests/dashboard-qa.test.ts
       - name: Install pinned development-only browser driver
         run: npm install --prefix "$RUNNER_TEMP/flora-dashboard-qa-tools" --ignore-scripts --no-audit --no-fund --package-lock=false playwright@1.58.2
+      - name: Prepare Korean fonts in the job temporary directory
+        run: bash scripts/dashboard-qa/fonts.sh
       - name: Render local synthetic states with Chrome sandbox enabled
         env:
+          FLORA_QA_FONTCONFIG: ${{ runner.temp }}/flora-dashboard-qa-fonts/fonts.conf
           FLORA_QA_PLAYWRIGHT_MODULE: ${{ runner.temp }}/flora-dashboard-qa-tools/node_modules/playwright/index.mjs
         run: node scripts/dashboard-qa/capture.mjs

@@ -2,6 +2,14 @@
 
 2026-10-07 · Foundation 0A 로컬 구현 진행. 아래 실제 provider 연동·MVP 단계는 미완료.
 
+## 다음 제품 방향: 웹 요청에서 검토 가능한 작업으로
+
+독립된 앱들을 하나의 오픈소스 관리 화면에서 운영하는 방향을 유지한다. 웹에서 요청을 받으면 먼저 변경 계획·권한·비용·실행 환경을 보여주는 검토 가능한 provider Job으로 만든다. 프로젝트와 스토어 제출 준비, push·구독 같은 공통 기능 모듈, 재사용 UI·앱 템플릿을 단계적으로 연결한다. 서로 다른 앱의 source·설정·credential·이력은 분리하며 한 앱의 요청이 다른 앱을 변경하지 않도록 한다.
+
+이는 후속 로드맵이며 현재 기능 구현이나 계정 생성·결제·스토어 제출·push 발송 승인으로 해석하지 않는다. 추가 provider는 기본 off, **엄격한 free-only** 정책으로 시작한다. 무료임을 확인할 수 없거나 유료 전환/usage 비용이 필요하면 진행을 차단하고 이유를 표시한다. 유료 provider로의 자동 fallback은 하지 않는다. 실제 연결과 실행은 개별 설계·권한·검증 gate 이후에 다룬다.
+
+현재 연결 고리는 [로컬 source·baseline 가져오기와 보호된 loopback 화면](../development/dogfood.ko.md)이다. 정적 snapshot·반입 증거·실행 capability를 구분하며, 기본 provider가 blocked인 사실을 실제 실행 성공으로 바꾸지 않는다.
+
 ## 단계 0A: 검증 가능한 Foundation
 
 로컬 구현 단계다. 실제 검증 명령과 한계는 [실행 가이드](../development/local-foundation.ko.md)를 따른다. 범위: brand-neutral domain/target identity, configuration resolution + immutable snapshot, job request idempotency/lease fencing/state, migration 제약 및 provenance 계약, local-only 검사·시뮬레이션. 외부 로그인·secret 전송·실제 build/store/OTA/deploy는 포함하지 않는다.

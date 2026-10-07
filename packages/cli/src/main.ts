@@ -5,6 +5,7 @@ import { resolveSnapshot } from "@app-ops/config";
 import { readInputFile, decodeWorkflow } from "./config-command.js";
 import { inspectToolchain } from "./doctor.js";
 import { simulateWorkflow } from "./simulate.js";
+import { runDogfoodCommand } from "./dogfood-command.js";
 import type { Scenario } from "./simulate.js";
 export interface CliIO {
   stdout: (text: string) => void;
@@ -17,12 +18,13 @@ const productName = (process.env.PRODUCT_NAME || "Flora")
 const help =
   productName +
   " — " +
-  "Local App Operations Foundation\nplatform doctor [--json]\nplatform config validate --file <json>\nplatform job simulate --file <json> [--scenario happy-path|runner-replacement|unsafe-expiry]\nNo native builds, provider connections or deployments.\n";
+  "Local App Operations Foundation\nplatform doctor [--json]\nplatform config validate --file <json>\nplatform job simulate --file <json> [--scenario happy-path|runner-replacement|unsafe-expiry]\nflora dogfood --help\nNo native builds, provider connections or deployments.\n";
 export async function runCli(
   argv: readonly string[],
   io: CliIO,
 ): Promise<number> {
   try {
+    if (argv[0] === "dogfood") return await runDogfoodCommand(argv.slice(1), io);
     if (argv.length === 0 || (argv.length === 1 && argv[0] === "--help")) {
       io.stdout(help);
       return 0;

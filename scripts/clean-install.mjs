@@ -87,6 +87,7 @@ export async function verifyClean() {
     assertUnchanged(temp, before);
     const checked = run(process.execPath, [entry, "check"], temp, env);
     for (const args of [
+      ["dogfood", "--help"],
       ["doctor", "--json"],
       ["config", "validate", "--file", "examples/local-workflow.json"],
       [

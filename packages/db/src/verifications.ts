@@ -1,12 +1,41 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import { ensure, integer, object, safeJson, text } from "@app-ops/core";
+import { DomainError, ensure, integer, object, safeJson, text } from "@app-ops/core";
 import { canonicalJson, freeze } from "@app-ops/config";
 import { assertParsedBaseline, assessReport, CONFIG_RUNTIME_SMOKE_V1, parseBaselineBundle } from "@app-ops/dogfood";
 import type { BaselineEvidence, PreparedBaselineImport, ReportAssessment, VerificationCompletion, VerificationCreation, VerificationFence, VerificationRecord, VerificationState } from "@app-ops/dogfood";
 import { getInventory } from "./inventory.js";
 import { row, rows, transaction } from "./database.js";
 import type { Row } from "./database.js";
+
+/** Local process ownership only. The caller may recover attempts only after this succeeds. */
+export function acquireDashboardOwner(db: DatabaseSync, input: { nonce: string; pid: number; host: string }): void {
+  object(input, ["nonce", "pid", "host"]);
+  const nonce = text(input.nonce, 256), pid = integer(input.pid, 1, 2 ** 31 - 1), host = text(input.host, 255);
+  transaction(db, () => {
+    const current = row(db, "SELECT * FROM dashboard_server_owner WHERE singleton=1");
+    if (current) {
+      ensure(current.host === host && typeof current.pid === "number" && Number.isInteger(current.pid)
+        && current.pid > 0 && current.pid < 2 ** 31, "STORE_IN_USE");
+      let absent = false;
+      try { process.kill(current.pid, 0); }
+      catch (error) { absent = error instanceof Error && "code" in error && error.code === "ESRCH"; }
+      // A live (including reused) PID, EPERM, another host, or uncertainty is never recoverable.
+      if (!absent) throw new DomainError("STORE_IN_USE");
+      db.prepare("UPDATE dashboard_server_owner SET nonce=?,pid=?,host=?,acquired_at=? WHERE singleton=1")
+        .run(nonce, pid, host, Date.now());
+    } else {
+      db.prepare("INSERT INTO dashboard_server_owner(singleton,nonce,pid,host,acquired_at) VALUES(1,?,?,?,?)")
+        .run(nonce, pid, host, Date.now());
+    }
+  });
+}
+
+/** A stale closer cannot remove the next process's ownership row. */
+export function releaseDashboardOwner(db: DatabaseSync, nonce: string): void {
+  text(nonce, 256);
+  db.prepare("DELETE FROM dashboard_server_owner WHERE singleton=1 AND nonce=?").run(nonce);
+}
 
 function fromRow(value: Row): VerificationRecord {
   return freeze({

@@ -104,3 +104,20 @@ test("bootstrap navigation starts a fresh document even when the unauthorized pa
   assert.match(capture, /await navigateBootstrapDocument\(page, harness\.bootstrapUrl\)/);
   assert.ok(!capture.includes("page.goto(harness.bootstrapUrl"));
 });
+
+test("render gate verifies actual Korean font glyph usage rather than advertised font availability", async () => {
+  const { verifyKoreanFontUsage, fontConfiguration } = await import("../scripts/dashboard-qa/fonts.mjs");
+  const sample = "앱의 지금을, 근거와 함께";
+  const valid = [{ familyName: "Noto Sans CJK KR", postScriptName: "NotoSansCJKkr-Bold", glyphCount: 20, isCustomFont: false }];
+  const proof = verifyKoreanFontUsage(valid, sample); assert.ok(proof.koreanCodePoints > 0); assert.deepEqual(proof.fonts, valid);
+  for (const fonts of [[], [{ ...valid[0]!, familyName: "Arial" }], [{ ...valid[0]!, glyphCount: 0 }], [{ ...valid[0]!, glyphCount: 1 }], [{ ...valid[0]!, isCustomFont: true }]]) assert.throws(() => verifyKoreanFontUsage(fonts, sample));
+  assert.throws(() => verifyKoreanFontUsage(valid, "Latin only"));
+  const configuration = fontConfiguration("/tmp/private & fonts");
+  assert.ok(configuration.includes("/tmp/private &amp; fonts/package/usr/share/fonts/opentype/noto")); assert.ok(configuration.includes("Noto Sans CJK KR"));
+  const setup = readFileSync(new URL("../scripts/dashboard-qa/fonts.sh", import.meta.url), "utf8");
+  assert.match(setup, /apt-get download 'fonts-noto-cjk=1:20220127\+repack1-1'/); assert.match(setup, /dpkg-deb --extract/);
+  assert.ok(!/sudo|apt-get (?:install|update)|dpkg --install|sysctl|apparmor/.test(setup));
+  const capture = readFileSync(new URL("../scripts/dashboard-qa/capture.mjs", import.meta.url), "utf8");
+  assert.match(capture, /CSS\.getPlatformFontsForNode/); assert.match(capture, /FONTCONFIG_FILE: fontConfig/);
+  assert.ok(!capture.includes("document.fonts.check"));
+});

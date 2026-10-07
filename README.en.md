@@ -10,9 +10,9 @@ Flora is an Apache-2.0 project working toward a shared control plane for iOS, An
 
 ## What works today
 
-**A local TypeScript/SQLite/CLI foundation**, including target validation, configuration snapshots, fenced job leases, synthetic artifact metadata and release timelines. You can run the commands below today.
+**A local TypeScript/SQLite foundation and protected loopback dashboard**, including target validation, configuration snapshots, fenced jobs, static app inventory, imported development baselines and history. You can run the commands below today.
 
-There is **no web dashboard or local web URL yet**. Authentication, real Runner registration/daemon, AI code editing, Vault, native builds, signing, Store uploads, OTA and Cloudflare deployments are not implemented. A simulated `success` is not a successful app build or deployment.
+The dashboard binds only to 127.0.0.1 and uses a one-time bootstrap followed by a private local session. Organization authentication, real Runner registration/daemon, AI code editing, Vault, native builds, signing, Store uploads, OTA and Cloudflare deployments remain future work. The product execution provider is blocked; imported evidence and simulated success are not verified isolated execution or app deployment.
 
 Web AI code editing is now a user-approved product priority. The [detailed milestone proposal](docs/proposals/web-ai/next-slice-spec.ko.md) and [architecture addendum](docs/proposals/web-ai/architecture-addendum.ko.md), currently in Korean, still await design review; their publication does not mean those features shipped.
 
@@ -39,7 +39,7 @@ npm exec --yes --package=pnpm@11.19.0 -- pnpm install --frozen-lockfile --ignore
 npm exec --yes --package=pnpm@11.19.0 -- pnpm check
 ```
 
-The Node version should be `v24.19.0`; the pnpm version should be `11.19.0`. `check` builds the packages, typechecks them and runs the test suite. The current Foundation baseline reports **48 tests, 48 pass, 0 fail**. Run it before the CLI because a source clone does not include compiled `dist` files.
+The Node version should be `v24.19.0`; the pnpm version should be `11.19.0`. `check` builds the packages, typechecks them and runs the test suite. Expect zero failures; test counts vary by revision and OS. The historical Foundation-only revision `02269503` reported 48/48, before the dogfood workflow was added. Run it before the CLI because a source clone does not include compiled `dist` files.
 
 On Windows, if PowerShell blocks `npm.ps1`, use `npm.cmd` instead of `npm` in these commands. You do not need to weaken PowerShell's execution policy. A Git clone is recommended instead of “Download ZIP”: the clean-install verification below relies on Git's tracked-file list.
 
@@ -89,6 +89,26 @@ npm exec --yes --package=pnpm@11.19.0 -- pnpm verify:clean
 
 Expect `Toolchain verified: Node 24.19.0 / pnpm 11.19.0`. The clean check copies Git-tracked files into a temporary directory, uses an empty pnpm store, repeats installation/tests/CLI smoke checks and verifies source hashes. Its final JSON includes `cleanInstall: "passed"`, `isolatedStore: true` and `originalUnchanged: true`. The source-file count is revision-dependent. It may download dependencies again and removes its temporary copy afterward.
 
+## Try the local app dashboard
+
+After the install and check steps above, use the dedicated synthetic demo store:
+
+```sh
+node scripts/dogfood-demo.mjs
+node scripts/dogfood-demo.mjs --status
+node scripts/dogfood-demo.mjs --serve
+```
+
+Open the one-time URL printed by serve in a browser on the same computer. Keep that URL private. The demo imports the two clearly fictional `examples/dogfood-*.synthetic.json` files and automatically passes the returned inventory ID to the baseline import. Expect `mode: "synthetic-dogfood-demo"`, a passed imported baseline with 2 files / 4 tests, `evidenceOrigin: "operator-import"`, and `isolatedExecution: "not_run"`. This does not execute app source or certify a real run. A UI run request records `blocked` because no verified isolated provider is configured.
+
+The demo uses `.flora/dogfood/demo.db` under `os.homedir()`, outside the source checkout. Your real-app CLI uses a separate default `.flora/dogfood/state.db`, so trying the example does not bind your real-app store. One store belongs to one app. If the demo path already contains another app, it stops with CONFLICT; choose a new private path rather than deleting history. The demo accepts `--db <private-path>`; pass the same option with its --status and --serve modes. POSIX custom paths need an owner-private existing parent or one new private leaf. Windows custom paths must remain within the profile's dedicated `.flora/dogfood` directory and inherit its access; Flora does not modify Windows ACLs.
+
+For your own data, use `flora dogfood import-source --file <bundle.json>` followed by `flora dogfood import-baseline --snapshot <returned-inventory-id> --file <bundle.json>`, or select JSON files in the UI. Keep the entire `inventory_` prefix and UUID. Source and baseline inputs allow at most 2 MiB; both legacy workflow limits remain 1 MiB. Hash/provenance validation checks imported evidence for internal consistency, not live GitHub freshness or independent execution authenticity. Unknown freshness is not current. Browser OS does not determine execution OS; iOS still requires a verified macOS/Xcode runner.
+
+Ctrl+C closes the local service/server/database. A second live server returns `STORE_IN_USE` without recovering the first server's work. `PRIVATE_STORE_UNSAFE` rejects unsafe existing access/link/owner metadata without changing it; `INPUT_TOO_LARGE` rejects before database changes. The bootstrap expires after five minutes and can be used once; restart serve for a new URL if necessary. Imports and status do not perform startup recovery.
+
+The [full dogfood guide](docs/development/dogfood.ko.md) documents evidence formats and limits in Korean. This local Node server is not a Cloudflare deployment or a user-accessible cloud service. Private hosting, authentication, storage and execution-lifetime suitability require separate validation.
+
 ## Troubleshooting
 
 - **Wrong Node version / unsupported engine:** select Node 24.19.0, reopen the terminal, then rerun `node --version`. Do not disable `engine-strict` or replace the lockfile to work around a version mismatch
@@ -104,7 +124,7 @@ For an issue report, include your OS/architecture, Node/npm/pnpm versions, `git 
 
 ## Verification and documentation
 
-On 2026-10-07, the sequence above was exercised on Linux with a new HOME, npm cache and pnpm data/cache directories against source revision `02269503`. The local suite passed 48/48 tests; all three scenarios, toolchain check and clean installation passed. This is local Foundation evidence, not provider or native-build certification.
+On 2026-10-07, the sequence above was exercised on Linux with a new HOME, npm cache and pnpm data/cache directories against source revision `02269503`. That historical Foundation-only suite passed 48/48 tests; all three scenarios, toolchain check and clean installation passed. This is local Foundation evidence, not provider or native-build certification.
 
 The [CI workflow](.github/workflows/ci.yml) runs the npm-exec recipe, Foundation checks, CLI examples and clean-install verification on Linux, macOS and Windows. Check the [actual run for your revision](https://github.com/uulab-official/flora/actions/workflows/ci.yml); workflow configuration alone is not a successful run.
 

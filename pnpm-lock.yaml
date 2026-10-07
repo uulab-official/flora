@@ -44,9 +44,15 @@ importers:
       '@app-ops/core':
         specifier: workspace:*
         version: link:../core
+      '@app-ops/dashboard':
+        specifier: workspace:*
+        version: link:../dashboard
       '@app-ops/db':
         specifier: workspace:*
         version: link:../db
+      '@app-ops/dogfood':
+        specifier: workspace:*
+        version: link:../dogfood
       '@app-ops/runner-protocol':
         specifier: workspace:*
         version: link:../runner-protocol

@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "repository": {
+    "id": "repo_synthetic",
+    "fullName": "example/synthetic-app",
+    "visibility": "private"
+  },
+  "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "rootDirectory": "apps/sample",
+  "fetchedAt": "2026-01-02T03:04:05.000Z",
+  "selectedFlavor": "sample/~one",
+  "files": [
+    {
+      "path": "package.json",
+      "gitBlobSha": "8d4ed026943f4e7fbfd150ba1d5d755cd2f5e744",
+      "sha256": "cfe8943755418d0fe6cbcb768492760713ec20bcdcbd7871eaf6367c448d0d17",
+      "contentBase64": "eyJuYW1lIjoic3ludGhldGljLWFwcCIsInZlcnNpb24iOiIxLjIuMyIsImVuZ2luZXMiOnsibm9kZSI6Ij49MjQuMTkuMCA8MjUifSwic2NyaXB0cyI6eyJwb3N0aW5zdGFsbCI6InRoaXMgbXVzdCBuZXZlciBiZSBleGVjdXRlZCJ9LCJkZXBlbmRlbmNpZXMiOnsidml0ZXN0Ijoibm90LXRoZS1yZXNvbHZlZC12ZXJzaW9uIn19"
+    },
+    {
+      "path": "package-lock.json",
+      "gitBlobSha": "f20095e10b0971d718041f712e9dff2d5e0dcf1d",
+      "sha256": "2dba0ed9edbe84a02c1e0a8c826124df4bc83041333f46370f8a06b07856bc0d",
+      "contentBase64": "eyJsb2NrZmlsZVZlcnNpb24iOjMsInBhY2thZ2VzIjp7IiI6eyJuYW1lIjoic3ludGhldGljLWFwcCIsInZlcnNpb24iOiIxLjIuMyJ9LCJub2RlX21vZHVsZXMvdml0ZXN0Ijp7InZlcnNpb24iOiI0LjAuMCJ9LCJub2RlX21vZHVsZXMvdml0ZSI6eyJ2ZXJzaW9uIjoiNy4wLjAifSwibm9kZV9tb2R1bGVzL2V4cG8iOnsidmVyc2lvbiI6IjU0LjAuMCJ9LCJub2RlX21vZHVsZXMvcmVhY3QtbmF0aXZlIjp7InZlcnNpb24iOiIwLjgxLjAifX19"
+    },
+    {
+      "path": "flavors/config.json",
+      "gitBlobSha": "00b19f86cc28c23ed094a881e2d897ec3f7cf6ea",
+      "sha256": "2916cb9bfabb2cd41d565649f998ee0763a01ad94f057de917d197256495ec2d",
+      "contentBase64": "eyJzYW1wbGUvfm9uZSI6eyJwcm9kdWN0VHlwZSI6InN5bnRoZXRpYy1kZW1vIiwiYXBwIjp7Im5hbWUiOiJTYW1wbGUgQXBwIDEiLCJwYWNrYWdlIjoiaW52YWxpZC5leGFtcGxlLnNhbXBsZTEifSwiaWdub3JlZCI6eyJhZHNNb2RlIjoiZml4dHVyZS1vbmx5IiwicHJpdmF0ZU5vdGUiOiJkby1ub3QtZXhwb3J0In19LCJzYW1wbGUtMiI6eyJwcm9kdWN0VHlwZSI6InN5bnRoZXRpYy1kZW1vIiwiYXBwIjp7Im5hbWUiOiJTYW1wbGUgQXBwIDIiLCJwYWNrYWdlIjoiaW52YWxpZC5leGFtcGxlLnNhbXBsZTIifSwiaWdub3JlZCI6eyJhZHNNb2RlIjoiZml4dHVyZS1vbmx5IiwicHJpdmF0ZU5vdGUiOiJkby1ub3QtZXhwb3J0In19LCJzYW1wbGUtMyI6eyJwcm9kdWN0VHlwZSI6InN5bnRoZXRpYy1kZW1vIiwiYXBwIjp7Im5hbWUiOiJTYW1wbGUgQXBwIDMiLCJwYWNrYWdlIjoiaW52YWxpZC5leGFtcGxlLnNhbXBsZTMifSwiaWdub3JlZCI6eyJhZHNNb2RlIjoiZml4dHVyZS1vbmx5IiwicHJpdmF0ZU5vdGUiOiJkby1ub3QtZXhwb3J0In19LCJzYW1wbGUtNCI6eyJwcm9kdWN0VHlwZSI6InN5bnRoZXRpYy1kZW1vIiwiYXBwIjp7Im5hbWUiOiJTYW1wbGUgQXBwIDQiLCJwYWNrYWdlIjoiaW52YWxpZC5leGFtcGxlLnNhbXBsZTQifSwiaWdub3JlZCI6eyJhZHNNb2RlIjoiZml4dHVyZS1vbmx5IiwicHJpdmF0ZU5vdGUiOiJkby1ub3QtZXhwb3J0In19LCJzYW1wbGUtNSI6eyJwcm9kdWN0VHlwZSI6InN5bnRoZXRpYy1kZW1vIiwiYXBwIjp7Im5hbWUiOiJTYW1wbGUgQXBwIDUiLCJwYWNrYWdlIjoiaW52YWxpZC5leGFtcGxlLnNhbXBsZTUifSwiaWdub3JlZCI6eyJhZHNNb2RlIjoiZml4dHVyZS1vbmx5IiwicHJpdmF0ZU5vdGUiOiJkby1ub3QtZXhwb3J0In19LCJzYW1wbGUtNiI6eyJwcm9kdWN0VHlwZSI6InN5bnRoZXRpYy1kZW1vIiwiYXBwIjp7Im5hbWUiOiJTYW1wbGUgQXBwIDYiLCJwYWNrYWdlIjoiaW52YWxpZC5leGFtcGxlLnNhbXBsZTYifSwiaWdub3JlZCI6eyJhZHNNb2RlIjoiZml4dHVyZS1vbmx5IiwicHJpdmF0ZU5vdGUiOiJkby1ub3QtZXhwb3J0In19LCJzYW1wbGUtNyI6eyJwcm9kdWN0VHlwZSI6InN5bnRoZXRpYy1kZW1vIiwiYXBwIjp7Im5hbWUiOiJTYW1wbGUgQXBwIDciLCJwYWNrYWdlIjoiaW52YWxpZC5leGFtcGxlLnNhbXBsZTcifSwiaWdub3JlZCI6eyJhZHNNb2RlIjoiZml4dHVyZS1vbmx5IiwicHJpdmF0ZU5vdGUiOiJkby1ub3QtZXhwb3J0In19LCJzYW1wbGUtOCI6eyJwcm9kdWN0VHlwZSI6InN5bnRoZXRpYy1kZW1vIiwiYXBwIjp7Im5hbWUiOiJTYW1wbGUgQXBwIDgiLCJwYWNrYWdlIjoiaW52YWxpZC5leGFtcGxlLnNhbXBsZTgifSwiaWdub3JlZCI6eyJhZHNNb2RlIjoiZml4dHVyZS1vbmx5IiwicHJpdmF0ZU5vdGUiOiJkby1ub3QtZXhwb3J0In19LCJzYW1wbGUtOSI6eyJwcm9kdWN0VHlwZSI6InN5bnRoZXRpYy1kZW1vIiwiYXBwIjp7Im5hbWUiOiJTYW1wbGUgQXBwIDkiLCJwYWNrYWdlIjoiaW52YWxpZC5leGFtcGxlLnNhbXBsZTkifSwiaWdub3JlZCI6eyJhZHNNb2RlIjoiZml4dHVyZS1vbmx5IiwicHJpdmF0ZU5vdGUiOiJkby1ub3QtZXhwb3J0In19LCJzYW1wbGUtMTAiOnsicHJvZHVjdFR5cGUiOiJzeW50aGV0aWMtZGVtbyIsImFwcCI6eyJuYW1lIjoiU2FtcGxlIEFwcCAxMCIsInBhY2thZ2UiOiJpbnZhbGlkLmV4YW1wbGUuc2FtcGxlMTAifSwiaWdub3JlZCI6eyJhZHNNb2RlIjoiZml4dHVyZS1vbmx5IiwicHJpdmF0ZU5vdGUiOiJkby1ub3QtZXhwb3J0In19LCJzYW1wbGUtMTEiOnsicHJvZHVjdFR5cGUiOiJzeW50aGV0aWMtZGVtbyIsImFwcCI6eyJuYW1lIjoiU2FtcGxlIEFwcCAxMSIsInBhY2thZ2UiOiJpbnZhbGlkLmV4YW1wbGUuc2FtcGxlMTEifSwiaWdub3JlZCI6eyJhZHNNb2RlIjoiZml4dHVyZS1vbmx5IiwicHJpdmF0ZU5vdGUiOiJkby1ub3QtZXhwb3J0In19fQ=="
+    },
+    {
+      "path": "src/core/config/runtime.ts",
+      "gitBlobSha": "d07613af9b5142400f3f5aec260f6ec7fd913428",
+      "sha256": "aeace2d67ef267dee27907fa06fe7c06e846937823aad339de7def4e65bfe631",
+      "contentBase64": "ZXhwb3J0IGNvbnN0IHN5bnRoZXRpYyA9IHRydWU7Cg=="
+    },
+    {
+      "path": "src/core/experience/runtime.ts",
+      "gitBlobSha": "d07613af9b5142400f3f5aec260f6ec7fd913428",
+      "sha256": "aeace2d67ef267dee27907fa06fe7c06e846937823aad339de7def4e65bfe631",
+      "contentBase64": "ZXhwb3J0IGNvbnN0IHN5bnRoZXRpYyA9IHRydWU7Cg=="
+    },
+    {
+      "path": "src/core/experience/types.ts",
+      "gitBlobSha": "4306947451f46a05e98a6f6fda60a796303cdaa1",
+      "sha256": "f87de927447cd0a42f62e1e31a647571ff3bbe195b4666eafc04d463fad61e84",
+      "contentBase64": "ZXhwb3J0IHR5cGUgU3ludGhldGljID0gc3RyaW5nOwo="
+    },
+    {
+      "path": "config/experience-contract.json",
+      "gitBlobSha": "13003ae0521bdd960eadfb0cada1fc6ed36e645f",
+      "sha256": "cb8daed7b30399a1c3c8b83b3b7bee4b774a30fc389afc1d375e4c23a3cc4ae8",
+      "contentBase64": "eyJzeW50aGV0aWMiOnRydWV9Cg=="
+    },
+    {
+      "path": "vitest.config.mts",
+      "gitBlobSha": "ff8b4c56321a3362fc00224b01800f62466f9a1f",
+      "sha256": "450f0af4f4c1ecc4c7180f2e364c8a59bfed69dd350fb6b47bce8641c2a37786",
+      "contentBase64": "ZXhwb3J0IGRlZmF1bHQge307Cg=="
+    },
+    {
+      "path": "tsconfig.json",
+      "gitBlobSha": "d29ef0262a525187c7fb9e6a0096adc81adf9be1",
+      "sha256": "671920f9e86e8620695b89c0328206cb79c2ae66dd7bf466a0644e20d1cfd9f1",
+      "contentBase64": "eyJjb21waWxlck9wdGlvbnMiOnsic3RyaWN0Ijp0cnVlfX0K"
+    },
+    {
+      "path": "tests/config/runtime.test.ts",
+      "gitBlobSha": "0eb808498c624a8985461f0cc132d2200ad8892e",
+      "sha256": "06129d87f90510fb9a19ad166d0bf82b1f83c35c14f5c19ba0bd0af3ef14d4c2",
+      "contentBase64": "Ly8gU3ludGhldGljIGhhc2gtb25seSB0ZXN0IHNvdXJjZS4K"
+    },
+    {
+      "path": "tests/config/experience-runtime.test.ts",
+      "gitBlobSha": "0eb808498c624a8985461f0cc132d2200ad8892e",
+      "sha256": "06129d87f90510fb9a19ad166d0bf82b1f83c35c14f5c19ba0bd0af3ef14d4c2",
+      "contentBase64": "Ly8gU3ludGhldGljIGhhc2gtb25seSB0ZXN0IHNvdXJjZS4K"
+    }
+  ]
+}
