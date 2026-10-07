@@ -38,6 +38,25 @@ demo script의 `--serve`는 실제 `flora dogfood serve --db <demo-path>`를 호
 
 ## 3. 자신의 자료 가져오기
 
+**현재는 정해진 앱 구조를 위한 반입 경로입니다.** 임의 Expo·Unity·Web 저장소를 URL만으로 연결하거나 자동 분석하는 기능이 아닙니다. 한 앱의 여러 flavor를 표시하며, 수십·수백 개의 독립 앱을 한 화면에서 관리하는 기능은 아직 없습니다. 아래 형식에 맞지 않는 앱을 연결하려고 파일명을 바꾸거나 테스트 성공값을 꾸미지 마세요. 별도 importer/profile 지원이 필요합니다.
+
+Source bundle은 rootDirectory 기준으로 다음 10개 파일을 모두 포함해야 합니다. `src/core/experience/types.ts`만 선택적으로 추가할 수 있고 다른 파일은 거부합니다. 정확한 validation은 [source.ts](../../packages/dogfood/src/source.ts), envelope 필드는 [types.ts](../../packages/dogfood/src/types.ts)에 있습니다.
+
+```text
+package.json
+package-lock.json
+flavors/config.json
+src/core/config/runtime.ts
+src/core/experience/runtime.ts
+config/experience-contract.json
+vitest.config.mts
+tsconfig.json
+tests/config/runtime.test.ts
+tests/config/experience-runtime.test.ts
+```
+
+Baseline도 [config-runtime-smoke-v1](../../packages/dogfood/src/profile.ts)에 고정되어 있습니다. 위 두 test file에서 각각 2개씩 총 4개 검사를 실행한 정확한 argv·보고서·원본 hash가 필요합니다. 범용 테스트 결과 변환기나 GitHub에서 bundle을 생성하는 CLI는 아직 없습니다. 형식을 준비하기 전에는 2절의 공개 demo만 체험할 수 있습니다.
+
 한 store는 한 repository/root 앱에 묶입니다. 기본 demo.db와 실제 앱용 state.db가 분리되므로 예제 이후 자신의 앱을 기본 CLI로 가져올 수 있습니다. 예제 경로가 이미 다른 앱에 묶여 있다면 `CONFLICT`로 멈추며 기존 이력을 삭제하지 않습니다. 새 private 경로를 선택해 `node scripts/dogfood-demo.mjs --db <private-path>`로 가져온 뒤 `--status`/`--serve`에도 같은 `--db`를 전달하세요. 서로 다른 실제 앱에도 별도 private DB를 사용합니다. 기존 store를 자동 삭제하거나 다른 앱으로 바꾸는 명령은 없습니다.
 
 기본 DB는 `node:os.homedir()` 아래 `.flora/dogfood/state.db`입니다. source checkout 안에 만들지 않습니다. POSIX에서 custom DB는 이미 현재 사용자 소유의 0700 parent 안 또는 새로 만드는 전용 0700 leaf 안에만 둘 수 있습니다. 여러 단계의 임의 parent를 자동 생성하지 않습니다. Windows custom DB는 사용자 profile의 `.flora/dogfood` 하위만 지원합니다. shared/network 폴더나 profile 밖 경로를 우회 지원하지 않습니다.

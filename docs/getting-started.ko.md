@@ -49,7 +49,7 @@ node scripts/dogfood-demo.mjs --serve
 
 같은 컴퓨터의 브라우저로 출력 URL을 엽니다. demo는 `example/synthetic-app`의 가상 source와 2개 파일/4개 테스트 증거를 반입하고 실제 실행은 하지 않습니다. `operator-import`, `development-baseline`, `isolatedExecution: "not_run"`을 구분하세요. UI의 새 실행 요청은 `blocked`가 정상입니다. URL의 일회용 비밀값을 공유하지 마세요. 종료는 Ctrl+C이며 재시작 후에는 새 URL을 사용합니다.
 
-예제는 홈 profile의 `.flora/dogfood/demo.db`를 사용하고 실제 앱의 기본 `state.db`와 분리됩니다. 한 store는 한 앱에 묶이므로 예제 경로에 다른 앱이 이미 있다면 자동 삭제하지 않고 새 private DB 경로를 선택합니다. [앱 import·private store·안전한 실패 상세](development/dogfood.ko.md)에 정확한 형식과 지원 경로가 있습니다. 이후 단계의 기존 Foundation simulation도 계속 사용할 수 있습니다.
+예제는 홈 profile의 `.flora/dogfood/demo.db`를 사용하고 실제 앱의 기본 `state.db`와 분리됩니다. 현재 한 앱의 여러 flavor를 표시하며 여러 독립 앱의 통합 관리는 아직 지원하지 않습니다. 자신의 자료도 [고정 source·검사 형식](development/dogfood.ko.md#3-자신의-자료-가져오기)을 만족해야 합니다. 한 store는 한 앱에 묶이므로 예제 경로에 다른 앱이 이미 있다면 자동 삭제하지 않고 새 private DB 경로를 선택합니다. [앱 import·private store·안전한 실패 상세](development/dogfood.ko.md)에 정확한 형식과 지원 경로가 있습니다. 이후 단계의 기존 Foundation simulation도 계속 사용할 수 있습니다.
 
 ## 3. 환경과 설정 확인하기
 

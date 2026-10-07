@@ -14,7 +14,7 @@ Flora is an Apache-2.0 project working toward a shared control plane for iOS, An
 
 The dashboard binds only to 127.0.0.1 and uses a one-time bootstrap followed by a private local session. Organization authentication, real Runner registration/daemon, AI code editing, Vault, native builds, signing, Store uploads, OTA and Cloudflare deployments remain future work. The product execution provider is blocked; imported evidence and simulated success are not verified isolated execution or app deployment.
 
-A separate Cloudflare path implements single-owner password login, private source/baseline imports and history, with local synthetic Worker/DO/D1 tests. Actual Free account capacity/performance, production deployment/domain/TLS, owner enrollment and private-file uploads remain unverified. See the [hosting development guide (Korean)](docs/development/password-hosting.ko.md) and [release evidence and open gates](docs/release/password-hosting-evidence.md). The hosted path does not run a Runner.
+A separate Cloudflare path implements single-owner password login, private source/baseline imports and history, with local synthetic Worker/DO/D1 tests. Actual Free account capacity/performance, production deployment/domain/TLS, owner enrollment and private-file uploads remain unverified. See the [hosting development guide (Korean)](docs/development/password-hosting.ko.md) and [release evidence and open gates](docs/release/password-hosting-evidence.md). The hosted path does not run a Runner. Each local store or hosted deployment supports **one repository/root app with multiple flavors**. Managing dozens or hundreds of independent apps is not implemented. Imports require the [fixed source layout and test profile](docs/development/dogfood.ko.md#3-자신의-자료-가져오기); arbitrary repositories and test reports are not supported.
 
 Web AI code editing is now a user-approved product priority. The [detailed milestone proposal](docs/proposals/web-ai/next-slice-spec.ko.md) and [architecture addendum](docs/proposals/web-ai/architecture-addendum.ko.md), currently in Korean, still await design review; their publication does not mean those features shipped.
 
@@ -105,11 +105,22 @@ Open the one-time URL printed by serve in a browser on the same computer. Keep t
 
 The demo uses `.flora/dogfood/demo.db` under `os.homedir()`, outside the source checkout. Your real-app CLI uses a separate default `.flora/dogfood/state.db`, so trying the example does not bind your real-app store. One store belongs to one app. If the demo path already contains another app, it stops with CONFLICT; choose a new private path rather than deleting history. The demo accepts `--db <private-path>`; pass the same option with its --status and --serve modes. POSIX custom paths need an owner-private existing parent or one new private leaf. Windows custom paths must remain within the profile's dedicated `.flora/dogfood` directory and inherit its access; Flora does not modify Windows ACLs.
 
-For your own data, use `flora dogfood import-source --file <bundle.json>` followed by `flora dogfood import-baseline --snapshot <returned-inventory-id> --file <bundle.json>`, or select JSON files in the UI. Keep the entire `inventory_` prefix and UUID. Source and baseline inputs allow at most 2 MiB; both legacy workflow limits remain 1 MiB. Hash/provenance validation checks imported evidence for internal consistency, not live GitHub freshness or independent execution authenticity. Unknown freshness is not current. Browser OS does not determine execution OS; iOS still requires a verified macOS/Xcode runner.
+For compatible source and baseline bundles, run the following from the repository root, replacing the filenames and the complete returned `inventory_` ID. The source install does not create a global `flora` command. You can also select these JSON files in the UI.
+
+```sh
+npm exec --yes --package=pnpm@11.19.0 -- pnpm flora dogfood import-source --file source-bundle.json
+npm exec --yes --package=pnpm@11.19.0 -- pnpm flora dogfood import-baseline --snapshot inventory_00000000-0000-0000-0000-000000000000 --file baseline-bundle.json
+```
+
+The zero-filled ID is a placeholder; use the first command’s returned ID. Source and baseline inputs allow at most 2 MiB; both legacy workflow limits remain 1 MiB. Hash/provenance validation checks imported evidence for internal consistency, not live GitHub freshness or independent execution authenticity. Unknown freshness is not current. Browser OS does not determine execution OS; iOS still requires a verified macOS/Xcode runner.
 
 Ctrl+C closes the local service/server/database. A second live server returns `STORE_IN_USE` without recovering the first server's work. `PRIVATE_STORE_UNSAFE` rejects unsafe existing access/link/owner metadata without changing it; `INPUT_TOO_LARGE` rejects before database changes. The bootstrap expires after five minutes and can be used once; restart serve for a new URL if necessary. Imports and status do not perform startup recovery.
 
 The [full dogfood guide](docs/development/dogfood.ko.md) documents evidence formats and limits in Korean. This local Node server is not a Cloudflare deployment or a user-accessible cloud service. Private hosting, authentication, storage and execution-lifetime suitability require separate validation.
+
+## Self-hosting status
+
+The Cloudflare path is an operator-managed preview. After the pinned install/build above, follow the [hosting preparation sequence](docs/development/password-hosting.ko.md#self-host-준비-순서). It requires an existing authorized Cloudflare management session, confirmed Free capacity, an owner-controlled HTTPS hostname, a completed private Wrangler config, and a dedicated D1 database. Applying the SQL migration creates schema only; the immutable deployment identity must be provisioned separately before app access works. Owner password enrollment is a separate, locked-by-default step. The repository does not yet provide a setup-capability issuer or a safe offline authentication-database restore tool. The first public URL is `/login`; visiting `/` without a session returns 401. Do not populate the eventual real-app database with the demo. Actual deployment and Free-edge behavior remain unverified.
 
 ## Troubleshooting
 
