@@ -9,6 +9,7 @@ import { bridgeRequest, SYNTHETIC_ORIGIN } from "./transport.mjs";
 import { createResponseGate } from "./response-gate.mjs";
 import { observeUpload, uploadResetEvidence } from "./upload-outcome.mjs";
 import { measureMobileAppDensity } from "./mobile-density.mjs";
+import { clickScaledPointer } from "./scaled-pointer.mjs";
 import { encodeEvidence, LIMITS } from "../dashboard-qa/evidence.mjs";
 import { verifyKoreanFontUsage } from "../dashboard-qa/fonts.mjs";
 
@@ -273,11 +274,11 @@ try {
       step("probe-open-detail");
       await sample();
       step("open-detail");
-      await page.locator("#flavor-row-sample-4").click();
+      const openPointer = await clickScaledPointer(page, "#flavor-row-sample-4");
       step("wait-detail");
       await page.locator("#app-detail").waitFor({ state: "visible" });
       step("close-detail");
-      await page.locator("#detail-close").click();
+      const closePointer = await clickScaledPointer(page, "#detail-close");
       step("check-detail-hidden");
       assert.equal(await page.locator("#app-detail").isHidden(), true);
       step("clear-search");
@@ -289,6 +290,7 @@ try {
       assert.ok(Math.abs(observedScale - 2) < 0.01, "SCALE_MUST_REMAIN_DURING_INTERACTION");
       pageScaleEvidence = { method: "CDP Emulation.setPageScaleFactor", requestedScale: 2, observedScale,
         layoutWidth: metrics.cssLayoutViewport.clientWidth, visualWidth: metrics.cssVisualViewport.clientWidth,
+        pointerMethod: "visual CSS input with layout DOM hit check and trusted event verification", pointerChecks: { open: openPointer, close: closePointer },
         usableControls: ["app search", "open app detail", "close app detail", "clear search"] };
     } catch (error) {
       await retainFailure(error);

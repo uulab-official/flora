@@ -224,6 +224,24 @@ At that scale, the browser searches for a flavor, opens/closes its detail and
 clears the search using ordinary actionable controls. A finally block restores
 factor 1, and every reference screenshot independently requires scale 1.
 
+For detail open/close at 2×, `scaled-pointer.mjs` corrects a measured
+Playwright 1.58.2 coordinate mismatch: after visual panning, CDP content quads
+are relative to the visual viewport while DOM hit testing uses layout viewport
+coordinates. The failed CI measurement had a DOM row origin of (16, 390.094),
+a CDP quad origin of (0, 0.094), and visual offset (16, 390). Adding that offset
+made the hit test identify the row; the fixed navigation did not overlap it.
+See the pinned [Playwright point calculation](https://github.com/microsoft/playwright/blob/v1.58.2/packages/playwright-core/src/server/dom.ts#L209)
+and [trusted CDP mouse input](https://github.com/microsoft/playwright/blob/v1.58.2/packages/playwright-core/src/server/chromium/crInput.ts#L96).
+
+The correction retains normal scrolling, visible/enabled/stable checks and one
+15-second action budget. It chooses the center of the target's visible
+intersection, checks the DOM hit in layout coordinates, and sends a real mouse
+click in visual CSS coordinates. It verifies trusted pointer-down, pointer-up
+and click events on the expected target at the mapped coordinates. Actual
+detail visibility/closure and retained 2× scale are still required. Geometry,
+obstruction, movement, invalid data and deadline tests exercise this helper;
+only an actual browser run can establish that the interaction works.
+
 This exercises CDP visual page scaling. It does not prove native pinch gestures,
 OS text zoom or browser-toolbar zoom; those remain explicitly unverified in the
 summary. The viewport meta tag is checked separately as metadata. No CSS zoom,

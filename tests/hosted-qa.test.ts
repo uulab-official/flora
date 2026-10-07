@@ -5,6 +5,98 @@ import { runInNewContext } from "node:vm";
 import { bridgeRequest, SYNTHETIC_ORIGIN } from "../scripts/hosted-qa/transport.mjs";
 import { createResponseGate } from "../scripts/hosted-qa/response-gate.mjs";
 import { measureMobileAppDensity } from "../scripts/hosted-qa/mobile-density.mjs";
+import { clickScaledPointer, scaledPointerPoint } from "../scripts/hosted-qa/scaled-pointer.mjs";
+
+const scaledGeometry = () => ({ box: { x: 16, y: 390.094, width: 262.875, height: 67 },
+  visual: { offsetLeft: 16, offsetTop: 390, width: 195, height: 422, scale: 2 } });
+
+test("scaled pointer maps the observed visible CSS intersection back to DOM hit coordinates", () => {
+  const point = scaledPointerPoint(scaledGeometry());
+  assert.equal(point.x, 97.5); assert.ok(Math.abs(point.y - 33.594) < 0.001);
+  assert.equal(point.clientX, 113.5); assert.ok(Math.abs(point.clientY - 423.594) < 0.001);
+  assert.equal(point.scale, 2);
+});
+
+test("scaled pointer rejects invalid scale, coordinates, dimensions and fully clipped targets", () => {
+  for (const changed of [null, {}, { ...scaledGeometry(), visual: { ...scaledGeometry().visual, scale: 1 } },
+    ...[NaN, Infinity, -Infinity, 1_000_001, "16"].map(x => ({ ...scaledGeometry(), box: { ...scaledGeometry().box, x } })),
+    ...[0, -1].map(width => ({ ...scaledGeometry(), box: { ...scaledGeometry().box, width } })),
+    { ...scaledGeometry(), box: { ...scaledGeometry().box, x: 500 } }]) {
+    assert.throws(() => scaledPointerPoint(changed), /INVALID_SCALED_POINTER_GEOMETRY|SCALED_POINTER_OUTSIDE_VIEWPORT/);
+  }
+});
+
+function scaledPointerHarness(options: { obstructed?: boolean; trusted?: boolean; displaced?: boolean; moved?: boolean; disabled?: boolean } = {}) {
+  const geometry = scaledGeometry(), calls: string[] = [], clicks: number[][] = [];
+  const listeners = new Map<string, (event: unknown) => void>();
+  let reads = 0;
+  const target = { isConnected: true, contains: (value: unknown) => value === target,
+    matches: () => Boolean(options.disabled), closest: () => null,
+    getBoundingClientRect: () => ({ ...geometry.box, x: geometry.box.x + (options.moved && reads++ > 0 ? 5 : 0) }) };
+  const window = { visualViewport: geometry.visual, addEventListener: (name: string, fn: (event: unknown) => void) => listeners.set(name, fn),
+    removeEventListener: (name: string) => listeners.delete(name) };
+  const document = { elementFromPoint: (x: number, y: number) => !options.obstructed && x >= 16 && x < 278.875 && y >= 390.094 && y < 457.094 ? target : {} };
+  const evaluate = (fn: unknown, argument?: unknown) => runInNewContext("(" + String(fn) + ")(target, argument)", { window, document, target, argument });
+  const element = { waitForElementState: async (state: string) => { calls.push(state); }, evaluate,
+    evaluateHandle: async (fn: unknown, argument: unknown) => {
+      const value = evaluate(fn, argument);
+      return { evaluate: async (fn: (value: unknown) => unknown) => fn(value), dispose: async () => {} };
+    }, dispose: async () => {} };
+  const control = { waitFor: async () => { calls.push("visible-locator"); }, scrollIntoViewIfNeeded: async () => { calls.push("scroll"); },
+    elementHandle: async () => element };
+  const page = { locator: () => control, mouse: { click: async (x: number, y: number) => {
+    clicks.push([x, y]);
+    for (const type of ["pointerdown", "pointerup", "click"]) listeners.get(type)?.({ type, isTrusted: options.trusted !== false,
+      target, clientX: x + geometry.visual.offsetLeft + (options.displaced ? 5 : 0), clientY: y + geometry.visual.offsetTop });
+  } } };
+  return { page, element, calls, clicks, listeners };
+}
+
+test("scaled pointer preserves scrolling and actionability then verifies trusted event targeting", async () => {
+  const harness = scaledPointerHarness();
+  const result = await clickScaledPointer(harness.page, "#flavor-row-sample-4");
+  assert.deepEqual(harness.calls, ["visible-locator", "scroll", "visible", "enabled", "stable"]);
+  assert.equal(harness.clicks.length, 1); assert.equal(result.trustedClick, true);
+  assert.equal(harness.listeners.size, 0);
+});
+
+test("scaled pointer rejects obstruction, movement and disabled targets before dispatch", async () => {
+  for (const options of [{ obstructed: true }, { moved: true }, { disabled: true }]) {
+    const harness = scaledPointerHarness(options);
+    await assert.rejects(clickScaledPointer(harness.page, "#detail-close"), /SCALED_POINTER_(?:HIT_REQUIRED|MOVED|DISABLED)/);
+    assert.equal(harness.clicks.length, 0); assert.equal(harness.listeners.size, 0);
+  }
+});
+
+test("scaled pointer refuses untrusted or incorrectly mapped actual pointer events", async () => {
+  for (const options of [{ trusted: false }, { displaced: true }]) {
+    const harness = scaledPointerHarness(options);
+    await assert.rejects(clickScaledPointer(harness.page, "#detail-close"), /SCALED_POINTER_TRUSTED_EVENTS_REQUIRED/);
+    assert.equal(harness.listeners.size, 0);
+  }
+});
+
+test("scaled pointer has one 15 second action deadline and cannot click after a stalled scroll completes late", async () => {
+  const harness = scaledPointerHarness(); let releaseScroll = () => {};
+  const control = harness.page.locator();
+  control.scrollIntoViewIfNeeded = () => new Promise<void>(resolve => { releaseScroll = resolve; });
+  const delays: number[] = [];
+  const click = runInNewContext("(" + String(clickScaledPointer) + ")", { assert, scaledPointerPoint, Date, clearTimeout,
+    setTimeout: (callback: () => void, delay: number) => { delays.push(delay); return setTimeout(callback, 10); } }) as typeof clickScaledPointer;
+  await assert.rejects(click({ ...harness.page, locator: () => control }, "#detail-close"), { name: "TimeoutError" });
+  assert.deepEqual(delays, [15_000]);
+  releaseScroll(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(harness.clicks.length, 0); assert.equal(harness.listeners.size, 0);
+});
+
+test("scaled pointer cleanup cannot mask an earlier obstruction failure", async () => {
+  const harness = scaledPointerHarness({ obstructed: true });
+  harness.element.dispose = () => new Promise<void>(() => {});
+  const click = runInNewContext("(" + String(clickScaledPointer) + ")", { assert, scaledPointerPoint, Date, clearTimeout,
+    setTimeout: (callback: () => void) => setTimeout(callback, 10) }) as typeof clickScaledPointer;
+  await assert.rejects(click(harness.page, "#detail-close"), /SCALED_POINTER_HIT_REQUIRED/);
+  assert.equal(harness.clicks.length, 0);
+});
 
 // These are viewport-relative CSS-pixel boxes, as returned by Playwright.
 const mobileDensity = (firstRowY = 418) => ({
@@ -162,7 +254,8 @@ async function scaleDiagnosticHarness(failAt?: string, failCleanup = false, stal
   const lines: string[] = [], calls: string[] = [];
   const failure = Object.assign(new Error("synthetic-private-error-must-not-appear"), { name: "TimeoutError" });
   const cleanupFailure = new Error("synthetic-private-cleanup-must-not-appear");
-  const scope = { assert, setTimeout, clearTimeout, phase: "mobile-twofold-page-scale", pageScaleEvidence: undefined,
+  const scope = { assert, setTimeout, clearTimeout, clickScaledPointer: async () => operation(),
+    phase: "mobile-twofold-page-scale", pageScaleEvidence: undefined,
     checks: [] as string[], console: { log: (line: string) => lines.push(line) } };
   let scale = 1, filtered = false, failed = false, releaseSample = () => {};
   const stalled = () => new Promise<void>(resolve => { releaseSample = resolve; });
