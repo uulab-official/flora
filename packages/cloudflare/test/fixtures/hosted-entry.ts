@@ -59,6 +59,22 @@ export class HostedFixtureAuth {
   }
   async fetch(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname;
+    if (request.headers.get("X-Flora-Fixture-Stream-Probe") === "1") {
+      // Count pulls at the real DO authority boundary, not at the outer transport.
+      const reader = request.body!.getReader(), writesBefore = this.writes;
+      let reads = 0, bytesRead = 0;
+      const body = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          const part = await reader.read();
+          if (part.done) controller.close();
+          else { reads++; bytesRead += part.value.byteLength; controller.enqueue(part.value); }
+        },
+        cancel(reason) { return reader.cancel(reason); },
+      }, { highWaterMark: 0 });
+      const result = await this.authority.fetch(new Request(request, { body }));
+      return Response.json({ status: result.status, body: await result.json(), reads, bytesRead,
+        contentLength: request.headers.get("Content-Length"), writes: this.writes - writesBefore });
+    }
     if (path === "/__test/control") {
       const data = await request.json() as { now?: number; restart?: boolean; failD1?: boolean; failAuth?: boolean; revokeBeforeD1Read?: boolean; revokeAfterSubmission?: boolean; loseResponse?: boolean; stats?: boolean; evict?: boolean; sql?: string; captureConsole?: boolean; probeConsole?: boolean; resetConsole?: boolean; holdImport?: string; releaseImport?: boolean };
       if (data.probeConsole) console.info("SYNTHETIC_CAPTURE_PROBE");
@@ -126,6 +142,24 @@ export class HostedFixtureAuth {
 export default {
   async fetch(request: Request, env: FloraEnv): Promise<Response> {
     const path = new URL(request.url).pathname;
+    if (path === "/__test/stream-size-probe") {
+      // Fully receive the synthetic outer upload before exercising cancellation.
+      // The inner request still traverses the real front and real DO byte reader.
+      const input = await request.json() as { path: string; bodyBase64: string };
+      const bytes = Uint8Array.from(atob(input.bodyBase64), character => character.charCodeAt(0));
+      let offset = 0;
+      const body = new ReadableStream<Uint8Array>({ pull(controller) {
+        const end = Math.min(offset + 16_384, bytes.length);
+        controller.enqueue(bytes.subarray(offset, end)); offset = end;
+        if (offset === bytes.length) controller.close();
+      } }, { highWaterMark: 0 });
+      const headers = new Headers(request.headers);
+      headers.delete("Content-Length"); headers.delete("Transfer-Encoding");
+      headers.set("X-Flora-Fixture-Stream-Probe", "1");
+      return worker.fetch(new Request(env.FLORA_ORIGIN + input.path, { method: "POST", headers, body }), {
+        ...env, ASSETS: assetBinding as unknown as FloraEnv["ASSETS"],
+      });
+    }
     if (path === "/__test/declared-size-probe") {
       // Test metadata rejection inside workerd: a huge known-length TCP upload may
       // otherwise reset the local emulator socket when the front rejects it unread.

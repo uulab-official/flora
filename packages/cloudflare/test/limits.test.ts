@@ -6,7 +6,7 @@ import type { D1Database } from "@cloudflare/workers-types";
 import type { InventorySnapshot } from "@app-ops/dogfood";
 import type { HostedState, SafeLog } from "../src/contracts.ts";
 import { bundleBytes, replaceSourceFile, syntheticBaseline, syntheticSourceBundle } from "../../../tests/dogfood-fixtures.ts";
-import { createTestRuntime, streamedTestBody } from "./runtime.ts";
+import { createTestRuntime } from "./runtime.ts";
 
 const origin = "https://flora.example.test", email = "owner@example.test", start = 1_800_000_000_000;
 const sourceLimit = 1_048_576, baselineLimit = 131_072, responseLimit = 1_048_576;
@@ -51,10 +51,10 @@ async function harness(t: test.TestContext) {
   await db.prepare("INSERT INTO flora_deployment(singleton,owner_id,origin,db_identity) VALUES(1,?,?,?)")
     .bind("synthetic-owner", origin, "synthetic-db").run();
   let jar = "", csrf = "";
-  const call = (path: string, body?: Uint8Array | string | ReadableStream<Uint8Array>, headers: Record<string, string> = {}) => runtime.fetch(origin + path, {
+  const call = (path: string, body?: Uint8Array | string, headers: Record<string, string> = {}) => runtime.fetch(origin + path, {
     method: body === undefined ? "GET" : "POST",
     headers: { Cookie: jar, ...(body === undefined ? {} : { Origin: origin, "Content-Type": "application/json", "X-Flora-CSRF": csrf }), ...headers },
-    ...(body === undefined ? {} : { body, duplex: "half" }),
+    ...(body === undefined ? {} : { body }),
   });
   const control = (value: unknown) => call("/__test/control", JSON.stringify(value));
   await control({ now: start });
@@ -128,9 +128,15 @@ test("supported_size_synthetic_envelopes_keep_limits", async t => {
     ["/api/baselines?snapshotId=" + first.id, baselineBytes(await h.snapshot(first.id), baselineLimit + 1, "over")],
     ["/api/head", sizedJson(observation, 4_097)],
   ] as const) {
-    t.diagnostic("Streamed one-byte-over boundary: " + path.split("?", 1)[0] + " (" + bytes.length + " bytes)");
-    const response = await h.call(path, streamedTestBody(bytes));
-    assert.deepEqual(await responseJson(response, 413), { error: "BODY_TOO_LARGE" }, path);
+    t.diagnostic("DO streamed one-byte-over boundary: " + path.split("?", 1)[0] + " (" + bytes.length + " bytes)");
+    const response = await h.call("/__test/stream-size-probe", JSON.stringify({ path, bodyBase64: Buffer.from(bytes).toString("base64") }));
+    assert.equal(response.status, 200, path);
+    const result = await response.json() as { status: number; body: unknown; reads: number; bytesRead: number; contentLength: string | null; writes: number };
+    assert.deepEqual({ status: result.status, body: result.body }, { status: 413, body: { error: "BODY_TOO_LARGE" } }, path);
+    assert.equal(result.contentLength, null, "DO must enforce measured bytes, not a declared length");
+    assert.equal(result.bytesRead, bytes.length, path);
+    assert.ok(result.reads > 0, "Real authority must pull the streamed body");
+    assert.equal(result.writes, 0, "Over-limit input must not submit a D1 write");
   }
   assert.deepEqual(await h.capacity(), afterHead);
   assert.equal(before!.snapshot_count, 2);

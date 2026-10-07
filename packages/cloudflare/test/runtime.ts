@@ -13,18 +13,6 @@ export interface TestRuntimeOptions {
   durableObjects?: Record<string, string>;
 }
 
-/** Exercise streamed byte admission without a known-length TCP early-response race. */
-export function streamedTestBody(input: Uint8Array | string): ReadableStream<Uint8Array> {
-  const bytes = typeof input === "string" ? new TextEncoder().encode(input) : input;
-  let offset = 0;
-  return new ReadableStream<Uint8Array>({ pull(controller) {
-    const end = Math.min(offset + 16_384, bytes.length);
-    controller.enqueue(bytes.subarray(offset, end));
-    offset = end;
-    if (offset === bytes.length) controller.close();
-  } });
-}
-
 /** Local-only workerd harness. No account, remote proxy, credentials or deployment. */
 export async function createTestRuntime(options: TestRuntimeOptions) {
   const directory = await mkdtemp(join(tmpdir(), "flora-runtime-"));
