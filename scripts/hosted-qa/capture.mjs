@@ -134,32 +134,106 @@ try {
     targetChecks.push({ state, viewport: page.viewportSize(), minimumCssPx: 44, targets });
   }
   async function twofoldPageScale(page, appButtons) {
+    const step = name => {
+      phase = "mobile-twofold-page-scale-" + name;
+      console.log("FLORA_HOSTED_QA_SCALE_STEP " + phase);
+    };
+    step("attach");
     const session = await page.context().newCDPSession(page);
+    let requestedScale = 2, failure;
+    // Only fixed keys and finite, bounded numbers may cross the log boundary.
+    // Never print raw CDP responses, browser errors, DOM text or credentials.
+    const numeric = value => typeof value === "number" && Number.isFinite(value) && Math.abs(value) <= 1_000_000
+      ? Math.round(value * 1000) / 1000 : null;
+    async function sample() {
+      const samplePhase = phase, sampleRequestedScale = requestedScale;
+      let timer, expired = false;
+      try {
+        // Optional diagnostics have their own total budget. A stalled read must
+        // not delay cleanup until the runner deadline or emit a late record.
+        const observed = await Promise.race([
+          (async () => {
+            const metrics = await session.send("Page.getLayoutMetrics");
+            if (expired) return null;
+            const domScale = await page.evaluate(() => window.visualViewport?.scale);
+            return { metrics, domScale };
+          })(),
+          new Promise(resolve => { timer = setTimeout(() => { expired = true; resolve(null); }, 500); }),
+        ]);
+        if (!observed) { console.log("FLORA_HOSTED_QA_SCALE_METRICS_UNAVAILABLE " + samplePhase); return; }
+        const { metrics, domScale } = observed;
+        const layout = metrics.cssLayoutViewport, visual = metrics.cssVisualViewport;
+        console.log("FLORA_HOSTED_QA_SCALE_METRICS " + JSON.stringify({ phase: samplePhase, requestedScale: sampleRequestedScale, domScale: numeric(domScale),
+          observedScale: numeric(visual?.scale), layoutWidth: numeric(layout?.clientWidth), layoutHeight: numeric(layout?.clientHeight),
+          visualWidth: numeric(visual?.clientWidth), visualHeight: numeric(visual?.clientHeight),
+          visualOffsetX: numeric(visual?.offsetX), visualOffsetY: numeric(visual?.offsetY),
+          visualPageX: numeric(visual?.pageX), visualPageY: numeric(visual?.pageY) }));
+      } catch { console.log("FLORA_HOSTED_QA_SCALE_METRICS_UNAVAILABLE " + samplePhase); }
+      finally { expired = true; clearTimeout(timer); }
+    }
+    async function retainFailure(error) {
+      failure ??= { error, phase };
+      console.log("FLORA_HOSTED_QA_SCALE_FAILED_STEP " + phase);
+      await sample();
+    }
     try {
       // Browser visual page scaling, not a CSS transform or OS text zoom.
+      step("request-twofold");
       await session.send("Emulation.setPageScaleFactor", { pageScaleFactor: 2 });
+      await sample();
+      step("observe-twofold");
       await page.waitForFunction(() => Math.abs((window.visualViewport?.scale ?? 0) - 2) < 0.01);
+      step("read-layout");
       const metrics = await session.send("Page.getLayoutMetrics");
+      step("validate-layout");
       assert.ok(Math.abs(metrics.cssVisualViewport.scale - 2) < 0.01, "OBSERVED_TWO_FOLD_SCALE_REQUIRED");
       assert.ok(Math.abs(metrics.cssLayoutViewport.clientWidth / metrics.cssVisualViewport.clientWidth - 2) < 0.05, "VISUAL_VIEWPORT_MUST_SHRINK");
       const search = page.locator("#app-search");
-      await search.scrollIntoViewIfNeeded(); await search.click({ trial: true });
-      await search.fill("Sample App 4"); assert.equal(await appButtons.count(), 1);
+      step("scroll-search");
+      await search.scrollIntoViewIfNeeded();
+      await sample();
+      step("trial-search");
+      await search.click({ trial: true });
+      step("fill-search");
+      await search.fill("Sample App 4");
+      step("count-filtered");
+      assert.equal(await appButtons.count(), 1);
+      step("open-detail");
       await page.locator("#flavor-row-sample-4").click();
+      step("wait-detail");
       await page.locator("#app-detail").waitFor({ state: "visible" });
-      await page.locator("#detail-close").click(); assert.equal(await page.locator("#app-detail").isHidden(), true);
-      await search.fill(""); assert.equal(await appButtons.count(), 10);
+      step("close-detail");
+      await page.locator("#detail-close").click();
+      step("check-detail-hidden");
+      assert.equal(await page.locator("#app-detail").isHidden(), true);
+      step("clear-search");
+      await search.fill("");
+      step("count-restored");
+      assert.equal(await appButtons.count(), 10);
+      step("observe-retained");
       const observedScale = await page.evaluate(() => window.visualViewport?.scale);
       assert.ok(Math.abs(observedScale - 2) < 0.01, "SCALE_MUST_REMAIN_DURING_INTERACTION");
       pageScaleEvidence = { method: "CDP Emulation.setPageScaleFactor", requestedScale: 2, observedScale,
         layoutWidth: metrics.cssLayoutViewport.clientWidth, visualWidth: metrics.cssVisualViewport.clientWidth,
         usableControls: ["app search", "open app detail", "close app detail", "clear search"] };
+    } catch (error) {
+      await retainFailure(error);
     } finally {
       try {
+        step("restore-request"); requestedScale = 1;
         await session.send("Emulation.setPageScaleFactor", { pageScaleFactor: 1 });
+        step("restore-observe");
         await page.waitForFunction(() => Math.abs((window.visualViewport?.scale ?? 0) - 1) < 0.01);
-      } finally { await session.detach(); }
+      } catch (error) {
+        await retainFailure(error);
+      } finally {
+        try { step("detach"); await session.detach(); }
+        catch (error) { await retainFailure(error); }
+      }
     }
+    // Reset/detach must run, but cannot relabel or replace the original failure.
+    if (failure) { phase = failure.phase; throw failure.error; }
+    step("read-restored");
     pageScaleEvidence.restoredScale = await page.evaluate(() => window.visualViewport?.scale);
     checks.push("observed-cdp-twofold-page-scale-with-usable-controls");
   }

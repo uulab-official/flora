@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { runInNewContext } from "node:vm";
 import { bridgeRequest, SYNTHETIC_ORIGIN } from "../scripts/hosted-qa/transport.mjs";
 import { createResponseGate } from "../scripts/hosted-qa/response-gate.mjs";
 import { measureMobileAppDensity } from "../scripts/hosted-qa/mobile-density.mjs";
@@ -148,6 +149,114 @@ test("hosted mobile QA requires measured disclosures, pagination and observed pa
   assert.match(capture, /Page\.getLayoutMetrics/); assert.match(capture, /cssVisualViewport\.scale/);
   assert.match(capture, /visualViewport\?\.scale/); assert.match(capture, /pageScaleFactor: 1/);
   assert.ok(!/\.style\.(?:zoom|transform)|setAttribute\(["']style["']|mobile-touch-targets-and-system-zoom/.test(capture));
+});
+
+// Run only the real scale helper, without importing the CI-only browser runner.
+// Browser calls are replaced here to inject failures; these tests prove safe
+// diagnostics and cleanup, not Chromium scaling or pointer actionability.
+async function scaleDiagnosticHarness(failAt?: string, failCleanup = false, stallSample?: "cdp" | "dom") {
+  const capture = await readFile(new URL("../scripts/hosted-qa/capture.mjs", import.meta.url), "utf8");
+  const start = capture.indexOf("  async function twofoldPageScale(");
+  const end = capture.indexOf("  async function authenticate(", start);
+  assert.ok(start >= 0 && end > start);
+  const lines: string[] = [], calls: string[] = [];
+  const failure = Object.assign(new Error("synthetic-private-error-must-not-appear"), { name: "TimeoutError" });
+  const cleanupFailure = new Error("synthetic-private-cleanup-must-not-appear");
+  const scope = { assert, setTimeout, clearTimeout, phase: "mobile-twofold-page-scale", pageScaleEvidence: undefined,
+    checks: [] as string[], console: { log: (line: string) => lines.push(line) } };
+  let scale = 1, filtered = false, failed = false, releaseSample = () => {};
+  const stalled = () => new Promise<void>(resolve => { releaseSample = resolve; });
+  const operation = () => {
+    calls.push(scope.phase);
+    if (!failed && scope.phase === "mobile-twofold-page-scale-" + failAt) { failed = true; throw failure; }
+    if (failCleanup && scope.phase === "mobile-twofold-page-scale-restore-request") throw cleanupFailure;
+  };
+  const session = {
+    send: async (method: string, args?: { pageScaleFactor: number }) => {
+      operation();
+      if (failed && stallSample === "cdp" && method === "Page.getLayoutMetrics") await stalled();
+      if (method === "Emulation.setPageScaleFactor") scale = args!.pageScaleFactor;
+      return { cssLayoutViewport: { clientWidth: 390, clientHeight: 844, secret: "private-layout" },
+        cssVisualViewport: { scale, clientWidth: 390 / scale, clientHeight: 844 / scale,
+          offsetX: NaN, offsetY: Infinity, pageX: "private-page", pageY: 1_000_001, secret: "private-visual" },
+        secret: "private-root" };
+    },
+    detach: async () => { calls.push("detach-called"); operation(); },
+  };
+  const control = {
+    scrollIntoViewIfNeeded: async () => operation(), click: async () => operation(),
+    fill: async (value: string) => { operation(); filtered = Boolean(value); },
+    waitFor: async () => operation(), isHidden: async () => { operation(); return true; },
+  };
+  const page = { context: () => ({ newCDPSession: async () => { operation(); return session; } }),
+    waitForFunction: async () => operation(), evaluate: async () => {
+      operation(); if (failed && stallSample === "dom") await stalled(); return scale;
+    },
+    locator: () => control };
+  const appButtons = { count: async () => { operation(); return filtered ? 1 : 10; } };
+  const run = runInNewContext(capture.slice(start, end) + "\ntwofoldPageScale", scope) as
+    (page: unknown, buttons: unknown) => Promise<void>;
+  return { run: () => run(page, appButtons), lines, calls, scope, failure, releaseSample: () => releaseSample() };
+}
+
+test("page-scale diagnostics emit static subphases and only bounded numeric viewport fields", async () => {
+  const harness = await scaleDiagnosticHarness(); await harness.run();
+  for (const step of ["attach", "request-twofold", "observe-twofold", "read-layout", "validate-layout", "scroll-search",
+    "trial-search", "fill-search", "count-filtered", "open-detail", "wait-detail", "close-detail", "check-detail-hidden",
+    "clear-search", "count-restored", "observe-retained", "restore-request", "restore-observe", "detach", "read-restored"]) {
+    assert.ok(harness.lines.includes("FLORA_HOSTED_QA_SCALE_STEP mobile-twofold-page-scale-" + step), step);
+  }
+  const records = harness.lines.filter(line => line.startsWith("FLORA_HOSTED_QA_SCALE_METRICS "));
+  assert.ok(records.length >= 2 && records.length <= 4);
+  for (const line of records) {
+    const record = JSON.parse(line.slice("FLORA_HOSTED_QA_SCALE_METRICS ".length));
+    assert.deepEqual(Object.keys(record).sort(), ["phase", "requestedScale", "domScale", "observedScale", "layoutWidth", "layoutHeight",
+      "visualWidth", "visualHeight", "visualOffsetX", "visualOffsetY", "visualPageX", "visualPageY"].sort());
+    assert.match(record.phase, /^mobile-twofold-page-scale-[a-z-]+$/);
+    for (const [key, value] of Object.entries(record)) if (key !== "phase") {
+      assert.ok(value === null || (typeof value === "number" && Number.isFinite(value) && Math.abs(value) <= 1_000_000));
+    }
+    for (const key of ["visualOffsetX", "visualOffsetY", "visualPageX", "visualPageY"]) assert.equal(record[key], null);
+  }
+  assert.ok(!harness.lines.join("\n").includes("private"));
+  assert.deepEqual(harness.scope.checks, ["observed-cdp-twofold-page-scale-with-usable-controls"]);
+});
+
+test("page-scale diagnostics retain the failed interaction phase through reset and detach", async () => {
+  for (const step of ["observe-twofold", "trial-search", "open-detail", "close-detail", "restore-observe", "detach", "read-restored"]) {
+    const harness = await scaleDiagnosticHarness(step);
+    await assert.rejects(harness.run(), error => error === harness.failure);
+    assert.equal(harness.scope.phase, "mobile-twofold-page-scale-" + step);
+    assert.ok(harness.calls.includes("mobile-twofold-page-scale-restore-request"));
+    assert.ok(harness.calls.includes("detach-called"));
+    assert.equal(harness.scope.checks.length, 0);
+    assert.ok(!harness.lines.join("\n").includes("private"));
+  }
+  const doubleFailure = await scaleDiagnosticHarness("trial-search", true);
+  await assert.rejects(doubleFailure.run(), error => error === doubleFailure.failure);
+  assert.equal(doubleFailure.scope.phase, "mobile-twofold-page-scale-trial-search");
+  assert.ok(doubleFailure.calls.includes("detach-called"));
+});
+
+for (const source of ["cdp", "dom"] as const) test("stalled " + source + " diagnostic sampling cannot block scale cleanup", async () => {
+  const harness = await scaleDiagnosticHarness("trial-search", false, source);
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const bounded = Promise.race([harness.run(), new Promise<never>((_, reject) => {
+      deadline = setTimeout(() => reject(new Error("DIAGNOSTIC_BLOCKED_CLEANUP")), 1500);
+    })]);
+    await assert.rejects(bounded, error => error === harness.failure);
+    assert.equal(harness.scope.phase, "mobile-twofold-page-scale-trial-search");
+    assert.ok(harness.calls.includes("mobile-twofold-page-scale-restore-request"));
+    assert.ok(harness.calls.includes("detach-called"));
+    assert.ok(harness.lines.includes("FLORA_HOSTED_QA_SCALE_METRICS_UNAVAILABLE mobile-twofold-page-scale-trial-search"));
+    assert.equal(harness.scope.checks.length, 0);
+    const lines = [...harness.lines], calls = [...harness.calls];
+    harness.releaseSample();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(harness.lines, lines, "Expired sampling must not emit late measurements");
+    assert.deepEqual(harness.calls, calls, "Expired CDP sampling must not start a late DOM read");
+  } finally { clearTimeout(deadline); harness.releaseSample(); }
 });
 
 const compositionTransport = process.env.FLORA_HOSTED_QA_TRANSPORT ?? "http";
