@@ -106,7 +106,7 @@ PC OS를 정한 뒤 해당 OS에서 install/check/CLI를 직접 실행한 결과
 | 실제 native/build/store/OTA/provider sync | 증거 없음 | 미실행·미완료 |
 | 운영 Worker/D1/DO·DNS/TLS·소유자 등록 | 출시 gate 미검증; 마지막 공개 DNS/auth 관측은 [현황 문서](integration-status.ko.md) 참조 | 새 로그인·리소스·DNS·별도 자동 배포 없음 |
 
-이번 문서 커밋의 실제 검사 결과는 [Actions](https://github.com/uulab-official/flora/actions)에서 **사용 중인 SHA**의 세 workflow를 확인한다. workflow 파일 존재·다른 SHA의 성공·fixture 렌더링을 현재 운영 성공으로 대체하지 않는다.
+이번 문서 커밋의 실제 검사 결과는 [Actions](https://github.com/uulab-official/flora/actions)에서 **사용 중인 SHA**로 확인한다. Foundation는 일반 push에서 실행된다. Hosted rendering은 README와 지정된 코드/호스팅 문서 변경에서, Dashboard rendering은 지정된 코드/harness 변경에서 실행된다. 경로 필터에 걸리지 않은 workflow는 미실행으로 기록하며 성공으로 간주하지 않는다. workflow 파일 존재·다른 SHA의 성공·fixture 렌더링을 현재 운영 성공으로 대체하지 않는다.
 
 새 기능/수정 후 기본 검사:
 
