@@ -54,6 +54,8 @@ node scripts/dogfood-demo.mjs --serve
 
 처음 방문했다면 [한국어 시작 가이드](docs/getting-started.ko.md) / [English quick start](README.en.md#try-the-local-foundation) → [CLI·데이터 계약 상세](docs/development/local-foundation.ko.md) 순서로 읽습니다.
 
+자신의 PC에서 개발을 이어가려면 [PC 개발 인수인계·우선순위 체크리스트](docs/development/pc-handoff.ko.md)를 사용하세요. 설치 명령, Windows/Mac 차이, 확인된 검사와 미실행 검사, 다음 첫 작업과 완료 조건을 모았습니다. [실제 연동 현황](docs/development/integration-status.ko.md)은 구현·반입 데이터·운영 연결을 구분합니다. 계정 인증만으로 아직 없는 Runner·스토어·OTA 어댑터가 활성화되지는 않습니다.
+
 1. [왜 만드는가: 개발 의도와 제품 원칙](docs/product/intent.ko.md)
 2. [통합 기획서: 전체 제품 범위](docs/product/integrated-plan.ko.md)
 3. [원문 102개 항목 추적표](docs/product/requirements.ko.md)

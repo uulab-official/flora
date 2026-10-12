@@ -37,7 +37,7 @@ pnpm verify:clean
 - unsafe-expiry: Store action 상태를 모의 실행하다 만료시키고 `waiting/reconciliation_required`로 둔다. Store API는 호출하지 않는다
 - verify:clean: Git에 추적된 파일만 별도 임시 디렉터리에 복사하고 빈 pnpm store에서 frozen install·전체 검사·CLI smoke를 수행한다. source와 lockfile 변동을 별도 hash로 확인한다
 
-`flora`와 `platform`은 같은 CLI bin을 가리킨다. `pnpm flora`도 `pnpm platform`과 같은 동작이다. UI 표시 이름 변경은 저장소·ID·schema를 변경하지 않는다. 아직 UI는 없다.
+`flora`와 `platform`은 같은 CLI bin을 가리킨다. `pnpm flora`도 `pnpm platform`과 같은 동작이다. UI 표시 이름 변경은 저장소·ID·schema를 변경하지 않는다. 보호된 loopback UI는 별도의 [dogfood 명령](dogfood.ko.md)으로 제공한다. 위 Foundation simulation 명령은 실제 앱을 실행하거나 배포하지 않는다.
 
 ## 입력과 보안 경계
 
@@ -66,4 +66,4 @@ SQL FK·trigger와 모든 adapter connection의 `recursive_triggers=ON`으로 �
 
 ## 의존성과 라이선스
 
-프로젝트는 Apache-2.0이다. 외부 runtime dependency 없이 Node API와 workspace 모듈만 사용한다. development dependencies는 TypeScript(Apache-2.0), @types/node(MIT), 해당 타입의 undici-types(MIT)이며 lockfile로 고정한다. 각 패키지에 포함된 LICENSE를 보존한다. dependency audit 결과는 조회 시점의 알려진 취약점 검사이지 보안 인증이 아니다.
+프로젝트는 Apache-2.0이다. 로컬 Foundation runtime은 Node API와 workspace 모듈을 사용한다. TypeScript, @types/node, undici-types 외에 별도 Cloudflare 개발·테스트 경로에는 esbuild·Miniflare·Wrangler·Workers 타입 패키지가 있다. 정확한 버전은 각 package.json과 lockfile을 기준으로 한다. 각 패키지에 포함된 LICENSE를 보존한다. dependency audit 결과는 조회 시점의 알려진 취약점 검사이지 보안 인증이 아니다.

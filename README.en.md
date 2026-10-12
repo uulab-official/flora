@@ -137,6 +137,8 @@ For an issue report, include your OS/architecture, Node/npm/pnpm versions, `git 
 
 ## Verification and documentation
 
+For continuing development on another PC, see the [PC handoff and prioritized checklist (Korean)](docs/development/pc-handoff.ko.md) and [integration status (Korean)](docs/development/integration-status.ko.md). They distinguish implemented code, imported/synthetic evidence, and verified operational connections.
+
 On 2026-10-07, the sequence above was exercised on Linux with a new HOME, npm cache and pnpm data/cache directories against source revision `02269503`. That historical Foundation-only suite passed 48/48 tests; all three scenarios, toolchain check and clean installation passed. This is local Foundation evidence, not provider or native-build certification.
 
 The [CI workflow](.github/workflows/ci.yml) runs the npm-exec recipe, Foundation checks, CLI examples and clean-install verification on Linux, macOS and Windows. Check the [actual run for your revision](https://github.com/uulab-official/flora/actions/workflows/ci.yml); workflow configuration alone is not a successful run.
