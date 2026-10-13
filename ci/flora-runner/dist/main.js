@@ -671,8 +671,8 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { delimiter, isAbsolute as isAbsolute2, join as join3 } from "node:path";
 var npmCodes = ["ERESOLVE", "EINTEGRITY", "ENOTCACHED", "ELOCKVERIFY", "EUSAGE", "ENOENT", "EACCES", "ECONNRESET", "ETIMEDOUT", "ENOSPC", "ENOMEM", "EBADENGINE", "EUNSUPPORTEDPROTOCOL", "E401", "E403", "E404", "E500", "ENETUNREACH"];
-var safeCodes = /* @__PURE__ */ new Set(["EXECUTION_FAILED", "CONFIG_CHANGED", "ARTIFACT_INVALID", "SOURCE_UNAVAILABLE", "ISOLATION_UNAVAILABLE", "DEPENDENCY_CACHE_INVALID", "PROCESS_TIMEOUT", "PROCESS_CANCELLED", "PROCESS_OUTPUT_LIMIT", "PROCESS_SPAWN_FAILED", "NPM_CONFIG_DUPLICATE", ...npmCodes.map((code) => "NPM_" + code)]);
-var childStages = ["configuration", "source-copy", "npm-version", "npm-install", "cache-validate", "cache-copy", "exporter", "artifact-read"];
+var safeCodes = /* @__PURE__ */ new Set(["EXECUTION_FAILED", "CONFIG_CHANGED", "ARTIFACT_INVALID", "SOURCE_UNAVAILABLE", "ISOLATION_UNAVAILABLE", "DEPENDENCY_CACHE_INVALID", "PROCESS_TIMEOUT", "PROCESS_CANCELLED", "PROCESS_OUTPUT_LIMIT", "PROCESS_SPAWN_FAILED", "NPM_CONFIG_DUPLICATE", "EXPO_EXECUTION_DENIED", "EXPO_MODULE_MISSING", "EXPO_WORKER_LIMIT", ...npmCodes.map((code) => "NPM_" + code)]);
+var childStages = ["configuration", "source-copy", "npm-version", "npm-install", "cache-validate", "cache-copy", "exporter", "expo-config", "expo-export", "artifact-read"];
 var safeStages = /* @__PURE__ */ new Set(["execution", "source-verified", "dependency-seed", "dependency-preparation", "compiler", "artifact-verified", ...childStages, ...childStages.map((stage) => "dependency-preparation-" + stage), ...childStages.map((stage) => "compiler-" + stage)]);
 function diagnosticLine(stage, code) {
   return JSON.stringify({ diagnostic: true, stage: safeStages.has(stage) ? stage : "execution", ...code ? { code: safeCodes.has(code) ? code : "EXECUTION_FAILED" } : {} });
@@ -709,6 +709,11 @@ function failure(reason, stderr, diagnostics) {
     if (/double-loading config [^\n]{1,256} as [^\n]{1,128} previously loaded as/.test(stderr)) return new ProcessFailure("NPM_CONFIG_DUPLICATE");
     const match = /npm (?:error|ERR!) code ([A-Z][A-Z0-9_]{0,63})(?:\r?\n|$)/.exec(stderr);
     if (match && npmCodes.includes(match[1])) return new ProcessFailure("NPM_" + match[1]);
+  }
+  if (diagnostics === "expo" && reason === "exit") {
+    if (/\bEACCES\b|failed to map segment from shared object/.test(stderr)) return new ProcessFailure("EXPO_EXECUTION_DENIED");
+    if (/Cannot find module|Failed to resolve plugin|\bMODULE_NOT_FOUND\b/.test(stderr)) return new ProcessFailure("EXPO_MODULE_MISSING");
+    if (/\bEAGAIN\b|ERR_WORKER_INIT_FAILED/.test(stderr)) return new ProcessFailure("EXPO_WORKER_LIMIT");
   }
   return new ProcessFailure(code, diagnostics === "container" ? childDiagnostic(stderr) : void 0);
 }
@@ -902,7 +907,7 @@ function path(input) {
   invariant(input.startsWith("/") && !/[\r\n,]/.test(input), "ISOLATION_UNAVAILABLE");
   return input;
 }
-function boundedArguments(image, name, profile) {
+function boundedArguments(image, name, profile, workspaceExecutable = false) {
   invariant(/^(?:[A-Za-z0-9./:_-]+@)?sha256:[a-f0-9]{64}$/.test(image), "ISOLATION_UNAVAILABLE");
   invariant(/^flora-[A-Za-z0-9_-]+$/.test(name) && ["default", "github-hosted"].includes(profile), "ISOLATION_UNAVAILABLE");
   const { uid, gid } = containerIdentity(), owner = `uid=${uid},gid=${gid}`, hosted = profile === "github-hosted", memory = hosted ? 4294967296 : 1073741824, workspace = hosted ? 3221225472 : 805306368;
@@ -921,7 +926,7 @@ function boundedArguments(image, name, profile) {
     `--memory-swap=${memory}`,
     "--cpus=2",
     `--user=${uid}:${gid}`,
-    `--tmpfs=/workspace:rw,nosuid,nodev,size=${workspace},${owner}`,
+    `--tmpfs=/workspace:rw,${workspaceExecutable ? "exec" : "noexec"},nosuid,nodev,size=${workspace},${owner}`,
     `--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=67108864,${owner}`,
     `--tmpfs=/output:rw,noexec,nosuid,nodev,size=68157440,${owner}`
   ];
@@ -929,7 +934,7 @@ function boundedArguments(image, name, profile) {
 function dockerArguments(image, name, source, runner, network = "none", profile = "default", cache) {
   invariant(network === "none" || /^[a-z][a-z0-9_-]{2,63}$/.test(network) && !["host", "bridge", "default"].includes(network), "ISOLATION_UNAVAILABLE");
   return [
-    ...boundedArguments(image, name, profile),
+    ...boundedArguments(image, name, profile, true),
     "--network=" + network,
     "--mount",
     `type=bind,src=${path(source)},dst=/source,readonly`,

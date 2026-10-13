@@ -14,16 +14,16 @@ export type ResourceProfile="default"|"github-hosted";
 export interface DockerExecutorOptions {image:string;network?:string;executable?:string;resourceProfile?:ResourceProfile;dependencyPreparation?:"npm-registry"}
 function containerIdentity(){const uid=process.getuid?.(),gid=process.getgid?.();invariant(typeof uid==="number"&&uid>0&&typeof gid==="number"&&gid>=0,"ISOLATION_UNAVAILABLE");return {uid,gid};}
 function path(input:string){invariant(input.startsWith("/")&&!/[\r\n,]/.test(input),"ISOLATION_UNAVAILABLE");return input;}
-function boundedArguments(image:string,name:string,profile:ResourceProfile):string[]{
+function boundedArguments(image:string,name:string,profile:ResourceProfile,workspaceExecutable=false):string[]{
  invariant(/^(?:[A-Za-z0-9./:_-]+@)?sha256:[a-f0-9]{64}$/.test(image),"ISOLATION_UNAVAILABLE");
  invariant(/^flora-[A-Za-z0-9_-]+$/.test(name)&&["default","github-hosted"].includes(profile),"ISOLATION_UNAVAILABLE");
  const {uid,gid}=containerIdentity(),owner=`uid=${uid},gid=${gid}`,hosted=profile==="github-hosted",memory=hosted?4294967296:1073741824,workspace=hosted?3221225472:805306368;
  return ["run","--rm","--pull=never","--name",name,"--init","--read-only","--cap-drop=ALL","--security-opt=no-new-privileges","--pids-limit=128",`--memory=${memory}`,`--memory-swap=${memory}`,"--cpus=2",`--user=${uid}:${gid}`,
-  `--tmpfs=/workspace:rw,nosuid,nodev,size=${workspace},${owner}`,`--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=67108864,${owner}`,`--tmpfs=/output:rw,noexec,nosuid,nodev,size=68157440,${owner}`];
+  `--tmpfs=/workspace:rw,${workspaceExecutable?"exec":"noexec"},nosuid,nodev,size=${workspace},${owner}`,`--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=67108864,${owner}`,`--tmpfs=/output:rw,noexec,nosuid,nodev,size=68157440,${owner}`];
 }
 export function dockerArguments(image:string,name:string,source:string,runner:string,network="none",profile:ResourceProfile="default",cache?:string):string[]{
  invariant(network==="none"||/^[a-z][a-z0-9_-]{2,63}$/.test(network)&&!["host","bridge","default"].includes(network),"ISOLATION_UNAVAILABLE");
- return [...boundedArguments(image,name,profile),"--network="+network,"--mount",`type=bind,src=${path(source)},dst=/source,readonly`,"--mount",`type=bind,src=${path(runner)},dst=/runner,readonly`,
+ return [...boundedArguments(image,name,profile,true),"--network="+network,"--mount",`type=bind,src=${path(source)},dst=/source,readonly`,"--mount",`type=bind,src=${path(runner)},dst=/runner,readonly`,
   ...(cache?["--mount",`type=bind,src=${path(cache)},dst=/dependency-cache,readonly`]:[]),"--interactive",image,"node","/runner/dist/inside-container.js"];
 }
 /** Online preparation contains no app source/config, scripts or credentials. This is not an egress firewall. */

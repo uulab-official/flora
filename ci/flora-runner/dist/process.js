@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
 import { delimiter, isAbsolute, join } from "node:path";
 const npmCodes = ["ERESOLVE", "EINTEGRITY", "ENOTCACHED", "ELOCKVERIFY", "EUSAGE", "ENOENT", "EACCES", "ECONNRESET", "ETIMEDOUT", "ENOSPC", "ENOMEM", "EBADENGINE", "EUNSUPPORTEDPROTOCOL", "E401", "E403", "E404", "E500", "ENETUNREACH"];
-const safeCodes = new Set(["EXECUTION_FAILED", "CONFIG_CHANGED", "ARTIFACT_INVALID", "SOURCE_UNAVAILABLE", "ISOLATION_UNAVAILABLE", "DEPENDENCY_CACHE_INVALID", "PROCESS_TIMEOUT", "PROCESS_CANCELLED", "PROCESS_OUTPUT_LIMIT", "PROCESS_SPAWN_FAILED", "NPM_CONFIG_DUPLICATE", ...npmCodes.map(code => "NPM_" + code)]);
-const childStages = ["configuration", "source-copy", "npm-version", "npm-install", "cache-validate", "cache-copy", "exporter", "artifact-read"];
+const safeCodes = new Set(["EXECUTION_FAILED", "CONFIG_CHANGED", "ARTIFACT_INVALID", "SOURCE_UNAVAILABLE", "ISOLATION_UNAVAILABLE", "DEPENDENCY_CACHE_INVALID", "PROCESS_TIMEOUT", "PROCESS_CANCELLED", "PROCESS_OUTPUT_LIMIT", "PROCESS_SPAWN_FAILED", "NPM_CONFIG_DUPLICATE", "EXPO_EXECUTION_DENIED", "EXPO_MODULE_MISSING", "EXPO_WORKER_LIMIT", ...npmCodes.map(code => "NPM_" + code)]);
+const childStages = ["configuration", "source-copy", "npm-version", "npm-install", "cache-validate", "cache-copy", "exporter", "expo-config", "expo-export", "artifact-read"];
 const safeStages = new Set(["execution", "source-verified", "dependency-seed", "dependency-preparation", "compiler", "artifact-verified", ...childStages, ...childStages.map(stage => "dependency-preparation-" + stage), ...childStages.map(stage => "compiler-" + stage)]);
 export function diagnosticLine(stage, code) { return JSON.stringify({ diagnostic: true, stage: safeStages.has(stage) ? stage : "execution", ...(code ? { code: safeCodes.has(code) ? code : "EXECUTION_FAILED" } : {}) }); }
 export function npmConfigurationEnvironment(directory = "/runner/config") { return { npm_config_userconfig: join(directory, "npm-user.rc"), npm_config_globalconfig: join(directory, "npm-global.rc") }; }
@@ -39,6 +39,14 @@ function failure(reason, stderr, diagnostics) {
         const match = /npm (?:error|ERR!) code ([A-Z][A-Z0-9_]{0,63})(?:\r?\n|$)/.exec(stderr);
         if (match && npmCodes.includes(match[1]))
             return new ProcessFailure("NPM_" + match[1]);
+    }
+    if (diagnostics === "expo" && reason === "exit") {
+        if (/\bEACCES\b|failed to map segment from shared object/.test(stderr))
+            return new ProcessFailure("EXPO_EXECUTION_DENIED");
+        if (/Cannot find module|Failed to resolve plugin|\bMODULE_NOT_FOUND\b/.test(stderr))
+            return new ProcessFailure("EXPO_MODULE_MISSING");
+        if (/\bEAGAIN\b|ERR_WORKER_INIT_FAILED/.test(stderr))
+            return new ProcessFailure("EXPO_WORKER_LIMIT");
     }
     return new ProcessFailure(code, diagnostics === "container" ? childDiagnostic(stderr) : undefined);
 }

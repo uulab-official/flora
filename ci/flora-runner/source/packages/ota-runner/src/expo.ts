@@ -3,7 +3,7 @@
 import { X509Certificate } from "node:crypto";
 import { join } from "node:path";
 import { invariant, readBoundedFile } from "./artifacts.js";
-import { trustedProcess } from "./process.js";
+import { trustedProcess,ProcessFailure,diagnosticCode } from "./process.js";
 import type { AutomationConfigSnapshot } from "@app-ops/dogfood";
 
 export interface ExpoExportJob {
@@ -82,8 +82,9 @@ export function verifyExpoConfiguration(job: ExpoExportJob, input: unknown, comm
  * CLI option can select this helper as a host execution fallback. */
 export async function exportExpoProject(root: string, output: string, job: ExpoExportJob, env: Record<string, string>, committedConnection?: unknown): Promise<void> {
   const cli = join(root, "node_modules/expo/bin/cli");
-  const raw = await trustedProcess(process.execPath, [cli, "config", "--json"], { cwd: root, env, timeoutMs: 60000, maxBytes: 262144 });
+  const command=async(stage:"expo-config"|"expo-export",args:string[],timeoutMs:number,maxBytes:number)=>{try{return await trustedProcess(process.execPath,[cli,...args],{cwd:root,env,timeoutMs,maxBytes,diagnostics:"expo"});}catch(error){throw new ProcessFailure(diagnosticCode(error),{diagnostic:true,stage,code:diagnosticCode(error)});}};
+  const raw = await command("expo-config",["config", "--json"],60000,262144);
   let config: unknown; try { config = JSON.parse(raw); } catch { throw new Error("CONFIG_CHANGED"); }
   verifyExpoConfiguration(job, config, committedConnection);
-  await trustedProcess(process.execPath, [cli, "export", "--platform", job.platform, "--output-dir", output], { cwd: root, env, timeoutMs: 300000, maxBytes: 1024 * 1024 });
+  await command("expo-export",["export", "--platform", job.platform, "--output-dir", output],300000,1024*1024);
 }

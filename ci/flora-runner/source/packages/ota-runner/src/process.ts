@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
 import { delimiter, isAbsolute, join } from "node:path";
 const npmCodes=["ERESOLVE","EINTEGRITY","ENOTCACHED","ELOCKVERIFY","EUSAGE","ENOENT","EACCES","ECONNRESET","ETIMEDOUT","ENOSPC","ENOMEM","EBADENGINE","EUNSUPPORTEDPROTOCOL","E401","E403","E404","E500","ENETUNREACH"];
-const safeCodes=new Set(["EXECUTION_FAILED","CONFIG_CHANGED","ARTIFACT_INVALID","SOURCE_UNAVAILABLE","ISOLATION_UNAVAILABLE","DEPENDENCY_CACHE_INVALID","PROCESS_TIMEOUT","PROCESS_CANCELLED","PROCESS_OUTPUT_LIMIT","PROCESS_SPAWN_FAILED","NPM_CONFIG_DUPLICATE",...npmCodes.map(code=>"NPM_"+code)]);
-const childStages=["configuration","source-copy","npm-version","npm-install","cache-validate","cache-copy","exporter","artifact-read"];
+const safeCodes=new Set(["EXECUTION_FAILED","CONFIG_CHANGED","ARTIFACT_INVALID","SOURCE_UNAVAILABLE","ISOLATION_UNAVAILABLE","DEPENDENCY_CACHE_INVALID","PROCESS_TIMEOUT","PROCESS_CANCELLED","PROCESS_OUTPUT_LIMIT","PROCESS_SPAWN_FAILED","NPM_CONFIG_DUPLICATE","EXPO_EXECUTION_DENIED","EXPO_MODULE_MISSING","EXPO_WORKER_LIMIT",...npmCodes.map(code=>"NPM_"+code)]);
+const childStages=["configuration","source-copy","npm-version","npm-install","cache-validate","cache-copy","exporter","expo-config","expo-export","artifact-read"];
 const safeStages=new Set(["execution","source-verified","dependency-seed","dependency-preparation","compiler","artifact-verified",...childStages,...childStages.map(stage=>"dependency-preparation-"+stage),...childStages.map(stage=>"compiler-"+stage)]);
 export interface SafeDiagnostic {diagnostic:true;stage:string;code?:string}
 export function diagnosticLine(stage:string,code?:string):string{return JSON.stringify({diagnostic:true,stage:safeStages.has(stage)?stage:"execution",...(code?{code:safeCodes.has(code)?code:"EXECUTION_FAILED"}:{})});}
@@ -13,11 +13,16 @@ function childDiagnostic(stderr:string):SafeDiagnostic|undefined{
  let found:SafeDiagnostic|undefined;for(const line of stderr.split(/\r?\n/)){if(!line.startsWith("FLORA_DIAGNOSTIC ")||line.length>512)continue;try{const raw=JSON.parse(line.slice(17)) as Record<string,unknown>;if(raw.diagnostic===true&&typeof raw.stage==="string"&&childStages.includes(raw.stage)&&typeof raw.code==="string"&&safeCodes.has(raw.code)&&Object.keys(raw).length===3)found={diagnostic:true,stage:raw.stage,code:raw.code};}catch{}}
  return found;
 }
-function failure(reason:string,stderr:string,diagnostics?:"npm"|"container"):ProcessFailure{
+function failure(reason:string,stderr:string,diagnostics?:"npm"|"container"|"expo"):ProcessFailure{
  const code=reason==="timeout"?"PROCESS_TIMEOUT":reason==="cancelled"?"PROCESS_CANCELLED":reason==="output"?"PROCESS_OUTPUT_LIMIT":reason==="spawn"?"PROCESS_SPAWN_FAILED":"EXECUTION_FAILED";
  if(diagnostics==="npm"&&reason==="exit"){
   if(/double-loading config [^\n]{1,256} as [^\n]{1,128} previously loaded as/.test(stderr))return new ProcessFailure("NPM_CONFIG_DUPLICATE");
   const match=/npm (?:error|ERR!) code ([A-Z][A-Z0-9_]{0,63})(?:\r?\n|$)/.exec(stderr);if(match&&npmCodes.includes(match[1]!))return new ProcessFailure("NPM_"+match[1]);
+ }
+ if(diagnostics==="expo"&&reason==="exit"){
+  if(/\bEACCES\b|failed to map segment from shared object/.test(stderr))return new ProcessFailure("EXPO_EXECUTION_DENIED");
+  if(/Cannot find module|Failed to resolve plugin|\bMODULE_NOT_FOUND\b/.test(stderr))return new ProcessFailure("EXPO_MODULE_MISSING");
+  if(/\bEAGAIN\b|ERR_WORKER_INIT_FAILED/.test(stderr))return new ProcessFailure("EXPO_WORKER_LIMIT");
  }
  return new ProcessFailure(code,diagnostics==="container"?childDiagnostic(stderr):undefined);
 }
@@ -25,7 +30,7 @@ export function processEnvironment(extra: Record<string,string> = {}): Record<st
  const path = (process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin").split(delimiter).filter(isAbsolute).join(delimiter);
  return { PATH:path, LANG:"C.UTF-8", CI:"1", ...extra };
 }
-export async function trustedProcess(executable: string, args: readonly string[], options: {cwd?:string;env?:Record<string,string>;signal?:AbortSignal;timeoutMs?:number;maxBytes?:number;input?:string;diagnostics?:"npm"|"container"} = {}): Promise<string> {
+export async function trustedProcess(executable: string, args: readonly string[], options: {cwd?:string;env?:Record<string,string>;signal?:AbortSignal;timeoutMs?:number;maxBytes?:number;input?:string;diagnostics?:"npm"|"container"|"expo"} = {}): Promise<string> {
  let reason="exit";const controller = new AbortController(), timeout=setTimeout(()=>{reason="timeout";controller.abort();},options.timeoutMs ?? 60_000);
  const cancel=()=>{reason="cancelled";controller.abort();}; options.signal?.addEventListener("abort",cancel,{once:true}); if(options.signal?.aborted)cancel();
  let child:ReturnType<typeof spawn>|undefined;

@@ -2,7 +2,7 @@
 import { cp, mkdir, readFile, realpath, stat } from "node:fs/promises";
 import { dirname, join, sep } from "node:path";
 import { readExport, encodeExport, invariant } from "./artifacts.js";
-import { processEnvironment, trustedProcess, npmConfigurationEnvironment, diagnosticLine, diagnosticCode } from "./process.js";
+import { processEnvironment, trustedProcess, npmConfigurationEnvironment, diagnosticLine, diagnosticCode, ProcessFailure } from "./process.js";
 import { readExpoConnection, exportExpoProject } from "./expo.js";
 let stage = "configuration";
 async function main() {
@@ -48,4 +48,4 @@ async function main() {
     const exported = await readExport("/output", { platform: job.platform, runtimeVersion: job.config.runtimeVersion, commitSha: job.commitSha });
     process.stdout.write(encodeExport(exported));
 }
-void main().catch(error => { process.stderr.write("FLORA_DIAGNOSTIC " + diagnosticLine(stage, diagnosticCode(error)) + "\n"); process.exitCode = 1; });
+void main().catch(error => { const child = error instanceof ProcessFailure ? error.containerDiagnostic : undefined; process.stderr.write("FLORA_DIAGNOSTIC " + diagnosticLine(child?.stage ?? stage, child?.code ?? diagnosticCode(error)) + "\n"); process.exitCode = 1; });
