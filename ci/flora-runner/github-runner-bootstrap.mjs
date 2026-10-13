@@ -16,6 +16,11 @@ export function validAdmission(value, appId, sha, now=Date.now()) {
     && typeof value.token==='string' && /^[a-z][a-z0-9_-]{2,95}\.[A-Za-z0-9_-]{43}$/.test(value.token)
     && value.runner?.id===value.token.split('.')[0] && value.runner.appIds?.length===1 && value.runner.appIds[0]===appId;
 }
+export function safeDiagnostic(value) {
+  return value?.diagnostic===true && typeof value.stage==='string' && /^[a-z][a-z0-9-]{0,63}$/.test(value.stage)
+    && (value.code===undefined || typeof value.code==='string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(value.code))
+    ? {diagnostic:true,stage:value.stage,...(value.code?{code:value.code}:{})} : null;
+}
 async function main() {
 const origin = 'https://flora.uulab.co.kr';
 const appId = process.env.FLORA_APP_ID;
@@ -72,7 +77,7 @@ async function runOnce() {
     stream.on('data', part => { bytes += part.length; if (bytes > 1048576) child.kill('SIGTERM'); else append(part.toString('utf8')); });
   const exit = await new Promise((resolveExit, reject) => { child.on('error', reject); child.on('close', resolveExit); });
   const lines = stdout.trim().split('\n'); let result;
-  for (const line of lines) { try { const item = JSON.parse(line); if (typeof item.state === 'string') result = item; } catch {} }
+  for (const line of lines) { try { const item = JSON.parse(line), diagnostic=safeDiagnostic(item); if(diagnostic)process.stdout.write(JSON.stringify(diagnostic)+'\n'); if (typeof item.state === 'string') result = item; } catch {} }
   if (exit !== 0 || !result) {
     const safeCode = stderr.trim().split('\n').find(line => /^[A-Z][A-Z0-9_]{1,95}$/.test(line)) ?? result?.code ?? 'RUNNER_EXECUTION_FAILED';
     process.stdout.write(JSON.stringify({ state: result?.state ?? 'failed', code: safeCode, jobId: result?.jobId }) + '\n');

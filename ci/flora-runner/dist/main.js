@@ -646,7 +646,7 @@ function createRunnerClient(options) {
     },
     async listCheckpoints() {
       const raw = await call("/api/runner/checkpoint-list", {}, void 0, 1e4);
-      invariant(raw && typeof raw === "object" && Object.keys(raw).length === 1 && Array.isArray(raw.checkpoints) && raw.checkpoints.length <= 64, "RUNNER_RESPONSE_INVALID");
+      invariant(raw && typeof raw === "object" && Object.keys(raw).length === 1 && Array.isArray(raw.checkpoints) && raw.checkpoints.length <= 100, "RUNNER_RESPONSE_INVALID");
       const records = raw.checkpoints.map((record) => parseRecoveryJournal(record, client.identity));
       invariant(new Set(records.map((record) => record.lease.jobId + "." + record.lease.attemptId)).size === records.length, "RUNNER_RESPONSE_INVALID");
       return records;
@@ -662,27 +662,76 @@ function createRunnerClient(options) {
 
 // packages/ota-runner/src/docker.ts
 import { randomUUID } from "node:crypto";
-import { resolve as resolve3, join as join4 } from "node:path";
+import { resolve as resolve3, join as join5 } from "node:path";
 import { tmpdir } from "node:os";
 import { mkdtemp, mkdir as mkdir3, writeFile as writeFile2, rm, chmod } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 // packages/ota-runner/src/process.ts
 import { spawn } from "node:child_process";
-import { delimiter, isAbsolute as isAbsolute2 } from "node:path";
+import { delimiter, isAbsolute as isAbsolute2, join as join3 } from "node:path";
+var npmCodes = ["ERESOLVE", "EINTEGRITY", "ENOTCACHED", "ELOCKVERIFY", "EUSAGE", "ENOENT", "EACCES", "ECONNRESET", "ETIMEDOUT", "ENOSPC", "ENOMEM", "EBADENGINE", "EUNSUPPORTEDPROTOCOL", "E401", "E403", "E404", "E500", "ENETUNREACH"];
+var safeCodes = /* @__PURE__ */ new Set(["EXECUTION_FAILED", "CONFIG_CHANGED", "ARTIFACT_INVALID", "SOURCE_UNAVAILABLE", "ISOLATION_UNAVAILABLE", "DEPENDENCY_CACHE_INVALID", "PROCESS_TIMEOUT", "PROCESS_CANCELLED", "PROCESS_OUTPUT_LIMIT", "PROCESS_SPAWN_FAILED", "NPM_CONFIG_DUPLICATE", ...npmCodes.map((code) => "NPM_" + code)]);
+var childStages = ["configuration", "source-copy", "npm-version", "npm-install", "cache-validate", "cache-copy", "exporter", "artifact-read"];
+var safeStages = /* @__PURE__ */ new Set(["execution", "source-verified", "dependency-seed", "dependency-preparation", "compiler", "artifact-verified", ...childStages, ...childStages.map((stage) => "dependency-preparation-" + stage), ...childStages.map((stage) => "compiler-" + stage)]);
+function diagnosticLine(stage, code) {
+  return JSON.stringify({ diagnostic: true, stage: safeStages.has(stage) ? stage : "execution", ...code ? { code: safeCodes.has(code) ? code : "EXECUTION_FAILED" } : {} });
+}
+var ProcessFailure = class extends Error {
+  constructor(safeCode, containerDiagnostic) {
+    super("EXECUTION_FAILED");
+    this.safeCode = safeCode;
+    this.containerDiagnostic = containerDiagnostic;
+  }
+  safeCode;
+  containerDiagnostic;
+};
+function diagnosticCode(error) {
+  if (error instanceof ProcessFailure) return error.safeCode;
+  const code = error instanceof Error ? error.message : "EXECUTION_FAILED";
+  return safeCodes.has(code) ? code : "EXECUTION_FAILED";
+}
+function childDiagnostic(stderr) {
+  let found;
+  for (const line of stderr.split(/\r?\n/)) {
+    if (!line.startsWith("FLORA_DIAGNOSTIC ") || line.length > 512) continue;
+    try {
+      const raw = JSON.parse(line.slice(17));
+      if (raw.diagnostic === true && typeof raw.stage === "string" && childStages.includes(raw.stage) && typeof raw.code === "string" && safeCodes.has(raw.code) && Object.keys(raw).length === 3) found = { diagnostic: true, stage: raw.stage, code: raw.code };
+    } catch {
+    }
+  }
+  return found;
+}
+function failure(reason, stderr, diagnostics) {
+  const code = reason === "timeout" ? "PROCESS_TIMEOUT" : reason === "cancelled" ? "PROCESS_CANCELLED" : reason === "output" ? "PROCESS_OUTPUT_LIMIT" : reason === "spawn" ? "PROCESS_SPAWN_FAILED" : "EXECUTION_FAILED";
+  if (diagnostics === "npm" && reason === "exit") {
+    if (/double-loading config [^\n]{1,256} as [^\n]{1,128} previously loaded as/.test(stderr)) return new ProcessFailure("NPM_CONFIG_DUPLICATE");
+    const match = /npm (?:error|ERR!) code ([A-Z][A-Z0-9_]{0,63})(?:\r?\n|$)/.exec(stderr);
+    if (match && npmCodes.includes(match[1])) return new ProcessFailure("NPM_" + match[1]);
+  }
+  return new ProcessFailure(code, diagnostics === "container" ? childDiagnostic(stderr) : void 0);
+}
 function processEnvironment(extra = {}) {
   const path2 = (process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin").split(delimiter).filter(isAbsolute2).join(delimiter);
   return { PATH: path2, LANG: "C.UTF-8", CI: "1", ...extra };
 }
 async function trustedProcess(executable, args, options = {}) {
-  const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 6e4);
-  const cancel = () => controller.abort();
+  let reason = "exit";
+  const controller = new AbortController(), timeout = setTimeout(() => {
+    reason = "timeout";
+    controller.abort();
+  }, options.timeoutMs ?? 6e4);
+  const cancel = () => {
+    reason = "cancelled";
+    controller.abort();
+  };
   options.signal?.addEventListener("abort", cancel, { once: true });
-  if (options.signal?.aborted) controller.abort();
+  if (options.signal?.aborted) cancel();
   let child;
   try {
     return await new Promise((resolve5, reject) => {
-      let size = 0, failed = false, finished = false;
+      let size = 0, failed = false, finished = false, stderr = "";
       const parts = [];
       const kill = () => {
         if (child?.pid) {
@@ -705,20 +754,25 @@ async function trustedProcess(executable, args, options = {}) {
         if (failed) return;
         size += part.length;
         if (size > (options.maxBytes ?? 1024 * 1024)) {
+          reason = "output";
           fail();
           return;
         }
         if (stdout) parts.push(part);
+        else if (options.diagnostics) stderr = (stderr + part.toString("utf8")).slice(-16384);
       };
       child.stdout.on("data", (part) => append(part, true));
       child.stderr.on("data", (part) => append(part, false));
-      child.on("error", fail);
+      child.on("error", () => {
+        reason = "spawn";
+        fail();
+      });
       child.on("close", (code) => {
         controller.signal.removeEventListener("abort", fail);
         if (!finished) {
           finished = true;
           if (code === 0 && !failed && !controller.signal.aborted) resolve5(Buffer.concat(parts).toString("utf8"));
-          else reject(new Error("EXECUTION_FAILED"));
+          else reject(failure(reason, stderr, options.diagnostics));
         }
       });
       child.stdin.on("error", () => {
@@ -735,7 +789,7 @@ async function trustedProcess(executable, args, options = {}) {
 // packages/ota-runner/src/dependencies.ts
 import { createHash as createHash2 } from "node:crypto";
 import { mkdir as mkdir2, writeFile, realpath as realpath3 } from "node:fs/promises";
-import { dirname as dirname2, join as join3, sep as sep2 } from "node:path";
+import { dirname as dirname2, join as join4, sep as sep2 } from "node:path";
 var NPM_REGISTRY = "https://registry.npmjs.org";
 var HOSTED_NODE_VERSION = "24.19.0";
 var HOSTED_NPM_VERSION = "10.9.8";
@@ -782,7 +836,7 @@ function registryTarball(resolved) {
 }
 async function prepareNpmDependencySeed(source, rootDirectory, destination) {
   try {
-    const base = await realpath3(source), root = await realpath3(join3(base, rootDirectory === "." ? "" : relativePath(rootDirectory)));
+    const base = await realpath3(source), root = await realpath3(join4(base, rootDirectory === "." ? "" : relativePath(rootDirectory)));
     invariant(root === base || root.startsWith(base + sep2));
     const packageBytes = await readBoundedFile(root, "package.json", 131072), lockBytes = await readBoundedFile(root, "package-lock.json", 8 * 1024 * 1024);
     const pkg = object2(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(packageBytes))), lock = object2(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(lockBytes)));
@@ -827,11 +881,11 @@ async function prepareNpmDependencySeed(source, rootDirectory, destination) {
       } else registryTarball(entry.resolved);
     }
     await mkdir2(destination, { mode: 448 });
-    await writeFile(join3(destination, "package.json"), JSON.stringify(clean), { mode: 292 });
-    await writeFile(join3(destination, "package-lock.json"), lockBytes, { mode: 292 });
+    await writeFile(join4(destination, "package.json"), JSON.stringify(clean), { mode: 292 });
+    await writeFile(join4(destination, "package-lock.json"), lockBytes, { mode: 292 });
     for (const [path2, { bytes }] of vendors) {
-      await mkdir2(dirname2(join3(destination, path2)), { recursive: true, mode: 448 });
-      await writeFile(join3(destination, path2), bytes, { mode: 292 });
+      await mkdir2(dirname2(join4(destination, path2)), { recursive: true, mode: 448 });
+      await writeFile(join4(destination, path2), bytes, { mode: 292 });
     }
   } catch {
     throw new Error("DEPENDENCY_CACHE_INVALID");
@@ -904,6 +958,9 @@ async function confirmRemoved(docker, name) {
 }
 function createDockerExecutor(options) {
   const runner = resolve3(fileURLToPath(new URL("..", import.meta.url))), docker = options.executable ?? "docker", profile = options.resourceProfile ?? "default";
+  const diagnostic = (stage, code) => {
+    if (profile === "github-hosted") process.stdout.write(diagnosticLine(stage, code) + "\n");
+  };
   invariant(options.dependencyPreparation === void 0 || options.dependencyPreparation === "npm-registry" && profile === "github-hosted" && (options.network === void 0 || options.network === "none"), "ISOLATION_UNAVAILABLE");
   const verify = async (signal) => {
     try {
@@ -916,34 +973,45 @@ function createDockerExecutor(options) {
   };
   return { verify, async execute(job, source, signal) {
     await verify(signal);
-    const name = "flora-" + randomUUID(), helper = await mkdtemp(join4(tmpdir(), "flora-helper-"));
+    const name = "flora-" + randomUUID(), helper = await mkdtemp(join5(tmpdir(), "flora-helper-"));
     await chmod(helper, 493);
-    let launched = false, cache, preparation;
+    let launched = false, cache, preparation, stage = "dependency-seed";
     try {
-      await mkdir3(join4(helper, "dist"), { mode: 493 });
-      await mkdir3(join4(helper, "scripts"), { mode: 493 });
-      await writeFile2(join4(helper, "package.json"), '{"type":"module"}', { mode: 292 });
-      for (const file of ["dist/artifacts.js", "dist/process.js", "dist/expo.js", "dist/inside-container.js", "dist/dependencies.js", "dist/prepare-cache-container.js", "scripts/metro-export.mjs"]) await writeFile2(join4(helper, file), await readBoundedFile(runner, file, 1024 * 1024), { mode: 292 });
+      await mkdir3(join5(helper, "dist"), { mode: 493 });
+      await mkdir3(join5(helper, "scripts"), { mode: 493 });
+      await writeFile2(join5(helper, "package.json"), '{"type":"module"}', { mode: 292 });
+      await mkdir3(join5(helper, "config"), { mode: 493 });
+      for (const config of ["npm-user.rc", "npm-global.rc"]) await writeFile2(join5(helper, "config", config), "", { mode: 292 });
+      for (const file of ["dist/artifacts.js", "dist/process.js", "dist/expo.js", "dist/inside-container.js", "dist/dependencies.js", "dist/prepare-cache-container.js", "scripts/metro-export.mjs"]) await writeFile2(join5(helper, file), await readBoundedFile(runner, file, 1024 * 1024), { mode: 292 });
       if (options.dependencyPreparation) {
         invariant(job.config.toolchain.nodeVersion === HOSTED_NODE_VERSION && job.config.toolchain.packageManager.name === "npm" && job.config.toolchain.packageManager.version === HOSTED_NPM_VERSION, "CONFIG_CHANGED");
-        preparation = await mkdtemp(join4(tmpdir(), "flora-dependencies-"));
-        cache = join4(preparation, "cache");
+        diagnostic(stage);
+        preparation = await mkdtemp(join5(tmpdir(), "flora-dependencies-"));
+        cache = join5(preparation, "cache");
         await mkdir3(cache, { mode: 448 });
-        const seed = join4(preparation, "seed");
+        const seed = join5(preparation, "seed");
         await prepareNpmDependencySeed(source, job.rootDirectory, seed);
+        stage = "dependency-preparation";
+        diagnostic(stage);
         const seedName = "flora-seed-" + randomUUID();
         try {
-          const result = await trustedProcess(docker, dockerCacheArguments(options.image, seedName, seed, helper, cache, profile), { signal, timeoutMs: 66e4, maxBytes: 2 * 1024 * 1024 });
+          const result = await trustedProcess(docker, dockerCacheArguments(options.image, seedName, seed, helper, cache, profile), { signal, timeoutMs: 66e4, maxBytes: 2 * 1024 * 1024, diagnostics: "container" });
           invariant(result === "FLORA_DEPENDENCY_CACHE_READY\n", "DEPENDENCY_CACHE_INVALID");
         } finally {
           await confirmRemoved(docker, seedName);
         }
       }
+      stage = "compiler";
+      diagnostic(stage);
       const args = dockerArguments(options.image, name, source, helper, options.network, profile, cache);
       launched = true;
-      const output = await trustedProcess(docker, args, { signal, timeoutMs: 9e5, maxBytes: 96 * 1024 * 1024, input: JSON.stringify({ appId: job.appId, channel: job.channel, platform: job.platform, commitSha: job.commitSha, rootDirectory: job.rootDirectory, config: job.config, dependencyCache: !!cache, offline: !!cache || (options.network ?? "none") === "none" }) });
-      return decodeExport(output, { platform: job.platform, runtimeVersion: job.runtimeVersion, commitSha: job.commitSha });
+      const output = await trustedProcess(docker, args, { signal, timeoutMs: 9e5, maxBytes: 96 * 1024 * 1024, diagnostics: "container", input: JSON.stringify({ appId: job.appId, channel: job.channel, platform: job.platform, commitSha: job.commitSha, rootDirectory: job.rootDirectory, config: job.config, dependencyCache: !!cache, offline: !!cache || (options.network ?? "none") === "none" }) });
+      const exported = decodeExport(output, { platform: job.platform, runtimeVersion: job.runtimeVersion, commitSha: job.commitSha });
+      diagnostic("artifact-verified");
+      return exported;
     } catch (error) {
+      const child = error instanceof ProcessFailure ? error.containerDiagnostic : void 0;
+      diagnostic(child ? stage + "-" + child.stage : stage, child?.code ?? diagnosticCode(error));
       const code = error instanceof Error ? error.message : "EXPORT_FAILED";
       throw new Error(["ARTIFACT_INVALID", "CONFIG_CHANGED", "ISOLATION_CLEANUP_UNCONFIRMED"].includes(code) ? code : "EXPORT_FAILED");
     } finally {
@@ -991,7 +1059,7 @@ async function readRunnerConfig(path2) {
 // packages/ota-runner/src/source.ts
 import { lstat as lstat4, open as open4, realpath as realpath4, readdir as readdir2 } from "node:fs/promises";
 import { constants as constants4 } from "node:fs";
-import { join as join5, sep as sep3 } from "node:path";
+import { join as join6, sep as sep3 } from "node:path";
 var gitEnvironment = () => processEnvironment({ GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_TERMINAL_PROMPT: "0", GIT_LFS_SKIP_SMUDGE: "1" });
 var gitFlags = ["-c", "core.hooksPath=/dev/null", "-c", "protocol.file.allow=never", "-c", "protocol.ext.allow=never", "-c", "core.autocrlf=false", "-c", "http.followRedirects=false"];
 async function git(root, args, signal, env = gitEnvironment()) {
@@ -1012,7 +1080,7 @@ async function withGitObjectBudget(directory, maxBytes, signal, download) {
       }
       for (const entry of entries) {
         invariant(++count <= 12e3, "SOURCE_UNAVAILABLE");
-        const next = join5(path2, entry.name);
+        const next = join6(path2, entry.name);
         let stat;
         try {
           stat = await lstat4(next);
@@ -1029,7 +1097,7 @@ async function withGitObjectBudget(directory, maxBytes, signal, download) {
         }
       }
     }
-    await walk(join5(directory, ".git/objects"));
+    await walk(join6(directory, ".git/objects"));
   }
   const tick = () => {
     if (checking) return;
@@ -1067,7 +1135,7 @@ async function verifySourceCheckout(job, directory, signal) {
       const path2 = relativePath(input);
       let cursor = base;
       for (const part of path2.split("/")) {
-        cursor = join5(cursor, part);
+        cursor = join6(cursor, part);
         invariant(!(await lstat4(cursor)).isSymbolicLink());
       }
       const file = await open4(cursor, constants4.O_RDONLY | constants4.O_NOFOLLOW);
@@ -1083,7 +1151,7 @@ async function verifySourceCheckout(job, directory, signal) {
         await file.close();
       }
     }
-    const relative = job.rootDirectory === "." ? "" : relativePath(job.rootDirectory), root = await realpath4(join5(base, relative));
+    const relative = job.rootDirectory === "." ? "" : relativePath(job.rootDirectory), root = await realpath4(join6(base, relative));
     invariant(root === base || root.startsWith(base + sep3));
     const config = await readBoundedFile(root, "flora.config.json", 131072);
     invariant(await automationDigest(parseFloraConfig(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(config)))) === await automationDigest(job.config), "CONFIG_CHANGED");
@@ -1143,12 +1211,12 @@ function createGitHubSourceProvider(options = {}) {
 }
 
 // packages/ota-runner/src/main.ts
-import { dirname as dirname3, join as join7, resolve as resolve4 } from "node:path";
+import { dirname as dirname3, join as join8, resolve as resolve4 } from "node:path";
 
 // packages/ota-runner/src/daemon.ts
 import { mkdtemp as mkdtemp2, mkdir as mkdir4, rm as rm2, realpath as realpath5 } from "node:fs/promises";
 import { tmpdir as tmpdir2 } from "node:os";
-import { join as join6, sep as sep4 } from "node:path";
+import { join as join7, sep as sep4 } from "node:path";
 async function runOne(options) {
   if (options.remoteCheckpoint) invariant(options.recoveryDirectory && options.client.identity && options.client.saveCheckpoint && options.client.listCheckpoints && options.client.clearCheckpoint, "INVALID_RUNNER_CONFIG");
   const claim = await options.client.claim();
@@ -1174,8 +1242,9 @@ async function runOne(options) {
   try {
     const work = options.workDirectory ?? tmpdir2();
     await mkdir4(work, { recursive: true });
-    directory = await mkdtemp2(join6(work, "flora-claim-"));
+    directory = await mkdtemp2(join7(work, "flora-claim-"));
     const grant = await options.client.source(lease), checkout = await options.source.checkout(job, grant, directory, controller.signal);
+    if (options.diagnostics) process.stdout.write(diagnosticLine("source-verified") + "\n");
     invariant(!controller.signal.aborted, "CANCELLED");
     const exported = await options.executor.execute(job, checkout.directory, controller.signal);
     invariant(exported.commitSha === job.commitSha && exported.platform === job.platform && exported.runtimeVersion === job.runtimeVersion, "ARTIFACT_INVALID");
@@ -1324,7 +1393,7 @@ async function main() {
       process.stdout.write(JSON.stringify({ state: "succeeded", jobId: result.job.id, deploymentId: result.deployment.id }) + "\n");
       return;
     }
-    const recoveryDirectory = config.recoveryDirectory ?? join7(dirname3(resolve4(args[index + 1])), "recovery"), pending = await pendingRecoveryJournals(recoveryDirectory);
+    const recoveryDirectory = config.recoveryDirectory ?? join8(dirname3(resolve4(args[index + 1])), "recovery"), pending = await pendingRecoveryJournals(recoveryDirectory);
     if (config.publicationRecovery === "remote-checkpoint") await reconcileRemotePublications(client, recoveryDirectory);
     else if (pending.length) {
       process.stdout.write(JSON.stringify({ state: "publication_unknown", recoveryJournal: pending[0] }) + "\n");
@@ -1332,7 +1401,7 @@ async function main() {
     }
     const executor = createDockerExecutor({ image: config.dockerImage, ...config.dockerNetwork ? { network: config.dockerNetwork } : {}, ...config.resourceProfile ? { resourceProfile: config.resourceProfile } : {}, ...config.dependencyPreparation ? { dependencyPreparation: config.dependencyPreparation } : {} });
     await executor.verify(controller.signal);
-    const options = { client, recoveryDirectory, source: createGitHubSourceProvider(), executor, signal: controller.signal, ...config.workDirectory ? { workDirectory: config.workDirectory } : {}, ...config.publicationRecovery === "remote-checkpoint" ? { remoteCheckpoint: true } : {} };
+    const options = { client, recoveryDirectory, source: createGitHubSourceProvider(), executor, signal: controller.signal, ...config.workDirectory ? { workDirectory: config.workDirectory } : {}, ...config.publicationRecovery === "remote-checkpoint" ? { remoteCheckpoint: true } : {}, ...config.resourceProfile === "github-hosted" ? { diagnostics: true } : {} };
     if (once) {
       const result = await runOne(options);
       process.stdout.write(JSON.stringify(result) + "\n");

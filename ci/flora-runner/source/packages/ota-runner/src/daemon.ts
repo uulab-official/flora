@@ -10,7 +10,8 @@ import type {SourceProvider} from "./source.js";
 import {writeRecoveryJournal,clearRecoveryJournal,assertPublicationResult,clearRemoteCheckpoint} from "./recovery.js";
 import type {RecoveryJournal} from "./recovery.js";
 import type {ExportExecutor} from "./docker.js";
-export interface RunnerOptions {client:RunnerClient;source:SourceProvider;executor:ExportExecutor;workDirectory?:string;signal?:AbortSignal;heartbeatMs?:number;recoveryDirectory?:string;remoteCheckpoint?:boolean}
+import {diagnosticLine} from "./process.js";
+export interface RunnerOptions {client:RunnerClient;source:SourceProvider;executor:ExportExecutor;workDirectory?:string;signal?:AbortSignal;heartbeatMs?:number;recoveryDirectory?:string;remoteCheckpoint?:boolean;diagnostics?:boolean}
 export interface RunnerOutcome {state:"empty"|"succeeded"|"failed"|"interrupted"|"publication_unknown";jobId?:string;code?:AutomationFailureCode;recoveryJournal?:string}
 export async function runOne(options:RunnerOptions):Promise<RunnerOutcome>{
  if(options.remoteCheckpoint)invariant(options.recoveryDirectory&&options.client.identity&&options.client.saveCheckpoint&&options.client.listCheckpoints&&options.client.clearCheckpoint,"INVALID_RUNNER_CONFIG");
@@ -22,6 +23,7 @@ export async function runOne(options:RunnerOptions):Promise<RunnerOutcome>{
  try{
   const work=options.workDirectory??tmpdir();await mkdir(work,{recursive:true});directory=await mkdtemp(join(work,"flora-claim-"));
   const grant=await options.client.source(lease),checkout=await options.source.checkout(job,grant,directory,controller.signal);
+  if(options.diagnostics)process.stdout.write(diagnosticLine("source-verified")+"\n");
   invariant(!controller.signal.aborted,"CANCELLED");const exported=await options.executor.execute(job,checkout.directory,controller.signal);
   invariant(exported.commitSha===job.commitSha&&exported.platform===job.platform&&exported.runtimeVersion===job.runtimeVersion,"ARTIFACT_INVALID");
   const uploaded=[];

@@ -17,7 +17,7 @@ async function main(){
   if(config.publicationRecovery==="remote-checkpoint")await reconcileRemotePublications(client,recoveryDirectory);
   else if(pending.length){process.stdout.write(JSON.stringify({state:"publication_unknown",recoveryJournal:pending[0]})+"\n");throw new Error("PUBLICATION_RECONCILIATION_REQUIRED");}
   const executor=createDockerExecutor({image:config.dockerImage,...(config.dockerNetwork?{network:config.dockerNetwork}:{}),...(config.resourceProfile?{resourceProfile:config.resourceProfile}:{}),...(config.dependencyPreparation?{dependencyPreparation:config.dependencyPreparation}:{})});await executor.verify(controller.signal);
-  const options={client,recoveryDirectory,source:createGitHubSourceProvider(),executor,signal:controller.signal,...(config.workDirectory?{workDirectory:config.workDirectory}:{}),...(config.publicationRecovery==="remote-checkpoint"?{remoteCheckpoint:true}:{})};
+  const options={client,recoveryDirectory,source:createGitHubSourceProvider(),executor,signal:controller.signal,...(config.workDirectory?{workDirectory:config.workDirectory}:{}),...(config.publicationRecovery==="remote-checkpoint"?{remoteCheckpoint:true}:{}),...(config.resourceProfile==="github-hosted"?{diagnostics:true}:{})};
   if(once){const result=await runOne(options);process.stdout.write(JSON.stringify(result)+"\n");if(!["empty","succeeded"].includes(result.state))process.exitCode=1;}
   else await runDaemon({...options,onOutcome:result=>process.stdout.write(JSON.stringify(result)+"\n")});
  }finally{process.removeListener("SIGINT",stop);process.removeListener("SIGTERM",stop);}

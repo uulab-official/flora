@@ -1,10 +1,14 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {oidcRequestAddress,validAdmission} from './github-runner-bootstrap.mjs';
+import {oidcRequestAddress,validAdmission,safeDiagnostic} from './github-runner-bootstrap.mjs';
 test('OIDC request stays at GitHub Actions HTTPS endpoint with explicit audience',()=>{
  const address=oidcRequestAddress('https://run.actions.githubusercontent.com/id?x=1','https://flora.uulab.co.kr');
  assert.equal(address.searchParams.get('audience'),'https://flora.uulab.co.kr');
  for(const input of ['http://run.actions.githubusercontent.com/id','https://actions.githubusercontent.com.evil.test/id','https://evil-actions.githubusercontent.com/id','https://token@run.actions.githubusercontent.com/id','https://run.actions.githubusercontent.com:444/id'])assert.throws(()=>oidcRequestAddress(input,'flora'));
+});
+test('diagnostics forward only constrained stage and code, excluding arbitrary fields',()=>{
+ assert.deepEqual(safeDiagnostic({diagnostic:true,stage:'dependency-preparation',code:'EXECUTION_FAILED',token:'must-never-forward'}),{diagnostic:true,stage:'dependency-preparation',code:'EXECUTION_FAILED'});
+ for(const value of [{diagnostic:true,stage:'source\nsecret'},{diagnostic:true,stage:'export',code:'Bearer credential'},{stage:'export'}])assert.equal(safeDiagnostic(value),null);
 });
 test('admission binds exact app, source commit, one machine and expiry',()=>{
  const now=1000000,app='application_isso',sha='a'.repeat(40),token='runner_isso.'+'b'.repeat(43);

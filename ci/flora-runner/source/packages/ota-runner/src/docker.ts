@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { decodeExport, invariant, readBoundedFile } from "./artifacts.js";
 import type { ExportBundle } from "./artifacts.js";
 import type { AutomationJob } from "@app-ops/dogfood";
-import { trustedProcess } from "./process.js";
+import { trustedProcess,diagnosticLine,diagnosticCode,ProcessFailure } from "./process.js";
 import { prepareNpmDependencySeed, HOSTED_NODE_VERSION, HOSTED_NPM_VERSION } from "./dependencies.js";
 export interface ExportExecutor { execute(job:AutomationJob,source:string,signal:AbortSignal):Promise<ExportBundle> }
 export interface DockerExecutor extends ExportExecutor { verify(signal?:AbortSignal):Promise<void> }
@@ -39,22 +39,24 @@ async function confirmRemoved(docker:string,name:string){
 /** No host execution fallback. Controller credentials never enter either container. */
 export function createDockerExecutor(options:DockerExecutorOptions):DockerExecutor{
  const runner=resolve(fileURLToPath(new URL("..",import.meta.url))),docker=options.executable??"docker",profile=options.resourceProfile??"default";
+ const diagnostic=(stage:string,code?:string)=>{if(profile==="github-hosted")process.stdout.write(diagnosticLine(stage,code)+"\n");};
  invariant(options.dependencyPreparation===undefined||options.dependencyPreparation==="npm-registry"&&profile==="github-hosted"&&(options.network===undefined||options.network==="none"),"ISOLATION_UNAVAILABLE");
  const verify=async(signal?:AbortSignal)=>{try{containerIdentity();dockerArguments(options.image,"flora-verify","/source","/runner",options.network,profile);await trustedProcess(docker,["version","--format","{{.Server.Version}}"],{...(signal?{signal}:{}),timeoutMs:10_000,maxBytes:8192});}catch{throw new Error("ISOLATION_UNAVAILABLE");}};
  return {verify,async execute(job,source,signal){
-  await verify(signal);const name="flora-"+randomUUID(),helper=await mkdtemp(join(tmpdir(),"flora-helper-"));await chmod(helper,0o755);let launched=false,cache:string|undefined,preparation:string|undefined;
+  await verify(signal);const name="flora-"+randomUUID(),helper=await mkdtemp(join(tmpdir(),"flora-helper-"));await chmod(helper,0o755);let launched=false,cache:string|undefined,preparation:string|undefined,stage="dependency-seed";
   try{
    await mkdir(join(helper,"dist"),{mode:0o755});await mkdir(join(helper,"scripts"),{mode:0o755});await writeFile(join(helper,"package.json"),'{"type":"module"}',{mode:0o444});
+   await mkdir(join(helper,"config"),{mode:0o755});for(const config of ["npm-user.rc","npm-global.rc"])await writeFile(join(helper,"config",config),"",{mode:0o444});
    for(const file of ["dist/artifacts.js","dist/process.js","dist/expo.js","dist/inside-container.js","dist/dependencies.js","dist/prepare-cache-container.js","scripts/metro-export.mjs"])await writeFile(join(helper,file),await readBoundedFile(runner,file,1024*1024),{mode:0o444});
    if(options.dependencyPreparation){
     invariant(job.config.toolchain.nodeVersion===HOSTED_NODE_VERSION&&job.config.toolchain.packageManager.name==="npm"&&job.config.toolchain.packageManager.version===HOSTED_NPM_VERSION,"CONFIG_CHANGED");
-    preparation=await mkdtemp(join(tmpdir(),"flora-dependencies-"));cache=join(preparation,"cache");await mkdir(cache,{mode:0o700});const seed=join(preparation,"seed");await prepareNpmDependencySeed(source,job.rootDirectory,seed);
-    const seedName="flora-seed-"+randomUUID();try{const result=await trustedProcess(docker,dockerCacheArguments(options.image,seedName,seed,helper,cache,profile),{signal,timeoutMs:660000,maxBytes:2*1024*1024});invariant(result==="FLORA_DEPENDENCY_CACHE_READY\n","DEPENDENCY_CACHE_INVALID");}finally{await confirmRemoved(docker,seedName);}
+    diagnostic(stage);preparation=await mkdtemp(join(tmpdir(),"flora-dependencies-"));cache=join(preparation,"cache");await mkdir(cache,{mode:0o700});const seed=join(preparation,"seed");await prepareNpmDependencySeed(source,job.rootDirectory,seed);
+    stage="dependency-preparation";diagnostic(stage);const seedName="flora-seed-"+randomUUID();try{const result=await trustedProcess(docker,dockerCacheArguments(options.image,seedName,seed,helper,cache,profile),{signal,timeoutMs:660000,maxBytes:2*1024*1024,diagnostics:"container"});invariant(result==="FLORA_DEPENDENCY_CACHE_READY\n","DEPENDENCY_CACHE_INVALID");}finally{await confirmRemoved(docker,seedName);}
    }
-   const args=dockerArguments(options.image,name,source,helper,options.network,profile,cache);launched=true;
-   const output=await trustedProcess(docker,args,{signal,timeoutMs:900_000,maxBytes:96*1024*1024,input:JSON.stringify({appId:job.appId,channel:job.channel,platform:job.platform,commitSha:job.commitSha,rootDirectory:job.rootDirectory,config:job.config,dependencyCache:!!cache,offline:!!cache||(options.network??"none")==="none"})});
-   return decodeExport(output,{platform:job.platform,runtimeVersion:job.runtimeVersion,commitSha:job.commitSha});
-  }catch(error){const code=error instanceof Error?error.message:"EXPORT_FAILED";throw new Error(["ARTIFACT_INVALID","CONFIG_CHANGED","ISOLATION_CLEANUP_UNCONFIRMED"].includes(code)?code:"EXPORT_FAILED");}
+   stage="compiler";diagnostic(stage);const args=dockerArguments(options.image,name,source,helper,options.network,profile,cache);launched=true;
+   const output=await trustedProcess(docker,args,{signal,timeoutMs:900_000,maxBytes:96*1024*1024,diagnostics:"container",input:JSON.stringify({appId:job.appId,channel:job.channel,platform:job.platform,commitSha:job.commitSha,rootDirectory:job.rootDirectory,config:job.config,dependencyCache:!!cache,offline:!!cache||(options.network??"none")==="none"})});
+   const exported=decodeExport(output,{platform:job.platform,runtimeVersion:job.runtimeVersion,commitSha:job.commitSha});diagnostic("artifact-verified");return exported;
+  }catch(error){const child=error instanceof ProcessFailure?error.containerDiagnostic:undefined;diagnostic(child?stage+"-"+child.stage:stage,child?.code??diagnosticCode(error));const code=error instanceof Error?error.message:"EXPORT_FAILED";throw new Error(["ARTIFACT_INVALID","CONFIG_CHANGED","ISOLATION_CLEANUP_UNCONFIRMED"].includes(code)?code:"EXPORT_FAILED");}
   finally{try{if(launched)await confirmRemoved(docker,name);}finally{await rm(helper,{recursive:true,force:true});if(preparation)await rm(preparation,{recursive:true,force:true});}}
  }};
 }
