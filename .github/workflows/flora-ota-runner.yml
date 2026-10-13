@@ -17,7 +17,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           repository: uulab-official/flora
-          ref: 6fdc342dc22bdbdea54f5c21b7c142387737f1b3
+          ref: 16ad105829630aa4254c1425df94714e8e361978
           persist-credentials: false
           sparse-checkout: ci/flora-runner
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
