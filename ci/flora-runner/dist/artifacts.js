@@ -35,7 +35,8 @@ export async function readBoundedFile(root, input, limit) {
         await file.close();
     }
 }
-const types = { js: "application/javascript", bundle: "application/javascript", hbc: "application/octet-stream", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", avif: "image/avif", ttf: "font/ttf", otf: "font/otf", woff: "font/woff", woff2: "font/woff2", mp3: "audio/mpeg", wav: "audio/wav", ogg: "audio/ogg", mp4: "video/mp4", json: "application/json", wasm: "application/wasm" };
+// Android vector drawables are opaque verified bytes here, not parsed XML.
+const types = { js: "application/javascript", bundle: "application/javascript", hbc: "application/octet-stream", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", avif: "image/avif", ttf: "font/ttf", otf: "font/otf", woff: "font/woff", woff2: "font/woff2", mp3: "audio/mpeg", wav: "audio/wav", ogg: "audio/ogg", mp4: "video/mp4", json: "application/json", xml: "application/octet-stream", wasm: "application/wasm" };
 export function assetMetadata(key, extension, bytes) {
     invariant(typeof key === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(key));
     invariant(typeof extension === "string" && /^\.?[A-Za-z0-9]{1,15}$/.test(extension));
