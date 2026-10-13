@@ -48,3 +48,36 @@ test('a second-target failure keeps the already successful target and authentica
  assert.deepEqual(delivered.map(value=>value.platform),['android','ios']);
  let calls=0;await assert.rejects(runAdmittedPlatforms(['ios','android'],{runOnce:async()=>{calls++;throw new Error('RUNNER_REVOKED');}}),/RUNNER_REVOKED/);assert.equal(calls,1);
 });
+test('platform private config permits the engine nonrecursive recovery mkdir under a fresh private root',async t=>{
+ const {mkdtemp,mkdir,writeFile,stat,rm}=await import('node:fs/promises'),{tmpdir}=await import('node:os'),{join}=await import('node:path'),{platformRunnerConfig}=await import('./github-runner-bootstrap.mjs');
+ const root=await mkdtemp(join(tmpdir(),'flora-bootstrap-regression-'));t.after(()=>rm(root,{recursive:true,force:true}));const targets=[];
+ for(const platform of ['ios','android']){
+  const config=platformRunnerConfig(root,platform,{origin:'https://flora.example.test',token:'runner_fixture.'+'a'.repeat(43),dockerImage:'sha256:'+'b'.repeat(64)});targets.push(config.recoveryDirectory);
+  // Same nonrecursive operation as recovery.privateDirectory: parent must already exist.
+  await mkdir(config.recoveryDirectory,{mode:0o700});assert.equal((await stat(config.recoveryDirectory)).mode&0o777,0o700);
+  const path=join(root,'runner-'+platform+'.json');await writeFile(path,JSON.stringify(config),{mode:0o600});assert.equal((await stat(path)).mode&0o777,0o600);assert.equal(config.claimPlatform,platform);
+ }
+ assert.equal(new Set(targets).size,2);assert.equal((await stat(root)).mode&0o777,0o700);
+});
+test('initialization failure forwards only an exact allowlisted CLI code without stderr material',async()=>{
+ const {initializationDiagnostic}=await import('./github-runner-bootstrap.mjs');assert.deepEqual(initializationDiagnostic('RECOVERY_JOURNAL_UNAVAILABLE\n'),{diagnostic:true,stage:'runner-initialization',code:'RECOVERY_JOURNAL_UNAVAILABLE'});
+ for(const stderr of ['Bearer credential','MY_SECRET_TOKEN','RECOVERY_JOURNAL_UNAVAILABLE\nBearer credential','SECRET\nRUNNER_STOPPED',null])assert.equal(initializationDiagnostic(stderr),null);
+});
+test('actual CLI initializes separate remote recovery directories before empty platform claims',async t=>{
+ const {mkdtemp,writeFile,stat,rm,access}=await import('node:fs/promises'),{tmpdir}=await import('node:os'),{join}=await import('node:path'),{fileURLToPath}=await import('node:url'),{createServer}=await import('node:http'),{execFile}=await import('node:child_process'),{promisify}=await import('node:util'),{platformRunnerConfig}=await import('./github-runner-bootstrap.mjs');
+ // Same test runs in source and the hash-verified packaged controller.
+ const candidates=[new URL('../packages/ota-runner/dist/main.js',import.meta.url),new URL('./dist/main.js',import.meta.url)];let main;
+ for(const candidate of candidates){try{await access(candidate);main=fileURLToPath(candidate);break;}catch{}}
+ assert.ok(main,'compiled trusted Runner required for smoke test');
+ const root=await mkdtemp(join(tmpdir(),'flora-bootstrap-cli-'));t.after(()=>rm(root,{recursive:true,force:true}));await writeFile(join(root,'docker'),'#!/bin/sh\nexit 0\n',{mode:0o700});const claims=[];
+ const server=createServer(async(req,res)=>{let input='';for await(const chunk of req)input+=chunk;
+  if(req.url==='/api/runner/checkpoint-list'){res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({checkpoints:[]}));return;}
+  assert.equal(req.url,'/api/runner/claim');claims.push(JSON.parse(input));res.writeHead(204);res.end();
+ });await new Promise(done=>server.listen(0,'127.0.0.1',done));t.after(()=>new Promise(done=>{server.close(done);server.closeAllConnections();}));
+ const origin='http://127.0.0.1:'+server.address().port;
+ for(const platform of ['ios','android']){
+  const config=platformRunnerConfig(root,platform,{origin,token:'runner_fixture.'+'a'.repeat(43),dockerImage:'sha256:'+'b'.repeat(64)}),path=join(root,'runner-'+platform+'.json');await writeFile(path,JSON.stringify(config),{mode:0o600});
+  const output=await promisify(execFile)(process.execPath,[main,'--config',path,'--once'],{env:{PATH:root},timeout:5000});assert.equal(output.stderr,'');assert.deepEqual(JSON.parse(output.stdout),{state:'empty'});assert.equal((await stat(config.recoveryDirectory)).mode&0o777,0o700);
+ }
+ assert.deepEqual(claims,[{platform:'ios'},{platform:'android'}]);
+});

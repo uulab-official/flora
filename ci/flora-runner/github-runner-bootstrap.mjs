@@ -43,6 +43,16 @@ export async function runAdmittedPlatforms(platforms,{runOnce,wait=ms=>new Promi
   }
   return outcomes;
 }
+export function initializationDiagnostic(stderr) {
+  const code=typeof stderr==='string'?stderr.trim():'';
+  return ['INVALID_RUNNER_CONFIG','ISOLATION_UNAVAILABLE','ISOLATION_CLEANUP_UNCONFIRMED','PUBLICATION_RECONCILIATION_REQUIRED','INVALID_RECOVERY_JOURNAL','RECOVERY_JOURNAL_UNAVAILABLE','RECOVERY_CLEANUP_UNCONFIRMED','RECOVERY_CHECKPOINT_UNAVAILABLE','PUBLICATION_RESULT_UNCONFIRMED','RUNNER_STOPPED'].includes(code)
+    ? {diagnostic:true,stage:'runner-initialization',code} : null;
+}
+export function platformRunnerConfig(privateRoot,platform,{origin,token,dockerImage}) {
+  if(!['ios','android'].includes(platform))throw new Error('GITHUB_RUNNER_CONFIGURATION_INVALID');
+  return {origin,token,dockerImage,claimPlatform:platform,resourceProfile:'github-hosted',dependencyPreparation:'npm-registry',publicationRecovery:'remote-checkpoint',
+    workDirectory:join(privateRoot,'work-'+platform),recoveryDirectory:join(privateRoot,'recovery-'+platform)};
+}
 export function validAdmission(value, appId, sha, now=Date.now()) {
   return validPlatforms(value?.platforms) && value?.appId===appId && value.commitSha===sha && Number.isSafeInteger(value.expiresAt) && value.expiresAt>now+60000
     && typeof value.token==='string' && /^[a-z][a-z0-9_-]{2,95}\.[A-Za-z0-9_-]{43}$/.test(value.token)
@@ -100,9 +110,7 @@ const dockerImage=(await readFile(imageFile,'utf8')).trim(); ensure(/^sha256:[a-
 process.stdout.write(JSON.stringify({state:'toolchain-ready',dockerImage})+'\n');
 async function runOnce(platform) {
   const config=join(privateRoot, 'runner-'+platform+'.json');
-  await writeFile(config,JSON.stringify({origin,token,dockerImage,claimPlatform:platform,
-    resourceProfile:'github-hosted',dependencyPreparation:'npm-registry',publicationRecovery:'remote-checkpoint',
-    workDirectory:join(privateRoot,'work',platform),recoveryDirectory:join(privateRoot,'recovery',platform)}),{mode:0o600});
+  await writeFile(config,JSON.stringify(platformRunnerConfig(privateRoot,platform,{origin,token,dockerImage})),{mode:0o600});
   const child = spawn(process.execPath, [resolve('ci/flora-runner/dist/main.js'), '--config', config, '--once'], { stdio: ['ignore', 'pipe', 'pipe'] });
   let stdout = '', stderr = '', bytes = 0;
   for (const [stream, append] of [[child.stdout, value => { stdout += value; }], [child.stderr, value => { stderr += value; }]])
@@ -111,6 +119,7 @@ async function runOnce(platform) {
   const lines = stdout.trim().split('\n'); let result;
   for (const line of lines) { try { const item = JSON.parse(line), diagnostic=safeDiagnostic(item); if(diagnostic)process.stdout.write(JSON.stringify(diagnostic)+'\n'); if (typeof item.state === 'string') result = item; } catch {} }
   if (bytes>1048576 || !result || exit!==0 && result.state!=='failed' && result.state!=='interrupted' && result.state!=='publication_unknown') {
+    const diagnostic=initializationDiagnostic(stderr);if(diagnostic)process.stdout.write(JSON.stringify(diagnostic)+'\n');
     throw new Error('RUNNER_EXECUTION_FAILED');
   }
   if(exit!==0 && result.state==='succeeded')throw new Error('RUNNER_EXECUTION_FAILED');
