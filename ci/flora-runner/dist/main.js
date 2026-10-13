@@ -566,43 +566,65 @@ function createRunnerClient(options) {
   invariant(/^[a-z][a-z0-9_-]{2,95}\.[A-Za-z0-9_-]{43}$/.test(options.token), "INVALID_RUNNER_CONFIG");
   const request = options.fetch ?? fetch;
   async function call(path2, data, binary, timeoutMs = 2e4) {
-    let responseStatus = 0;
-    try {
-      const response = await request(options.origin + path2, { method: "POST", redirect: "error", signal: AbortSignal.timeout(timeoutMs), headers: { Authorization: "Bearer " + options.token, Origin: options.origin, "Content-Type": binary ? "application/octet-stream" : "application/json", ...binary ? { "X-Flora-Runner-Lease": Buffer.from(JSON.stringify(parseAutomationLease(binary.lease))).toString("base64url") } : {} }, body: binary ? new Uint8Array(binary.bytes) : JSON.stringify(data) });
-      responseStatus = response.status;
-      if (response.status === 204) return null;
-      if (!response.body && !response.ok) throw new RunnerHttpFailure(response.status, "RUNNER_REQUEST_REJECTED");
-      invariant(response.body, "RUNNER_RESPONSE_INVALID");
-      const reader = response.body.getReader();
-      const chunks = [];
-      let size = 0;
+    const headers = { Authorization: "Bearer " + options.token, Origin: options.origin, "Content-Type": binary ? "application/octet-stream" : "application/json", ...binary ? { "X-Flora-Runner-Lease": Buffer.from(JSON.stringify(parseAutomationLease(binary.lease))).toString("base64url") } : {} };
+    const body = binary ? new Uint8Array(binary.bytes) : JSON.stringify(data);
+    const signal = AbortSignal.timeout(timeoutMs), deadline = Date.now() + timeoutMs;
+    for (let attempt = 0; ; attempt++) {
+      let responseStatus = 0;
       try {
-        for (; ; ) {
-          const part = await reader.read();
-          if (part.done) break;
-          size += part.value.length;
-          invariant(size <= 1048576, "RUNNER_RESPONSE_INVALID");
-          chunks.push(part.value);
+        const response = await request(options.origin + path2, { method: "POST", redirect: "error", signal, headers, body: body instanceof Uint8Array ? new Uint8Array(body) : body });
+        responseStatus = response.status;
+        if (response.status === 204) return null;
+        if (!response.body && !response.ok) throw new RunnerHttpFailure(response.status, "RUNNER_REQUEST_REJECTED");
+        invariant(response.body, "RUNNER_RESPONSE_INVALID");
+        const reader = response.body.getReader();
+        const chunks = [];
+        let size = 0;
+        try {
+          for (; ; ) {
+            const part = await reader.read();
+            if (part.done) break;
+            size += part.value.length;
+            invariant(size <= 1048576, "RUNNER_RESPONSE_INVALID");
+            chunks.push(part.value);
+          }
+        } finally {
+          void reader.cancel().catch(() => {
+          });
         }
-      } finally {
-        void reader.cancel().catch(() => {
-        });
+        let raw;
+        try {
+          raw = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        } catch {
+          if (!response.ok) throw new RunnerHttpFailure(response.status, "RUNNER_REQUEST_REJECTED");
+          throw new Error("RUNNER_RESPONSE_INVALID");
+        }
+        if (!response.ok) {
+          const code = typeof raw?.error === "string" && /^[A-Z][A-Z0-9_]{1,95}$/.test(raw.error) ? raw.error : "RUNNER_REQUEST_REJECTED";
+          if (response.status === 409 && code === "BUSY" && attempt < 2) {
+            const retryAfter = response.headers.get("Retry-After"), seconds = retryAfter !== null && /^[0-9]{1,2}$/.test(retryAfter) ? Math.min(Number(retryAfter), 5) : 1, delay = seconds * 1e3;
+            if (Date.now() + delay >= deadline) throw new RunnerHttpFailure(response.status, code);
+            await new Promise((done, fail) => {
+              const stop = () => {
+                clearTimeout(timer);
+                signal.removeEventListener("abort", stop);
+                fail(signal.reason);
+              }, timer = setTimeout(() => {
+                signal.removeEventListener("abort", stop);
+                done();
+              }, delay);
+              signal.addEventListener("abort", stop, { once: true });
+              if (signal.aborted) stop();
+            });
+            continue;
+          }
+          throw new RunnerHttpFailure(response.status, code);
+        }
+        return raw;
+      } catch (error) {
+        if (error instanceof RunnerHttpFailure) throw error;
+        throw new RunnerHttpFailure(responseStatus >= 400 ? responseStatus : 0, responseStatus >= 400 ? "RUNNER_REQUEST_REJECTED" : "RUNNER_TRANSPORT_UNAVAILABLE");
       }
-      let raw;
-      try {
-        raw = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-      } catch {
-        if (!response.ok) throw new RunnerHttpFailure(response.status, "RUNNER_REQUEST_REJECTED");
-        throw new Error("RUNNER_RESPONSE_INVALID");
-      }
-      if (!response.ok) {
-        const code = typeof raw?.error === "string" && /^[A-Z][A-Z0-9_]{1,95}$/.test(raw.error) ? raw.error : "RUNNER_REQUEST_REJECTED";
-        throw new RunnerHttpFailure(response.status, code);
-      }
-      return raw;
-    } catch (error) {
-      if (error instanceof RunnerHttpFailure) throw error;
-      throw new RunnerHttpFailure(responseStatus >= 400 ? responseStatus : 0, responseStatus >= 400 ? "RUNNER_REQUEST_REJECTED" : "RUNNER_TRANSPORT_UNAVAILABLE");
     }
   }
   const client = {

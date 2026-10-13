@@ -16,12 +16,22 @@ export function createRunnerClient(options:{origin:string;token:string;claimPlat
  const origin=new URL(options.origin);invariant(origin.origin===options.origin&&!origin.username&&!origin.password&&(origin.protocol==="https:"||origin.protocol==="http:"&&["127.0.0.1","localhost","[::1]"].includes(origin.hostname)),"INVALID_RUNNER_CONFIG");
  invariant(/^[a-z][a-z0-9_-]{2,95}\.[A-Za-z0-9_-]{43}$/.test(options.token),"INVALID_RUNNER_CONFIG");const request=options.fetch??fetch;
  async function call(path:string,data:unknown,binary?:{lease:AutomationLease;bytes:Uint8Array},timeoutMs=20000):Promise<unknown>{
-  let responseStatus=0;
-  try{const response=await request(options.origin+path,{method:"POST",redirect:"error",signal:AbortSignal.timeout(timeoutMs),headers:{Authorization:"Bearer "+options.token,Origin:options.origin,"Content-Type":binary?"application/octet-stream":"application/json",...(binary?{"X-Flora-Runner-Lease":Buffer.from(JSON.stringify(parseAutomationLease(binary.lease))).toString("base64url")}:{} )},body:binary?new Uint8Array(binary.bytes):JSON.stringify(data)});
+  // Freeze payload and lease headers before waiting so retries cannot observe caller mutation.
+  const headers={Authorization:"Bearer "+options.token,Origin:options.origin,"Content-Type":binary?"application/octet-stream":"application/json",...(binary?{"X-Flora-Runner-Lease":Buffer.from(JSON.stringify(parseAutomationLease(binary.lease))).toString("base64url")}:{} )};
+  const body=binary?new Uint8Array(binary.bytes):JSON.stringify(data);
+  const signal=AbortSignal.timeout(timeoutMs),deadline=Date.now()+timeoutMs;
+  for(let attempt=0;;attempt++){let responseStatus=0;
+  try{const response=await request(options.origin+path,{method:"POST",redirect:"error",signal,headers,body:body instanceof Uint8Array?new Uint8Array(body):body});
    responseStatus=response.status;
    if(response.status===204)return null;if(!response.body&&!response.ok)throw new RunnerHttpFailure(response.status,"RUNNER_REQUEST_REJECTED");invariant(response.body,"RUNNER_RESPONSE_INVALID");const reader=response.body.getReader();const chunks:Uint8Array[]=[];let size=0;try{for(;;){const part=await reader.read();if(part.done)break;size+=part.value.length;invariant(size<=1048576,"RUNNER_RESPONSE_INVALID");chunks.push(part.value);}}finally{void reader.cancel().catch(()=>{});}let raw:unknown;try{raw=JSON.parse(Buffer.concat(chunks).toString("utf8"));}catch{if(!response.ok)throw new RunnerHttpFailure(response.status,"RUNNER_REQUEST_REJECTED");throw new Error("RUNNER_RESPONSE_INVALID");}
-   if(!response.ok){const code=typeof (raw as {error?:unknown})?.error==="string"&&/^[A-Z][A-Z0-9_]{1,95}$/.test((raw as {error:string}).error)?(raw as {error:string}).error:"RUNNER_REQUEST_REJECTED";throw new RunnerHttpFailure(response.status,code);}return raw;
+   if(!response.ok){const code=typeof (raw as {error?:unknown})?.error==="string"&&/^[A-Z][A-Z0-9_]{1,95}$/.test((raw as {error:string}).error)?(raw as {error:string}).error:"RUNNER_REQUEST_REJECTED";if(response.status===409&&code==="BUSY"&&attempt<2){
+    const retryAfter=response.headers.get("Retry-After"),seconds=retryAfter!==null&&/^[0-9]{1,2}$/.test(retryAfter)?Math.min(Number(retryAfter),5):1,delay=seconds*1000;
+    if(Date.now()+delay>=deadline)throw new RunnerHttpFailure(response.status,code);
+    await new Promise<void>((done,fail)=>{const stop=()=>{clearTimeout(timer);signal.removeEventListener("abort",stop);fail(signal.reason);},timer=setTimeout(()=>{signal.removeEventListener("abort",stop);done();},delay);signal.addEventListener("abort",stop,{once:true});if(signal.aborted)stop();});
+    continue;
+   }throw new RunnerHttpFailure(response.status,code);}return raw;
   }catch(error){if(error instanceof RunnerHttpFailure)throw error;throw new RunnerHttpFailure(responseStatus>=400?responseStatus:0,responseStatus>=400?"RUNNER_REQUEST_REJECTED":"RUNNER_TRANSPORT_UNAVAILABLE");}
+  }
  }
  const client:RunnerClient={
   identity:{origin:options.origin,runnerId:options.token.split(".")[0]!},
