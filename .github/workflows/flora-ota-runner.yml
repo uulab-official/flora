@@ -11,13 +11,13 @@ permissions:
 jobs:
   export-and-publish:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Fetch immutable trusted controller
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           repository: uulab-official/flora
-          ref: 33ad7169b4d7539b98d7f3122cc14539e14cd475
+          ref: 1501511dd4f3c12946016e01a9ed9da1120ac855
           persist-credentials: false
           sparse-checkout: ci/flora-runner
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
