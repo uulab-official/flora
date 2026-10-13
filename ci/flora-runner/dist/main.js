@@ -560,6 +560,7 @@ var RunnerHttpFailure = class extends Error {
   status;
 };
 function createRunnerClient(options) {
+  invariant(options.claimPlatform === void 0 || options.claimPlatform === "ios" || options.claimPlatform === "android", "INVALID_RUNNER_CONFIG");
   const origin = new URL(options.origin);
   invariant(origin.origin === options.origin && !origin.username && !origin.password && (origin.protocol === "https:" || origin.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(origin.hostname)), "INVALID_RUNNER_CONFIG");
   invariant(/^[a-z][a-z0-9_-]{2,95}\.[A-Za-z0-9_-]{43}$/.test(options.token), "INVALID_RUNNER_CONFIG");
@@ -607,11 +608,12 @@ function createRunnerClient(options) {
   const client = {
     identity: { origin: options.origin, runnerId: options.token.split(".")[0] },
     async claim() {
-      const input = await call("/api/runner/claim", {});
+      const input = await call("/api/runner/claim", options.claimPlatform ? { platform: options.claimPlatform } : {});
       if (input === null) return null;
       invariant(input && typeof input === "object", "RUNNER_RESPONSE_INVALID");
       const raw = input, job = parseAutomationJob(raw.job), lease = parseAutomationLease(raw.lease);
       invariant(job.state === "leased" && job.lease && JSON.stringify(job.lease) === JSON.stringify(lease) && job.appId === lease.appId && job.id === lease.jobId && lease.expiresAt > Date.now() && lease.runnerId === options.token.split(".")[0], "RUNNER_RESPONSE_INVALID");
+      invariant(!options.claimPlatform || job.platform === options.claimPlatform, "RUNNER_RESPONSE_INVALID");
       invariant(await automationDigest(job.config) === job.configDigest && await automationDigest(job.config.toolchain) === job.toolchainDigest, "RUNNER_RESPONSE_INVALID");
       return { job, lease };
     },
@@ -1047,7 +1049,8 @@ async function readRunnerConfig(path2) {
     }
     invariant(raw && typeof raw === "object" && !Array.isArray(raw));
     const value = raw;
-    invariant(Object.keys(value).every((key) => ["origin", "token", "dockerImage", "dockerNetwork", "resourceProfile", "dependencyPreparation", "publicationRecovery", "workDirectory", "recoveryDirectory"].includes(key)) && typeof value.origin === "string" && typeof value.token === "string" && typeof value.dockerImage === "string");
+    invariant(Object.keys(value).every((key) => ["origin", "token", "claimPlatform", "dockerImage", "dockerNetwork", "resourceProfile", "dependencyPreparation", "publicationRecovery", "workDirectory", "recoveryDirectory"].includes(key)) && typeof value.origin === "string" && typeof value.token === "string" && typeof value.dockerImage === "string");
+    invariant(value.claimPlatform === void 0 || value.claimPlatform === "ios" || value.claimPlatform === "android");
     invariant(value.resourceProfile === void 0 || value.resourceProfile === "default" || value.resourceProfile === "github-hosted");
     invariant(value.dependencyPreparation === void 0 || value.dependencyPreparation === "npm-registry" && value.resourceProfile === "github-hosted" && (value.dockerNetwork === void 0 || value.dockerNetwork === "none"));
     invariant(value.publicationRecovery === void 0 || value.publicationRecovery === "remote-checkpoint" && value.resourceProfile === "github-hosted");
@@ -1322,7 +1325,7 @@ async function runOne(options) {
           if (options.remoteCheckpoint) await clearRemoteCheckpoint(options.client, record);
         }
         done = true;
-        return { state: "succeeded", jobId: job.id };
+        return { state: "succeeded", jobId: job.id, platform: job.platform, deploymentId: result.deployment.id };
       } catch (error) {
         if (!transient(error) || attempt === 2 || lease.expiresAt - Date.now() < 11e3) throw error;
         await pause(250 * (attempt + 1));
@@ -1331,13 +1334,13 @@ async function runOne(options) {
     throw new Error("PUBLICATION_RESULT_UNCONFIRMED");
   } catch (error) {
     if (error instanceof Error && ["ISOLATION_CLEANUP_UNCONFIRMED", "RECOVERY_JOURNAL_UNAVAILABLE", "RECOVERY_CLEANUP_UNCONFIRMED", "RECOVERY_CHECKPOINT_UNAVAILABLE", "INVALID_RUNNER_CONFIG"].includes(error.message)) throw error;
-    if (finalizing && (journalPath || !(error instanceof RunnerHttpFailure) || transient(error))) return { state: "publication_unknown", jobId: job.id, code: "PUBLICATION_REJECTED", ...journalPath ? { recoveryJournal: journalPath } : {} };
+    if (finalizing && (journalPath || !(error instanceof RunnerHttpFailure) || transient(error))) return { state: "publication_unknown", jobId: job.id, platform: job.platform, code: "PUBLICATION_REJECTED", ...journalPath ? { recoveryJournal: journalPath } : {} };
     if (error instanceof RunnerHttpFailure && [401, 403, 409].includes(error.status)) throw error;
     const message = error instanceof Error ? error.message : "EXPORT_FAILED", allowed = ["EXPORT_FAILED", "SOURCE_UNAVAILABLE", "CONFIG_CHANGED", "ARTIFACT_INVALID", "CANCELLED", "LEASE_EXPIRED", "RUNNER_REVOKED"];
     const code = controller.signal.aborted ? "CANCELLED" : allowed.includes(message) ? message : finalizing ? "PUBLICATION_REJECTED" : "EXPORT_FAILED";
     await options.client.fail(lease, code).catch(() => {
     });
-    return { state: controller.signal.aborted ? "interrupted" : "failed", jobId: job.id, code };
+    return { state: controller.signal.aborted ? "interrupted" : "failed", jobId: job.id, platform: job.platform, code };
   } finally {
     done = true;
     clearTimeout(timeout);
@@ -1396,7 +1399,7 @@ async function main() {
     const client = createRunnerClient(config);
     if (reconcile >= 0) {
       const result = await reconcilePublication(client, resolve4(args[reconcile + 1]), config.publicationRecovery === "remote-checkpoint");
-      process.stdout.write(JSON.stringify({ state: "succeeded", jobId: result.job.id, deploymentId: result.deployment.id }) + "\n");
+      process.stdout.write(JSON.stringify({ state: "succeeded", jobId: result.job.id, platform: result.job.platform, deploymentId: result.deployment.id }) + "\n");
       return;
     }
     const recoveryDirectory = config.recoveryDirectory ?? join8(dirname3(resolve4(args[index + 1])), "recovery"), pending = await pendingRecoveryJournals(recoveryDirectory);

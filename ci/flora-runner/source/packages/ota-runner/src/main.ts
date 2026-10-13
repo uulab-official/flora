@@ -12,7 +12,7 @@ async function main(){
  const config=await readRunnerConfig(args[index+1]!);const controller=new AbortController(),stop=()=>controller.abort();process.once("SIGINT",stop);process.once("SIGTERM",stop);
  try{
   const client=createRunnerClient(config);
-  if(reconcile>=0){const result=await reconcilePublication(client,resolve(args[reconcile+1]!),config.publicationRecovery==="remote-checkpoint");process.stdout.write(JSON.stringify({state:"succeeded",jobId:result.job.id,deploymentId:result.deployment.id})+"\n");return;}
+  if(reconcile>=0){const result=await reconcilePublication(client,resolve(args[reconcile+1]!),config.publicationRecovery==="remote-checkpoint");process.stdout.write(JSON.stringify({state:"succeeded",jobId:result.job.id,platform:result.job.platform,deploymentId:result.deployment.id})+"\n");return;}
   const recoveryDirectory=config.recoveryDirectory??join(dirname(resolve(args[index+1]!)),"recovery"),pending=await pendingRecoveryJournals(recoveryDirectory);
   if(config.publicationRecovery==="remote-checkpoint")await reconcileRemotePublications(client,recoveryDirectory);
   else if(pending.length){process.stdout.write(JSON.stringify({state:"publication_unknown",recoveryJournal:pending[0]})+"\n");throw new Error("PUBLICATION_RECONCILIATION_REQUIRED");}

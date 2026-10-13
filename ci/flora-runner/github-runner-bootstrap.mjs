@@ -11,8 +11,40 @@ export function oidcRequestAddress(input, audience) {
     || !/^(?:[a-z0-9-]+\.)*actions\.githubusercontent\.com$/i.test(address.hostname)) throw new Error('GITHUB_RUNNER_CONFIGURATION_INVALID');
   address.searchParams.set('audience',audience); return address;
 }
+function validPlatforms(platforms) {
+  return Array.isArray(platforms) && platforms.length>0 && platforms.length<=2
+    && platforms.every(platform=>platform==='ios'||platform==='android') && new Set(platforms).size===platforms.length;
+}
+/** Only admitted targets may run. Ordinary export failures retain successful siblings. */
+export async function runAdmittedPlatforms(platforms,{runOnce,wait=ms=>new Promise(resolveWait=>setTimeout(resolveWait,ms)),onOutcome=()=>{},maxAttempts=20}) {
+  if(!validPlatforms(platforms)||!Number.isInteger(maxAttempts)||maxAttempts<1||maxAttempts>20)throw new Error('GITHUB_RUNNER_CONFIGURATION_INVALID');
+  const outcomes=[];
+  for(const platform of platforms) {
+    let outcome;
+    for(let attempt=0;attempt<maxAttempts;attempt++) {
+      const result=await runOnce(platform);
+      if(result?.state==='empty') {
+        if(Object.keys(result).some(key=>key!=='state'))throw new Error('RUNNER_RESULT_INVALID');
+        if(attempt===maxAttempts-1){outcome={state:'failed',platform,code:'WEBHOOK_JOB_NOT_READY'};break;}
+        onOutcome({state:'waiting-for-webhook',platform,attempt:attempt+1});await wait(3000);continue;
+      }
+      if(!result||result.platform!==platform||!['succeeded','failed','interrupted','publication_unknown'].includes(result.state)
+        ||typeof result.jobId!=='string'||!/^[a-z][a-z0-9_-]{2,95}$/.test(result.jobId)
+        ||result.state==='succeeded'&&(typeof result.deploymentId!=='string'||!/^[a-zA-Z0-9_-]{3,96}$/.test(result.deploymentId))
+        ||result.code!==undefined&&(typeof result.code!=='string'||! /^[A-Z][A-Z0-9_]{1,95}$/.test(result.code)))throw new Error('RUNNER_RESULT_INVALID');
+      outcome={state:result.state,platform,jobId:result.jobId,...(result.deploymentId?{deploymentId:result.deploymentId}:{}),...(result.code?{code:result.code}:{})};
+      if(result.state==='publication_unknown'||result.state==='interrupted') {onOutcome(outcome);throw new Error('PUBLICATION_RECONCILIATION_REQUIRED');}
+      break;
+    }
+    outcomes.push(outcome);onOutcome(outcome);
+  }
+  if(outcomes.length!==platforms.length||outcomes.some(outcome=>outcome.state!=='succeeded')) {
+    const error=new Error('PLATFORM_DEPLOYMENTS_INCOMPLETE');error.outcomes=outcomes;throw error;
+  }
+  return outcomes;
+}
 export function validAdmission(value, appId, sha, now=Date.now()) {
-  return value?.appId===appId && value.commitSha===sha && Number.isSafeInteger(value.expiresAt) && value.expiresAt>now+60000
+  return validPlatforms(value?.platforms) && value?.appId===appId && value.commitSha===sha && Number.isSafeInteger(value.expiresAt) && value.expiresAt>now+60000
     && typeof value.token==='string' && /^[a-z][a-z0-9_-]{2,95}\.[A-Za-z0-9_-]{43}$/.test(value.token)
     && value.runner?.id===value.token.split('.')[0] && value.runner.appIds?.length===1 && value.runner.appIds[0]===appId;
 }
@@ -51,7 +83,7 @@ for (const key of Object.keys(process.env)) if (/^(?:ACTIONS_|GITHUB_TOKEN$|GH_T
 oidc.value = '';
 const privateRoot = await mkdtemp(join(tmpdir(), 'flora-github-runner-'));
 await chmod(privateRoot, 0o700);
-const config = join(privateRoot, 'runner.json');
+const token=admitted.token;admitted.token='';
 try {
 async function dockerCommand(args) {
   const child = spawn('docker', args, {stdio:['ignore','pipe','pipe']}); let size=0;
@@ -66,11 +98,11 @@ const imageFile=join(privateRoot,'image.id');
 await dockerCommand(['build','--network=default','--pull=false','--iidfile',imageFile,'--file','ci/flora-runner/Dockerfile','ci/flora-runner']);
 const dockerImage=(await readFile(imageFile,'utf8')).trim(); ensure(/^sha256:[a-f0-9]{64}$/.test(dockerImage));
 process.stdout.write(JSON.stringify({state:'toolchain-ready',dockerImage})+'\n');
-await writeFile(config, JSON.stringify({ origin, token: admitted.token, dockerImage,
-  resourceProfile: 'github-hosted', dependencyPreparation: 'npm-registry', publicationRecovery: 'remote-checkpoint',
-  workDirectory: join(privateRoot, 'work'), recoveryDirectory: join(privateRoot, 'recovery') }), { mode: 0o600 });
-admitted.token = '';
-async function runOnce() {
+async function runOnce(platform) {
+  const config=join(privateRoot, 'runner-'+platform+'.json');
+  await writeFile(config,JSON.stringify({origin,token,dockerImage,claimPlatform:platform,
+    resourceProfile:'github-hosted',dependencyPreparation:'npm-registry',publicationRecovery:'remote-checkpoint',
+    workDirectory:join(privateRoot,'work',platform),recoveryDirectory:join(privateRoot,'recovery',platform)}),{mode:0o600});
   const child = spawn(process.execPath, [resolve('ci/flora-runner/dist/main.js'), '--config', config, '--once'], { stdio: ['ignore', 'pipe', 'pipe'] });
   let stdout = '', stderr = '', bytes = 0;
   for (const [stream, append] of [[child.stdout, value => { stdout += value; }], [child.stderr, value => { stderr += value; }]])
@@ -78,23 +110,14 @@ async function runOnce() {
   const exit = await new Promise((resolveExit, reject) => { child.on('error', reject); child.on('close', resolveExit); });
   const lines = stdout.trim().split('\n'); let result;
   for (const line of lines) { try { const item = JSON.parse(line), diagnostic=safeDiagnostic(item); if(diagnostic)process.stdout.write(JSON.stringify(diagnostic)+'\n'); if (typeof item.state === 'string') result = item; } catch {} }
-  if (exit !== 0 || !result) {
-    const safeCode = stderr.trim().split('\n').find(line => /^[A-Z][A-Z0-9_]{1,95}$/.test(line)) ?? result?.code ?? 'RUNNER_EXECUTION_FAILED';
-    process.stdout.write(JSON.stringify({ state: result?.state ?? 'failed', code: safeCode, jobId: result?.jobId }) + '\n');
+  if (bytes>1048576 || !result || exit!==0 && result.state!=='failed' && result.state!=='interrupted' && result.state!=='publication_unknown') {
     throw new Error('RUNNER_EXECUTION_FAILED');
   }
+  if(exit!==0 && result.state==='succeeded')throw new Error('RUNNER_EXECUTION_FAILED');
   return result;
 }
-  // Push workflow and signed webhook may arrive in either order. Wait only for
-  // this admitted commit, never turn an empty queue into a successful deploy.
-  for (let attempt = 0; attempt < 20; attempt++) {
-    const result = await runOnce();
-    if (result.state === 'succeeded') { process.stdout.write(JSON.stringify({ ...result, appId, commitSha: expectedSha }) + '\n'); break; }
-    ensure(result.state === 'empty');
-    if (attempt === 19) throw new Error('WEBHOOK_JOB_NOT_READY');
-    process.stdout.write(JSON.stringify({ state: 'waiting-for-webhook', appId, attempt: attempt + 1 }) + '\n');
-    await new Promise(resolveWait => setTimeout(resolveWait, 3000));
-  }
+  const outcomes=await runAdmittedPlatforms(admitted.platforms,{runOnce,onOutcome:result=>process.stdout.write(JSON.stringify({...result,appId,commitSha:expectedSha})+'\n')});
+  process.stdout.write(JSON.stringify({state:'all-platforms-succeeded',appId,commitSha:expectedSha,platforms:outcomes.map(result=>result.platform)})+'\n');
 } finally {
   // A server checkpoint, not this disposable VM directory, retains any exact
   // uncertain receipt. Never upload app source or raw bearer credentials.

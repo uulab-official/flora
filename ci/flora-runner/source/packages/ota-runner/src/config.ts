@@ -4,7 +4,7 @@ import {isAbsolute} from "node:path";
 import {invariant} from "./artifacts.js";
 import {createRunnerClient} from "./client.js";
 import {dockerArguments} from "./docker.js";
-export interface RunnerConfig {origin:string;token:string;dockerImage:string;dockerNetwork?:string;resourceProfile?:"default"|"github-hosted";dependencyPreparation?:"npm-registry";publicationRecovery?:"remote-checkpoint";workDirectory?:string;recoveryDirectory?:string}
+export interface RunnerConfig {origin:string;token:string;claimPlatform?:"ios"|"android";dockerImage:string;dockerNetwork?:string;resourceProfile?:"default"|"github-hosted";dependencyPreparation?:"npm-registry";publicationRecovery?:"remote-checkpoint";workDirectory?:string;recoveryDirectory?:string}
 /** A credential is loaded by the controller only. No environment or command overrides. */
 export async function readRunnerConfig(path:string):Promise<RunnerConfig>{
  try{
@@ -12,7 +12,8 @@ export async function readRunnerConfig(path:string):Promise<RunnerConfig>{
   const file=await open(path,constants.O_RDONLY|constants.O_NOFOLLOW);let raw:unknown;
   try{const current=await file.stat();invariant(current.ino===stat.ino&&current.dev===stat.dev&&current.size<=16384&&current.nlink===1&&(current.mode&0o077)===0&&(!process.getuid||current.uid===process.getuid()));raw=JSON.parse(await file.readFile("utf8"));}finally{await file.close();}
   invariant(raw&&typeof raw==="object"&&!Array.isArray(raw));const value=raw as Record<string,unknown>;
-  invariant(Object.keys(value).every(key=>["origin","token","dockerImage","dockerNetwork","resourceProfile","dependencyPreparation","publicationRecovery","workDirectory","recoveryDirectory"].includes(key))&&typeof value.origin==="string"&&typeof value.token==="string"&&typeof value.dockerImage==="string");
+  invariant(Object.keys(value).every(key=>["origin","token","claimPlatform","dockerImage","dockerNetwork","resourceProfile","dependencyPreparation","publicationRecovery","workDirectory","recoveryDirectory"].includes(key))&&typeof value.origin==="string"&&typeof value.token==="string"&&typeof value.dockerImage==="string");
+  invariant(value.claimPlatform===undefined||value.claimPlatform==="ios"||value.claimPlatform==="android");
   invariant(value.resourceProfile===undefined||value.resourceProfile==="default"||value.resourceProfile==="github-hosted");
   invariant(value.dependencyPreparation===undefined||value.dependencyPreparation==="npm-registry"&&value.resourceProfile==="github-hosted"&&(value.dockerNetwork===undefined||value.dockerNetwork==="none"));
   invariant(value.publicationRecovery===undefined||value.publicationRecovery==="remote-checkpoint"&&value.resourceProfile==="github-hosted");

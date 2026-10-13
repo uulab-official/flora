@@ -1,4 +1,4 @@
-import type { ApplicationStore } from "./applications.js";
+import type { ApplicationStore, ManagedApplication } from "./applications.js";
 import type { GitHubConnection, GitHubDetection, OTAAsset, OTAAssetUpload, OTADeployment, OTAPlatform, OperationsStore } from "./operations.js";
 import { DomainError, digest, ensure, id, integer, object, text, safeJson } from "@app-ops/core";
 import { canonicalJson, freeze } from "@app-ops/config";
@@ -73,10 +73,11 @@ export interface RunnerEnrollmentInput { name: string; appIds: string[] }
 export interface RunnerEnrollment { runner: RunnerSummary; token: string }
 export interface AutomationClaim { job: AutomationJob; lease: AutomationLease }
 /** Server-admitted CI identity narrows selection before any claim mutation. */
-export interface AutomationClaimScope { appId: string; commitSha: string }
+export interface AutomationClaimScope { appId: string; commitSha: string; platform?: OTAPlatform }
 export function parseAutomationClaimScope(input: unknown): AutomationClaimScope {
-  const raw = object(input, ["appId", "commitSha"]), commitSha = text(raw.commitSha, 40); ensure(/^[a-f0-9]{40}$/.test(commitSha));
-  return { appId: id(raw.appId), commitSha };
+  ensure(input !== null && typeof input === "object" && !Array.isArray(input));
+  const raw = object(input, ["appId", "commitSha", ...(Object.hasOwn(input, "platform") ? ["platform"] : [])]), commitSha = text(raw.commitSha, 40); ensure(/^[a-f0-9]{40}$/.test(commitSha));
+  return { appId: id(raw.appId), commitSha, ...(Object.hasOwn(raw, "platform") ? { platform: otaPlatform(raw.platform) } : {}) };
 }
 export interface AutomationExportReceipt {
   jobId: string;
@@ -92,8 +93,11 @@ export interface AutomationExportReceipt {
 export interface AutomationPublication { deployment: OTADeployment; receipt: AutomationExportReceipt }
 export interface AutomationFinalization { job: AutomationJob; deployment: OTADeployment }
 export interface AutomationState { jobs: AutomationJob[]; runners: RunnerSummary[]; policy: AutoPolicy }
-export interface AutoPolicy { appId: string; version: number; enabled: boolean; channel: string; platform: OTAPlatform; updatedAt: number }
-export interface AutoPolicyUpdate { expectedVersion: number; enabled: boolean; channel: string; platform: OTAPlatform }
+/** Legacy singleton rows keep their exact shape. New selections use platforms;
+ * the two representations are exclusive and never require rewriting history. */
+export type AutomationPolicySelection = { platform: OTAPlatform; platforms?: never } | { platforms: OTAPlatform[]; platform?: never };
+export type AutoPolicy = { appId: string; version: number; enabled: boolean; channel: string; updatedAt: number } & AutomationPolicySelection;
+export type AutoPolicyUpdate = { expectedVersion: number; enabled: boolean; channel: string } & AutomationPolicySelection;
 export interface AutomationTarget { appId: string; policy: AutoPolicy }
 export interface GitHubPushEvent { deliveryId: string; installationId: number; owner: string; repository: string; ref: string; commitSha: string }
 export interface GitHubPushResult { jobs: AutomationJob[]; ignored: number }
@@ -202,10 +206,19 @@ export function parseAutomationLease(input: unknown): AutomationLease {
 export function parseAutomationFailureCode(value: unknown): AutomationFailureCode {
   ensure(["EXPORT_FAILED", "SOURCE_UNAVAILABLE", "CONFIG_CHANGED", "ARTIFACT_INVALID", "LEASE_EXPIRED", "RUNNER_REVOKED", "CANCELLED", "PUBLICATION_REJECTED"].includes(String(value))); return value as AutomationFailureCode;
 }
+export function automationPolicyPlatforms(policy: { platform?: OTAPlatform; platforms?: OTAPlatform[] }): OTAPlatform[] {
+  const hasPlatforms = Object.hasOwn(policy, "platforms"), hasPlatform = Object.hasOwn(policy, "platform"); ensure(hasPlatforms !== hasPlatform);
+  if (!hasPlatforms) return freeze([otaPlatform(policy.platform)]);
+  ensure(Array.isArray(policy.platforms) && policy.platforms.length > 0 && policy.platforms.length <= 2 && new Set(policy.platforms).size === policy.platforms.length);
+  return freeze(policy.platforms.map(otaPlatform));
+}
 export function parseAutoPolicyUpdate(input: unknown): AutoPolicyUpdate {
-  const value = object(input, ["expectedVersion", "enabled", "channel", "platform"]); ensure(typeof value.enabled === "boolean");
-  const target = parseOTASelection({ channel: value.channel, runtimeVersion: "policy", platform: value.platform });
-  return freeze({ expectedVersion: integer(value.expectedVersion, 0, Number.MAX_SAFE_INTEGER - 1), enabled: value.enabled, channel: target.channel, platform: target.platform });
+  ensure(input !== null && typeof input === "object" && !Array.isArray(input));
+  const value = object(input, ["expectedVersion", "enabled", "channel", Object.hasOwn(input, "platforms") ? "platforms" : "platform"]); ensure(typeof value.enabled === "boolean");
+  const platforms = automationPolicyPlatforms(value as { platform?: OTAPlatform; platforms?: OTAPlatform[] });
+  const target = parseOTASelection({ channel: value.channel, runtimeVersion: "policy", platform: platforms[0] });
+  return freeze({ expectedVersion: integer(value.expectedVersion, 0, Number.MAX_SAFE_INTEGER - 1), enabled: value.enabled, channel: target.channel,
+    ...(Object.hasOwn(value, "platforms") ? { platforms } : { platform: target.platform }) });
 }
 export function parseAutomationExportReceipt(input: unknown): AutomationExportReceipt {
   const value = object(input, ["jobId", "attemptId", "commitSha", "configDigest", "toolchainDigest", "sourceArchiveDigest", "launchAssetId", "assetIds", "artifactDigest"]);
@@ -266,18 +279,24 @@ export function createAutomationService(ctx: AutomationContext, options: Automat
     ensure(current.revokedAt === null && equalDigest(current.tokenHash, tokenHash), "PERMISSION_DENIED");
     return freeze({ runnerId: current.id, credentialEpoch: current.credentialEpoch, tokenHash });
   }
-  async function queue(appId: string, input: AutomationQueueInput, expectedPolicyVersion?: number): Promise<AutomationJob> {
-    const app = await application(appId), parsed = parseAutomationQueueInput(input), existing = await ctx.automation.getAutomationJobForRequest(appId, parsed.requestKey);
+  async function queue(appId: string, input: AutomationQueueInput, expectedPolicyVersion?: number,
+    admitted?: { app: ManagedApplication; detection: GitHubDetection }): Promise<AutomationJob> {
+    const app = admitted?.app ?? await application(appId), parsed = parseAutomationQueueInput(input);
+    // The webhook already looked up this platform key and persisted this exact
+    // detection. Storage still atomically checks duplicates, detection,
+    // current connection and policy membership when it admits the job.
+    const existing = admitted ? null : await ctx.automation.getAutomationJobForRequest(appId, parsed.requestKey);
     if (existing) { ensure(canonicalJson(queueIdentity(existing)) === canonicalJson(parsed), "IDEMPOTENCY_CONFLICT"); return existing; }
-    const [detection, connection] = await Promise.all([ctx.operations.getGitHubDetection(appId, parsed.detectionId), ctx.operations.getGitHubConnection(appId)]);
-    ensure(detection && detection.appId === appId && detection.rootDirectory === app.rootDirectory, "NOT_FOUND");
+    const [detection, connection] = admitted ? [admitted.detection, admitted.detection.connection]
+      : await Promise.all([ctx.operations.getGitHubDetection(appId, parsed.detectionId), ctx.operations.getGitHubConnection(appId)]);
+    ensure(app.id === appId && detection && detection.appId === appId && detection.rootDirectory === app.rootDirectory, "NOT_FOUND");
     ensure(detection.automationConfig && canonicalJson(detection.automationConfig) === canonicalJson(parsed.config), "CONFIG_CONFLICT");
     assertDetectionCanPublish(detection, { requestKey: parsed.requestKey, detectionId: parsed.detectionId, commitSha: detection.commitSha, channel: parsed.channel, runtimeVersion: parsed.runtimeVersion, platform: parsed.platform, launchAssetId: "asset_" + "0".repeat(64), assetIds: [] }, connection);
     assertUpdateDestination(detection, appId, origin(), parsed.channel);
     const time = integer(now()), configDigest = await automationDigest(parsed.config), toolchainDigest = await automationDigest(parsed.config.toolchain);
     if (expectedPolicyVersion !== undefined) {
       const policy = await ctx.automation.getAutomationPolicy(appId);
-      ensure(policy?.enabled && policy.version === expectedPolicyVersion && policy.channel === parsed.channel && policy.platform === parsed.platform, "CONFIG_CONFLICT");
+      ensure(policy?.enabled && policy.version === expectedPolicyVersion && policy.channel === parsed.channel && automationPolicyPlatforms(policy).includes(parsed.platform), "CONFIG_CONFLICT");
     }
     return ctx.automation.enqueueAutomationJob(parseAutomationJob({ ...parsed, id: "automation_" + crypto.randomUUID(), appId, detection, connection: detection.connection, commitSha: detection.commitSha, rootDirectory: detection.rootDirectory, configDigest, toolchainDigest, createdAt: time, updatedAt: time, state: "queued", attemptCount: 0, lease: null, code: null, deploymentId: null, receipt: null }), expectedPolicyVersion);
   }
@@ -299,18 +318,31 @@ export function createAutomationService(ctx: AutomationContext, options: Automat
       const value = parseGitHubPushEvent(event); ensure(options.detectPushCommit, "PROVIDER_UNCONFIGURED");
       const targets = await ctx.automation.findAutomationTargets({ installationId: value.installationId, owner: value.owner, repository: value.repository, ref: value.ref });
       ensure(targets.length <= maxWebhookTargets, "INPUT_TOO_LARGE"); const jobs: AutomationJob[] = []; let ignored = 0;
-      const requestKey = "hook_" + (await runnerTokenHash(value.deliveryId));
+      const legacyRequestKey = "hook_" + (await runnerTokenHash(value.deliveryId));
+      const matchesEvent = (job: AutomationJob) => job.commitSha === value.commitSha && job.connection.installationId === value.installationId
+        && job.connection.owner.toLowerCase() === value.owner.toLowerCase() && job.connection.repository.toLowerCase() === value.repository.toLowerCase() && job.connection.ref === value.ref;
       for (const target of targets) {
-        const existing = await ctx.automation.getAutomationJobForRequest(target.appId, requestKey);
-        if (existing) { ensure(existing.commitSha === value.commitSha && existing.connection.installationId === value.installationId && existing.connection.owner.toLowerCase() === value.owner.toLowerCase() && existing.connection.repository.toLowerCase() === value.repository.toLowerCase() && existing.connection.ref === value.ref, "IDEMPOTENCY_CONFLICT"); jobs.push(existing); continue; }
-        if (!target.policy.enabled) { ignored++; continue; }
+        const platforms = automationPolicyPlatforms(target.policy), legacy = await ctx.automation.getAutomationJobForRequest(target.appId, legacyRequestKey);
+        if (legacy) ensure(matchesEvent(legacy), "IDEMPOTENCY_CONFLICT");
+        const missing: { platform: OTAPlatform; requestKey: string }[] = [];
+        for (const platform of platforms) {
+          const requestKey = legacyRequestKey + "_" + platform;
+          const existing = await ctx.automation.getAutomationJobForRequest(target.appId, requestKey) ?? (legacy?.platform === platform ? legacy : null);
+          if (existing) { ensure(matchesEvent(existing) && existing.platform === platform, "IDEMPOTENCY_CONFLICT"); jobs.push(existing); }
+          else missing.push({ platform, requestKey });
+        }
+        if (missing.length === 0) continue;
+        if (!target.policy.enabled) { ignored += missing.length; continue; }
         let detection: GitHubDetection;
         try { detection = await options.detectPushCommit(target.appId, value.commitSha); }
-        catch (error) { if (error instanceof DomainError && error.code === "CONFIG_CONFLICT") { ignored++; continue; } throw error; }
-        if (detection.commitSha !== value.commitSha || detection.connection.installationId !== value.installationId || detection.connection.owner.toLowerCase() !== value.owner.toLowerCase() || detection.connection.repository.toLowerCase() !== value.repository.toLowerCase() || detection.connection.ref !== value.ref) { ignored++; continue; }
-        if (!detection.automationConfig || !detection.updatesEnabled) { ignored++; continue; }
-        try { jobs.push(await queue(target.appId, { requestKey, detectionId: detection.id, channel: target.policy.channel, runtimeVersion: detection.automationConfig.runtimeVersion, platform: target.policy.platform, config: detection.automationConfig }, target.policy.version)); }
-        catch (error) { if (error instanceof DomainError && error.code === "CONFIG_CONFLICT") { ignored++; continue; } throw error; }
+        catch (error) { if (error instanceof DomainError && error.code === "CONFIG_CONFLICT") { ignored += missing.length; continue; } throw error; }
+        if (detection.commitSha !== value.commitSha || detection.connection.installationId !== value.installationId || detection.connection.owner.toLowerCase() !== value.owner.toLowerCase() || detection.connection.repository.toLowerCase() !== value.repository.toLowerCase() || detection.connection.ref !== value.ref) { ignored += missing.length; continue; }
+        if (!detection.automationConfig || !detection.updatesEnabled) { ignored += missing.length; continue; }
+        const admitted = { app: await application(target.appId), detection };
+        for (const { platform, requestKey } of missing) {
+          try { jobs.push(await queue(target.appId, { requestKey, detectionId: detection.id, channel: target.policy.channel, runtimeVersion: detection.automationConfig.runtimeVersion, platform, config: detection.automationConfig }, target.policy.version, admitted)); }
+          catch (error) { if (error instanceof DomainError && ["CONFIG_CONFLICT", "PROVIDER_UNSUPPORTED"].includes(error.code)) { ignored++; continue; } throw error; }
+        }
       }
       return freeze({ jobs, ignored });
     },

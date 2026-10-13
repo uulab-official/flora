@@ -12,7 +12,7 @@ import type {RecoveryJournal} from "./recovery.js";
 import type {ExportExecutor} from "./docker.js";
 import {diagnosticLine} from "./process.js";
 export interface RunnerOptions {client:RunnerClient;source:SourceProvider;executor:ExportExecutor;workDirectory?:string;signal?:AbortSignal;heartbeatMs?:number;recoveryDirectory?:string;remoteCheckpoint?:boolean;diagnostics?:boolean}
-export interface RunnerOutcome {state:"empty"|"succeeded"|"failed"|"interrupted"|"publication_unknown";jobId?:string;code?:AutomationFailureCode;recoveryJournal?:string}
+export interface RunnerOutcome {state:"empty"|"succeeded"|"failed"|"interrupted"|"publication_unknown";jobId?:string;platform?:"ios"|"android";deploymentId?:string;code?:AutomationFailureCode;recoveryJournal?:string}
 export async function runOne(options:RunnerOptions):Promise<RunnerOutcome>{
  if(options.remoteCheckpoint)invariant(options.recoveryDirectory&&options.client.identity&&options.client.saveCheckpoint&&options.client.listCheckpoints&&options.client.clearCheckpoint,"INVALID_RUNNER_CONFIG");
  const claim=await options.client.claim();if(!claim)return {state:"empty"};const {job}=claim;let lease=claim.lease,done=false,heartbeat:Promise<void>|null=null,finalizing=false,heartbeatStopped=false;
@@ -51,17 +51,17 @@ export async function runOne(options:RunnerOptions):Promise<RunnerOutcome>{
   finalizing=true;
   for(let attempt=0;attempt<3;attempt++){
    invariant(!controller.signal.aborted,"CANCELLED");
-   try{const result=await options.client.finalize(lease,receipt);if(record){assertPublicationResult(result,record);await clearRecoveryJournal(journalPath!,record);if(options.remoteCheckpoint)await clearRemoteCheckpoint(options.client,record);}done=true;return {state:"succeeded",jobId:job.id};}
+   try{const result=await options.client.finalize(lease,receipt);if(record){assertPublicationResult(result,record);await clearRecoveryJournal(journalPath!,record);if(options.remoteCheckpoint)await clearRemoteCheckpoint(options.client,record);}done=true;return {state:"succeeded",jobId:job.id,platform:job.platform,deploymentId:result.deployment.id};}
    catch(error){if(!transient(error)||attempt===2||lease.expiresAt-Date.now()<11000)throw error;await pause(250*(attempt+1));}
   }
   throw new Error("PUBLICATION_RESULT_UNCONFIRMED");
  }catch(error){
   if(error instanceof Error&&["ISOLATION_CLEANUP_UNCONFIRMED","RECOVERY_JOURNAL_UNAVAILABLE","RECOVERY_CLEANUP_UNCONFIRMED","RECOVERY_CHECKPOINT_UNAVAILABLE","INVALID_RUNNER_CONFIG"].includes(error.message))throw error;
-  if(finalizing&&(journalPath||!(error instanceof RunnerHttpFailure)||transient(error)))return {state:"publication_unknown",jobId:job.id,code:"PUBLICATION_REJECTED",...(journalPath?{recoveryJournal:journalPath}:{})};
+  if(finalizing&&(journalPath||!(error instanceof RunnerHttpFailure)||transient(error)))return {state:"publication_unknown",jobId:job.id,platform:job.platform,code:"PUBLICATION_REJECTED",...(journalPath?{recoveryJournal:journalPath}:{})};
   if(error instanceof RunnerHttpFailure&&[401,403,409].includes(error.status))throw error;
   const message=error instanceof Error?error.message:"EXPORT_FAILED",allowed:AutomationFailureCode[]=["EXPORT_FAILED","SOURCE_UNAVAILABLE","CONFIG_CHANGED","ARTIFACT_INVALID","CANCELLED","LEASE_EXPIRED","RUNNER_REVOKED"];
   const code=controller.signal.aborted?"CANCELLED":allowed.includes(message as AutomationFailureCode)?message as AutomationFailureCode:finalizing?"PUBLICATION_REJECTED":"EXPORT_FAILED";
-  await options.client.fail(lease,code).catch(()=>{});return {state:controller.signal.aborted?"interrupted":"failed",jobId:job.id,code};
+  await options.client.fail(lease,code).catch(()=>{});return {state:controller.signal.aborted?"interrupted":"failed",jobId:job.id,platform:job.platform,code};
  }finally{done=true;clearTimeout(timeout);clearInterval(timer);options.signal?.removeEventListener("abort",abort);await heartbeat;if(directory)await rm(directory,{recursive:true,force:true});}
 }
 function transient(error:unknown):boolean{return error instanceof RunnerHttpFailure&&(error.status===0||error.status>=500);}
