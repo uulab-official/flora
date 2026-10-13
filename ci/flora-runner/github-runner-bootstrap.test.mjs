@@ -63,6 +63,15 @@ test('initialization failure forwards only an exact allowlisted CLI code without
  const {initializationDiagnostic}=await import('./github-runner-bootstrap.mjs');assert.deepEqual(initializationDiagnostic('RECOVERY_JOURNAL_UNAVAILABLE\n'),{diagnostic:true,stage:'runner-initialization',code:'RECOVERY_JOURNAL_UNAVAILABLE'});
  for(const stderr of ['Bearer credential','MY_SECRET_TOKEN','RECOVERY_JOURNAL_UNAVAILABLE\nBearer credential','SECRET\nRUNNER_STOPPED',null])assert.equal(initializationDiagnostic(stderr),null);
 });
+test('execution failures forward exact typed CLI codes while excluding arbitrary stderr',async()=>{
+ const {initializationDiagnostic}=await import('./github-runner-bootstrap.mjs');
+ for(const code of ['BUSY','LEASE_STALE','CONFIG_CONFLICT','CI_SESSION_REJECTED','INVALID_INPUT','PERMISSION_DENIED','RUNNER_TRANSPORT_UNAVAILABLE','IDEMPOTENCY_CONFLICT','INVALID_TRANSITION'])assert.deepEqual(initializationDiagnostic(code+'\n'),{diagnostic:true,stage:'runner-execution',code});
+ for(const stderr of ['PRIVATE_BEARER_CREDENTIAL','BUSY\nBearer private-token','token=secret\nLEASE_STALE'])assert.equal(initializationDiagnostic(stderr),null);
+});
+test('safe diagnostics retain only a bounded numeric HTTP status',()=>{
+ for(const httpStatus of [0,400,409,503])assert.deepEqual(safeDiagnostic({diagnostic:true,stage:'asset-upload',code:'BUSY',httpStatus,token:'private'}),{diagnostic:true,stage:'asset-upload',code:'BUSY',httpStatus});
+ for(const httpStatus of [-1,99,600,409.5,'409','Bearer credential'])assert.equal(safeDiagnostic({diagnostic:true,stage:'asset-upload',code:'BUSY',httpStatus}),null);
+});
 test('actual CLI initializes separate remote recovery directories before empty platform claims',async t=>{
  const {mkdtemp,writeFile,stat,rm,access}=await import('node:fs/promises'),{tmpdir}=await import('node:os'),{join}=await import('node:path'),{fileURLToPath}=await import('node:url'),{createServer}=await import('node:http'),{execFile}=await import('node:child_process'),{promisify}=await import('node:util'),{platformRunnerConfig}=await import('./github-runner-bootstrap.mjs');
  // Same test runs in source and the hash-verified packaged controller.
@@ -80,4 +89,16 @@ test('actual CLI initializes separate remote recovery directories before empty p
   const output=await promisify(execFile)(process.execPath,[main,'--config',path,'--once'],{env:{PATH:root},timeout:5000});assert.equal(output.stderr,'');assert.deepEqual(JSON.parse(output.stdout),{state:'empty'});assert.equal((await stat(config.recoveryDirectory)).mode&0o777,0o700);
  }
  assert.deepEqual(claims,[{platform:'ios'},{platform:'android'}]);
+});
+test('actual CLI never prints arbitrary HTTP error text while retaining its typed failure status',async t=>{
+ const {mkdtemp,writeFile,rm,access}=await import('node:fs/promises'),{tmpdir}=await import('node:os'),{join}=await import('node:path'),{fileURLToPath}=await import('node:url'),{createServer}=await import('node:http'),{execFile}=await import('node:child_process'),{promisify}=await import('node:util'),{platformRunnerConfig,initializationDiagnostic}=await import('./github-runner-bootstrap.mjs');
+ const candidates=[new URL('../packages/ota-runner/dist/main.js',import.meta.url),new URL('./dist/main.js',import.meta.url)];let main;for(const candidate of candidates){try{await access(candidate);main=fileURLToPath(candidate);break;}catch{}}assert.ok(main);
+ const root=await mkdtemp(join(tmpdir(),'flora-bootstrap-denied-'));t.after(()=>rm(root,{recursive:true,force:true}));await writeFile(join(root,'docker'),'#!/bin/sh\nexit 0\n',{mode:0o700});
+ const server=createServer(async(req,res)=>{for await(const _chunk of req){}res.writeHead(req.url==='/api/runner/checkpoint-list'?200:403,{'Content-Type':'application/json'});res.end(JSON.stringify(req.url==='/api/runner/checkpoint-list'?{checkpoints:[]}:{error:'PRIVATE_BEARER_CREDENTIAL'}));});await new Promise(done=>server.listen(0,'127.0.0.1',done));t.after(()=>new Promise(done=>{server.close(done);server.closeAllConnections();}));
+ const config=platformRunnerConfig(root,'ios',{origin:'http://127.0.0.1:'+server.address().port,token:'runner_fixture.'+'a'.repeat(43),dockerImage:'sha256:'+'b'.repeat(64)}),path=join(root,'runner-ios.json');await writeFile(path,JSON.stringify(config),{mode:0o600});
+ await assert.rejects(promisify(execFile)(process.execPath,[main,'--config',path,'--once'],{env:{PATH:root},timeout:5000}),error=>{
+  assert.equal(error.code,1);assert.equal(error.stderr,'RUNNER_REQUEST_REJECTED\n');assert.ok(!error.stdout.includes('PRIVATE_BEARER_CREDENTIAL'));
+  const diagnostics=error.stdout.trim().split('\n').map(line=>JSON.parse(line));assert.ok(diagnostics.some(value=>value.stage==='claim'&&value.httpStatus===403&&value.code==='RUNNER_REQUEST_REJECTED'));
+  assert.equal(initializationDiagnostic(error.stderr).code,'RUNNER_REQUEST_REJECTED');return true;
+ });
 });

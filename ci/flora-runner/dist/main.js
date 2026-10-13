@@ -1248,9 +1248,29 @@ import { dirname as dirname3, join as join8, resolve as resolve4 } from "node:pa
 import { mkdtemp as mkdtemp2, mkdir as mkdir4, rm as rm2, realpath as realpath5 } from "node:fs/promises";
 import { tmpdir as tmpdir2 } from "node:os";
 import { join as join7, sep as sep4 } from "node:path";
+var failureCodes = /* @__PURE__ */ new Set(["INVALID_RUNNER_CONFIG", "ISOLATION_UNAVAILABLE", "ISOLATION_CLEANUP_UNCONFIRMED", "PUBLICATION_RECONCILIATION_REQUIRED", "INVALID_RECOVERY_JOURNAL", "RECOVERY_JOURNAL_UNAVAILABLE", "RECOVERY_CLEANUP_UNCONFIRMED", "RECOVERY_CHECKPOINT_UNAVAILABLE", "PUBLICATION_RESULT_UNCONFIRMED", "RUNNER_STOPPED", "BUSY", "LEASE_STALE", "CONFIG_CONFLICT", "CONFIG_CHANGED", "PERMISSION_DENIED", "INVALID_INPUT", "INVALID_RELATION", "NOT_FOUND", "CONFLICT", "INPUT_TOO_LARGE", "PROVIDER_UNSUPPORTED", "PROVIDER_UNCONFIGURED", "UNAUTHENTICATED", "FORBIDDEN", "AUTH_UNAVAILABLE", "CI_SESSION_REJECTED", "CI_BINDING_REJECTED", "CI_COMMIT_SUPERSEDED", "CI_IDENTITY_REJECTED", "CI_IDENTITY_REPLAYED", "CHECKPOINT_CAPACITY", "RUNNER_REVOKED", "RUNNER_REQUEST_REJECTED", "RUNNER_TRANSPORT_UNAVAILABLE", "RUNNER_RESPONSE_INVALID", "EXPORT_FAILED", "SOURCE_UNAVAILABLE", "ARTIFACT_INVALID", "CANCELLED", "LEASE_EXPIRED", "PUBLICATION_REJECTED"]);
+var failureStages = /* @__PURE__ */ new Set(["runner-initialization", "runner-execution", "claim", "source", "compiler", "artifact-validation", "asset-upload", "receipt", "heartbeat", "publication-heartbeat", "recovery-journal", "checkpoint-save", "finalize", "publication-verification", "recovery-cleanup", "checkpoint-clear", "failure-report"]);
+for (const code of ["TENANT_MISMATCH", "IDEMPOTENCY_CONFLICT", "INVALID_TRANSITION", "PRIVATE_STORE_UNSAFE", "STORE_IN_USE", "MIGRATION_MISMATCH", "INVALID_REQUEST"]) failureCodes.add(code);
+function runnerFailureCode(error) {
+  const code = error instanceof Error ? error.message : "";
+  return failureCodes.has(code) ? code : error instanceof RunnerHttpFailure ? "RUNNER_REQUEST_REJECTED" : "RUNNER_STOPPED";
+}
+function runnerFailureDiagnostic(stage, error) {
+  const http = error instanceof RunnerHttpFailure ? error : error instanceof Error && error.cause instanceof RunnerHttpFailure ? error.cause : null;
+  return { diagnostic: true, stage: failureStages.has(stage) ? stage : "runner-execution", code: runnerFailureCode(http ?? error), ...http && Number.isInteger(http.status) && (http.status === 0 || http.status >= 100 && http.status <= 599) ? { httpStatus: http.status } : {} };
+}
 async function runOne(options) {
+  const report = (stage2, error) => {
+    if (options.diagnostics) process.stdout.write(JSON.stringify(runnerFailureDiagnostic(stage2, error)) + "\n");
+  };
   if (options.remoteCheckpoint) invariant(options.recoveryDirectory && options.client.identity && options.client.saveCheckpoint && options.client.listCheckpoints && options.client.clearCheckpoint, "INVALID_RUNNER_CONFIG");
-  const claim = await options.client.claim();
+  let claim;
+  try {
+    claim = await options.client.claim();
+  } catch (error) {
+    report("claim", error);
+    throw error;
+  }
   if (!claim) return { state: "empty" };
   const { job } = claim;
   let lease = claim.lease, done = false, heartbeat = null, finalizing = false, heartbeatStopped = false;
@@ -1263,23 +1283,29 @@ async function runOne(options) {
     heartbeat = options.client.heartbeat(lease).then((next) => {
       invariant(same(lease, next) && next.expiresAt > Date.now(), "LEASE_EXPIRED");
       lease = next;
-    }).catch(() => {
-      if (!done) controller.abort();
+    }).catch((error) => {
+      if (!done) {
+        report("heartbeat", error);
+        controller.abort();
+      }
     }).finally(() => {
       heartbeat = null;
     });
   }, options.heartbeatMs ?? 3e4);
-  let directory, journalPath, record;
+  let directory, journalPath, record, stage = "source";
   try {
     const work = options.workDirectory ?? tmpdir2();
     await mkdir4(work, { recursive: true });
     directory = await mkdtemp2(join7(work, "flora-claim-"));
     const grant = await options.client.source(lease), checkout = await options.source.checkout(job, grant, directory, controller.signal);
     if (options.diagnostics) process.stdout.write(diagnosticLine("source-verified") + "\n");
+    stage = "compiler";
     invariant(!controller.signal.aborted, "CANCELLED");
     const exported = await options.executor.execute(job, checkout.directory, controller.signal);
+    stage = "artifact-validation";
     invariant(exported.commitSha === job.commitSha && exported.platform === job.platform && exported.runtimeVersion === job.runtimeVersion, "ARTIFACT_INVALID");
     const uploaded = [];
+    stage = "asset-upload";
     for (const asset of [exported.launchAsset, ...exported.assets]) {
       const uploadLease = lease, metadata = { key: asset.key, contentType: asset.contentType, fileExtension: asset.fileExtension };
       let saved;
@@ -1298,8 +1324,10 @@ async function runOne(options) {
       invariant(saved && saved.appId === job.appId && saved.digest === asset.digest && saved.size === asset.bytes.length && saved.key === asset.key, "ARTIFACT_INVALID");
       uploaded.push(saved);
     }
+    stage = "receipt";
     const core = { jobId: job.id, attemptId: lease.attemptId, commitSha: job.commitSha, configDigest: job.configDigest, toolchainDigest: job.toolchainDigest, sourceArchiveDigest: checkout.sourceDigest, launchAssetId: uploaded[0].id, assetIds: uploaded.slice(1).map((asset) => asset.id) };
     const artifactDigest = await automationDigest(automationArtifactPayload(core, uploaded));
+    stage = "publication-heartbeat";
     heartbeatStopped = true;
     clearInterval(timer);
     await heartbeat;
@@ -1309,6 +1337,7 @@ async function runOne(options) {
     lease = fresh;
     invariant(!controller.signal.aborted, "CANCELLED");
     const receipt = { ...core, artifactDigest };
+    stage = "recovery-journal";
     if (options.recoveryDirectory) {
       invariant(options.client.identity && options.client.identity.runnerId === lease.runnerId, "INVALID_RUNNER_CONFIG");
       record = { schemaVersion: 1, origin: options.client.identity.origin, lease, receipt };
@@ -1327,24 +1356,32 @@ async function runOne(options) {
       }
       throw new Error(recoveryInsideCheckout ? "INVALID_RUNNER_CONFIG" : "CANCELLED");
     }
+    stage = "checkpoint-save";
     if (options.remoteCheckpoint) {
       try {
         await options.client.saveCheckpoint(record);
-      } catch {
-        throw new Error("RECOVERY_CHECKPOINT_UNAVAILABLE");
+      } catch (error) {
+        throw new Error("RECOVERY_CHECKPOINT_UNAVAILABLE", { cause: error });
       }
       invariant(lease.expiresAt - Date.now() >= 35e3, "LEASE_EXPIRED");
       invariant(!controller.signal.aborted, "CANCELLED");
     }
     finalizing = true;
+    stage = "finalize";
     for (let attempt = 0; attempt < 3; attempt++) {
       invariant(!controller.signal.aborted, "CANCELLED");
       try {
+        stage = "finalize";
         const result = await options.client.finalize(lease, receipt);
         if (record) {
+          stage = "publication-verification";
           assertPublicationResult(result, record);
+          stage = "recovery-cleanup";
           await clearRecoveryJournal(journalPath, record);
-          if (options.remoteCheckpoint) await clearRemoteCheckpoint(options.client, record);
+          if (options.remoteCheckpoint) {
+            stage = "checkpoint-clear";
+            await clearRemoteCheckpoint(options.client, record);
+          }
         }
         done = true;
         return { state: "succeeded", jobId: job.id, platform: job.platform, deploymentId: result.deployment.id };
@@ -1355,13 +1392,13 @@ async function runOne(options) {
     }
     throw new Error("PUBLICATION_RESULT_UNCONFIRMED");
   } catch (error) {
+    report(stage, error);
     if (error instanceof Error && ["ISOLATION_CLEANUP_UNCONFIRMED", "RECOVERY_JOURNAL_UNAVAILABLE", "RECOVERY_CLEANUP_UNCONFIRMED", "RECOVERY_CHECKPOINT_UNAVAILABLE", "INVALID_RUNNER_CONFIG"].includes(error.message)) throw error;
     if (finalizing && (journalPath || !(error instanceof RunnerHttpFailure) || transient(error))) return { state: "publication_unknown", jobId: job.id, platform: job.platform, code: "PUBLICATION_REJECTED", ...journalPath ? { recoveryJournal: journalPath } : {} };
     if (error instanceof RunnerHttpFailure && [401, 403, 409].includes(error.status)) throw error;
     const message = error instanceof Error ? error.message : "EXPORT_FAILED", allowed = ["EXPORT_FAILED", "SOURCE_UNAVAILABLE", "CONFIG_CHANGED", "ARTIFACT_INVALID", "CANCELLED", "LEASE_EXPIRED", "RUNNER_REVOKED"];
     const code = controller.signal.aborted ? "CANCELLED" : allowed.includes(message) ? message : finalizing ? "PUBLICATION_REJECTED" : "EXPORT_FAILED";
-    await options.client.fail(lease, code).catch(() => {
-    });
+    await options.client.fail(lease, code).catch((failure2) => report("failure-report", failure2));
     return { state: controller.signal.aborted ? "interrupted" : "failed", jobId: job.id, platform: job.platform, code };
   } finally {
     done = true;
@@ -1444,7 +1481,6 @@ async function main() {
   }
 }
 void main().catch((error) => {
-  const code = error instanceof RunnerHttpFailure ? error.message : error instanceof Error && ["INVALID_RUNNER_CONFIG", "ISOLATION_UNAVAILABLE", "ISOLATION_CLEANUP_UNCONFIRMED", "PUBLICATION_RECONCILIATION_REQUIRED", "INVALID_RECOVERY_JOURNAL", "RECOVERY_JOURNAL_UNAVAILABLE", "RECOVERY_CLEANUP_UNCONFIRMED", "RECOVERY_CHECKPOINT_UNAVAILABLE", "PUBLICATION_RESULT_UNCONFIRMED"].includes(error.message) ? error.message : "RUNNER_STOPPED";
-  process.stderr.write(code + "\n");
+  process.stderr.write(runnerFailureCode(error) + "\n");
   process.exitCode = 1;
 });

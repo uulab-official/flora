@@ -45,6 +45,8 @@ export async function runAdmittedPlatforms(platforms,{runOnce,wait=ms=>new Promi
 }
 export function initializationDiagnostic(stderr) {
   const code=typeof stderr==='string'?stderr.trim():'';
+  if(['TENANT_MISMATCH','IDEMPOTENCY_CONFLICT','INVALID_TRANSITION','PRIVATE_STORE_UNSAFE','STORE_IN_USE','MIGRATION_MISMATCH','INVALID_REQUEST'].includes(code))return {diagnostic:true,stage:'runner-execution',code};
+  if(['BUSY','LEASE_STALE','CONFIG_CONFLICT','CONFIG_CHANGED','PERMISSION_DENIED','INVALID_INPUT','INVALID_RELATION','NOT_FOUND','CONFLICT','INPUT_TOO_LARGE','PROVIDER_UNSUPPORTED','PROVIDER_UNCONFIGURED','UNAUTHENTICATED','FORBIDDEN','AUTH_UNAVAILABLE','CI_SESSION_REJECTED','CI_BINDING_REJECTED','CI_COMMIT_SUPERSEDED','CI_IDENTITY_REJECTED','CI_IDENTITY_REPLAYED','CHECKPOINT_CAPACITY','RUNNER_REVOKED','RUNNER_REQUEST_REJECTED','RUNNER_TRANSPORT_UNAVAILABLE','RUNNER_RESPONSE_INVALID','EXPORT_FAILED','SOURCE_UNAVAILABLE','ARTIFACT_INVALID','CANCELLED','LEASE_EXPIRED','PUBLICATION_REJECTED'].includes(code))return {diagnostic:true,stage:'runner-execution',code};
   return ['INVALID_RUNNER_CONFIG','ISOLATION_UNAVAILABLE','ISOLATION_CLEANUP_UNCONFIRMED','PUBLICATION_RECONCILIATION_REQUIRED','INVALID_RECOVERY_JOURNAL','RECOVERY_JOURNAL_UNAVAILABLE','RECOVERY_CLEANUP_UNCONFIRMED','RECOVERY_CHECKPOINT_UNAVAILABLE','PUBLICATION_RESULT_UNCONFIRMED','RUNNER_STOPPED'].includes(code)
     ? {diagnostic:true,stage:'runner-initialization',code} : null;
 }
@@ -61,7 +63,8 @@ export function validAdmission(value, appId, sha, now=Date.now()) {
 export function safeDiagnostic(value) {
   return value?.diagnostic===true && typeof value.stage==='string' && /^[a-z][a-z0-9-]{0,63}$/.test(value.stage)
     && (value.code===undefined || typeof value.code==='string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(value.code))
-    ? {diagnostic:true,stage:value.stage,...(value.code?{code:value.code}:{})} : null;
+    && (value.httpStatus===undefined || Number.isInteger(value.httpStatus) && (value.httpStatus===0 || value.httpStatus>=100 && value.httpStatus<=599))
+    ? {diagnostic:true,stage:value.stage,...(value.code?{code:value.code}:{}),...(value.httpStatus===undefined?{}:{httpStatus:value.httpStatus})} : null;
 }
 async function main() {
 const origin = 'https://flora.uulab.co.kr';
