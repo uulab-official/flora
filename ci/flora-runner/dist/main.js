@@ -671,7 +671,7 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { delimiter, isAbsolute as isAbsolute2, join as join3 } from "node:path";
 var npmCodes = ["ERESOLVE", "EINTEGRITY", "ENOTCACHED", "ELOCKVERIFY", "EUSAGE", "ENOENT", "EACCES", "ECONNRESET", "ETIMEDOUT", "ENOSPC", "ENOMEM", "EBADENGINE", "EUNSUPPORTEDPROTOCOL", "E401", "E403", "E404", "E500", "ENETUNREACH"];
-var safeCodes = /* @__PURE__ */ new Set(["EXECUTION_FAILED", "CONFIG_CHANGED", "ARTIFACT_INVALID", "SOURCE_UNAVAILABLE", "ISOLATION_UNAVAILABLE", "DEPENDENCY_CACHE_INVALID", "PROCESS_TIMEOUT", "PROCESS_CANCELLED", "PROCESS_OUTPUT_LIMIT", "PROCESS_SPAWN_FAILED", "NPM_CONFIG_DUPLICATE", "EXPO_EXECUTION_DENIED", "EXPO_MODULE_MISSING", "EXPO_WORKER_LIMIT", ...npmCodes.map((code) => "NPM_" + code)]);
+var safeCodes = /* @__PURE__ */ new Set(["EXECUTION_FAILED", "CONFIG_CHANGED", "ARTIFACT_INVALID", "SOURCE_UNAVAILABLE", "ISOLATION_UNAVAILABLE", "DEPENDENCY_CACHE_INVALID", "PROCESS_TIMEOUT", "PROCESS_CANCELLED", "PROCESS_OUTPUT_LIMIT", "PROCESS_SPAWN_FAILED", "NPM_CONFIG_DUPLICATE", "EXPO_EXECUTION_DENIED", "EXPO_MODULE_MISSING", "EXPO_WORKER_LIMIT", "EXPO_OUTPUT_BUSY", ...npmCodes.map((code) => "NPM_" + code)]);
 var childStages = ["configuration", "source-copy", "npm-version", "npm-install", "cache-validate", "cache-copy", "exporter", "expo-config", "expo-export", "artifact-read"];
 var safeStages = /* @__PURE__ */ new Set(["execution", "source-verified", "dependency-seed", "dependency-preparation", "compiler", "artifact-verified", ...childStages, ...childStages.map((stage) => "dependency-preparation-" + stage), ...childStages.map((stage) => "compiler-" + stage)]);
 function diagnosticLine(stage, code) {
@@ -711,6 +711,7 @@ function failure(reason, stderr, diagnostics) {
     if (match && npmCodes.includes(match[1])) return new ProcessFailure("NPM_" + match[1]);
   }
   if (diagnostics === "expo" && reason === "exit") {
+    if (/\bEBUSY\b/.test(stderr)) return new ProcessFailure("EXPO_OUTPUT_BUSY");
     if (/\bEACCES\b|failed to map segment from shared object/.test(stderr)) return new ProcessFailure("EXPO_EXECUTION_DENIED");
     if (/Cannot find module|Failed to resolve plugin|\bMODULE_NOT_FOUND\b/.test(stderr)) return new ProcessFailure("EXPO_MODULE_MISSING");
     if (/\bEAGAIN\b|ERR_WORKER_INIT_FAILED/.test(stderr)) return new ProcessFailure("EXPO_WORKER_LIMIT");

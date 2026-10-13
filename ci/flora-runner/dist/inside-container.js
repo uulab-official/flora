@@ -1,7 +1,7 @@
 /** Trusted entrypoint mounted read-only. This file never runs on the daemon host. */
 import { cp, mkdir, readFile, realpath, stat } from "node:fs/promises";
 import { dirname, join, sep } from "node:path";
-import { readExport, encodeExport, invariant } from "./artifacts.js";
+import { readExport, encodeExport, invariant, CONTAINER_EXPORT_DIRECTORY } from "./artifacts.js";
 import { processEnvironment, trustedProcess, npmConfigurationEnvironment, diagnosticLine, diagnosticCode, ProcessFailure } from "./process.js";
 import { readExpoConnection, exportExpoProject } from "./expo.js";
 let stage = "configuration";
@@ -39,13 +39,13 @@ async function main() {
     await trustedProcess(executable, install, { cwd: root, env, timeoutMs: 600000, maxBytes: 1024 * 1024, ...(name === "npm" ? { diagnostics: "npm" } : {}) });
     stage = "exporter";
     if (job.config.bundler === "expo") {
-        await exportExpoProject(root, "/output", job, env, connection);
+        await exportExpoProject(root, CONTAINER_EXPORT_DIRECTORY, job, env, connection);
     }
     else {
-        await trustedProcess(process.execPath, ["/runner/scripts/metro-export.mjs", root, job.config.entryFile, job.platform, "/output"], { cwd: root, env, timeoutMs: 300000, maxBytes: 1024 * 1024 });
+        await trustedProcess(process.execPath, ["/runner/scripts/metro-export.mjs", root, job.config.entryFile, job.platform, CONTAINER_EXPORT_DIRECTORY], { cwd: root, env, timeoutMs: 300000, maxBytes: 1024 * 1024 });
     }
     stage = "artifact-read";
-    const exported = await readExport("/output", { platform: job.platform, runtimeVersion: job.config.runtimeVersion, commitSha: job.commitSha });
+    const exported = await readExport(CONTAINER_EXPORT_DIRECTORY, { platform: job.platform, runtimeVersion: job.config.runtimeVersion, commitSha: job.commitSha });
     process.stdout.write(encodeExport(exported));
 }
 void main().catch(error => { const child = error instanceof ProcessFailure ? error.containerDiagnostic : undefined; process.stderr.write("FLORA_DIAGNOSTIC " + diagnosticLine(child?.stage ?? stage, child?.code ?? diagnosticCode(error)) + "\n"); process.exitCode = 1; });

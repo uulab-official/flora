@@ -3,6 +3,8 @@ import { constants } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import { basename, extname, join, resolve, sep } from "node:path";
 export const MAX_ASSET_BYTES = 16 * 1024 * 1024, MAX_EXPORT_BYTES = 64 * 1024 * 1024, MAX_ASSETS = 64;
+// Expo replaces its output directory before export. It must never be a mount root.
+export const CONTAINER_EXPORT_DIRECTORY="/output/export";
 export interface ExportExpectation { platform: "ios" | "android"; runtimeVersion: string; commitSha: string }
 export interface ExportAsset { key: string; contentType: string; fileExtension: string; digest: string; bytes: Uint8Array }
 export interface ExportBundle extends ExportExpectation { launchAsset: ExportAsset; assets: ExportAsset[]; artifactDigest: string }
