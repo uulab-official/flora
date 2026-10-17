@@ -25,7 +25,8 @@ const parameters = {
 
 const verifierFields = [...Object.keys(parameters), "saltHex", "hashHex"];
 
-function validPassword(password: unknown): password is string {
+function validPassword(password: unknown, minimum: 12 | 15 = 15): password is string {
+  if (minimum !== 12 && minimum !== 15) return false;
   if (typeof password !== "string" || password.length > 256) return false;
   if (Buffer.byteLength(password, "utf8") > 1024) return false;
   let length = 0;
@@ -35,7 +36,7 @@ function validPassword(password: unknown): password is string {
     if (codepoint >= 0xd800 && codepoint <= 0xdfff) return false;
     if (++length > 128) return false;
   }
-  return length >= 15;
+  return length >= minimum;
 }
 
 function readVerifier(value: unknown): { salt: Buffer; hash: Buffer } | null {
@@ -82,8 +83,9 @@ function deriveKey(password: string, salt: Buffer): Promise<Buffer> {
 /** DO-only kernel; the caller must admit at most one expensive KDF at a time. */
 export async function createPasswordVerifier(
   password: string,
+  minimum: 12 | 15 = 15,
 ): Promise<PasswordVerifierV1> {
-  if (!validPassword(password)) throw new Error("Invalid password");
+  if (!validPassword(password, minimum)) throw new Error("Invalid password");
   try {
     const salt = randomBytes(16);
     const hash = await deriveKey(password, salt);
@@ -100,10 +102,11 @@ export async function createPasswordVerifier(
 export async function verifyPassword(
   password: string,
   verifier: PasswordVerifierV1,
+  minimum: 12 | 15 = 15,
 ): Promise<boolean> {
   let stored: ReturnType<typeof readVerifier>;
   try {
-    if (!validPassword(password)) return false;
+    if (!validPassword(password, minimum)) return false;
     stored = readVerifier(verifier);
   } catch {
     return false;

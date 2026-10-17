@@ -1,14 +1,31 @@
-/** Password length is measured in Unicode codepoints, never UTF-16 input limits. */
-export function validPassword(value) {
-  if (typeof value !== "string" || !value.isWellFormed()) return false;
-  const length = [...value].length;
-  return length >= 15 && length <= 128 && new TextEncoder().encode(value).length <= 1024;
+import { parseAdminPath } from "./admin-routes.js";
+
+/** Only explicit, canonical admin documents may follow a successful login. */
+export function authReturnPath(location) {
+  if (location.pathname !== "/login" || location.hash) return "/";
+  const params = new URLSearchParams(location.search ?? "");
+  const values = params.getAll("returnTo");
+  if (values.length !== 1 || [...params.keys()].some(key => key !== "returnTo")) return "/";
+  const value = values[0], route = parseAdminPath(value);
+  return route && (value === "/" || value === route.path) ? route.path : "/";
 }
 
-export function startAuth(env) {
+/** Password length is measured in Unicode codepoints, never UTF-16 input limits. */
+function passwordMinimum(options) { return options?.workspaceName === "UULab" && options.passwordMinimum === 12 ? 12 : 15; }
+export function validPassword(value, options = {}) {
+  if (typeof value !== "string" || !value.isWellFormed()) return false;
+  const length = [...value].length;
+  return length >= passwordMinimum(options) && length <= 128 && new TextEncoder().encode(value).length <= 1024;
+}
+
+export function startAuth(env, options = {}) {
   const { document } = env;
   const node = id => document.getElementById(id);
+  const minimum = passwordMinimum(options);
+  if (typeof options.workspaceName === "string" && options.workspaceName.length > 0 && options.workspaceName.length <= 80 && !/[\u0000-\u001f\u007f]/.test(options.workspaceName)) node("auth-workspace-name").textContent = options.workspaceName;
+  if (options.workspaceName === "UULab" && typeof options.ownerEmail === "string" && options.ownerEmail.length <= 254 && !/[\u0000-\u001f\u007f]/.test(options.ownerEmail)) node("email").value = options.ownerEmail;
   const setup = env.location.pathname === "/setup";
+  const returnPath = authReturnPath(env.location);
   let busy = false; let closed = false; let generation = 0; let pending;
   function clear(all = false) { for (const id of ["password", "confirmation", "token", ...(all ? ["email"] : [])]) node(id).value = ""; }
   function status(text, alert = false) { const target = node("auth-status"); target.hidden = !text; target.textContent = text; target.setAttribute("role", alert ? "alert" : "status"); }
@@ -24,7 +41,7 @@ export function startAuth(env) {
     node("auth-title").textContent = setup ? recover ? "소유자 비밀번호 복구" : "최초 비밀번호 등록" : "소유자 로그인";
     node("auth-submit").textContent = setup ? recover ? "승인 코드로 비밀번호 복구" : "승인 코드로 비밀번호 등록" : "로그인";
     node("auth-description").textContent = setup ? "소유자가 별도로 발급한 승인 코드가 있어야 합니다. 등록은 기본적으로 잠겨 있으며, 이메일만으로 가입할 수 없습니다." : "설정된 소유자 계정으로 로그인하면 반입한 앱 정보와 이력을 다시 볼 수 있습니다.";
-    node("password-note").textContent = setup ? "15–128자 · 공백과 이모지를 포함할 수 있습니다. 붙여넣기를 허용하며 입력한 내용을 그대로 사용합니다." : "비밀번호 붙여넣기를 사용할 수 있습니다.";
+    node("password-note").textContent = setup ? `${minimum}–128자 · 공백과 이모지를 포함할 수 있습니다. 붙여넣기를 허용하며 입력한 내용을 그대로 사용합니다.` : "비밀번호 붙여넣기를 사용할 수 있습니다.";
     node("password").setAttribute("autocomplete", setup ? "new-password" : "current-password");
     status(""); controls();
   }
@@ -37,7 +54,7 @@ export function startAuth(env) {
     if (setup) {
       payload.token = node("token").value; payload.confirmation = node("confirmation").value;
       if (!/^[A-Za-z0-9_-]{43}$/.test(payload.token)) { status("소유자가 발급한 유효한 승인 코드를 직접 입력해 주세요.", true); return; }
-      if (!validPassword(payload.password)) { status("비밀번호는 15–128 Unicode 문자, UTF-8 1,024바이트 이내여야 합니다.", true); return; }
+      if (!validPassword(payload.password, options)) { status(`비밀번호는 ${minimum}–128 Unicode 문자, UTF-8 1,024바이트 이내여야 합니다.`, true); return; }
       if (payload.password !== payload.confirmation) { status("두 비밀번호가 일치하지 않습니다. 공백도 그대로 확인해 주세요.", true); return; }
     }
     let body = JSON.stringify(payload); payload = null;
@@ -55,7 +72,7 @@ export function startAuth(env) {
       const session = await response.json();
       if (closed || version !== generation) return;
       if (typeof session.csrfToken !== "string" || !session.csrfToken || !Number.isSafeInteger(session.expiresAt) || session.expiresAt <= (env.now?.() ?? Date.now())) throw new Error("INVALID_SESSION");
-      clear(true); closed = true; env.location.replace("/");
+      clear(true); closed = true; env.location.replace(returnPath);
     } catch {
       if (!closed && version === generation) status(setup ? "등록·복구 완료 여부를 확인하지 못했습니다. 새 비밀번호로 로그인을 먼저 확인해 주세요. 이미 사용된 승인 코드는 다시 사용할 수 없습니다." : "인증을 완료하지 못했습니다. 요청이 중단되었을 수 있으니 다시 입력해 주세요.", true);
     } finally { body = ""; if (version === generation) { busy = false; pending = null; controls(); } }
@@ -72,4 +89,19 @@ export function startAuth(env) {
   return { submit, close };
 }
 
-if (typeof window !== "undefined") startAuth(window);
+/** Browser-only options read; default policy remains 15 if unavailable/unknown. */
+export async function bootstrapAuth(env) {
+  const controller = new AbortController(); let left = false; let timeout;
+  const clear = () => { for (const id of ["email", "password", "confirmation", "token"]) env.document.getElementById(id).value = ""; };
+  env.addEventListener?.("pagehide", () => { left = true; controller.abort(); clear(); });
+  let options = {};
+  try {
+    timeout = env.setTimeout?.(() => controller.abort(), 10000);
+    const response = await env.fetch("/api/auth/options", { credentials: "same-origin", cache: "no-store", redirect: "error", signal: controller.signal });
+    if (response.ok) { const value = await response.json(); if (value && typeof value === "object" && !Array.isArray(value)) options = value; }
+  } catch { /* Failed metadata reads never lower the password policy. */ }
+  finally { if (timeout !== undefined) env.clearTimeout?.(timeout); }
+  if (left) { clear(); return; }
+  return startAuth(env, options);
+}
+if (typeof window !== "undefined") void bootstrapAuth(window);

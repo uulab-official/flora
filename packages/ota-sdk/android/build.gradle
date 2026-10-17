@@ -1,0 +1,23 @@
+apply plugin: 'com.android.library'
+apply plugin: 'org.jetbrains.kotlin.android'
+
+// Expo is optional. Bare React Native consumers compile only src/main.
+def expoModulesCore = rootProject.findProject(':expo-modules-core')
+
+android {
+  namespace 'com.flora.ota'
+  compileSdkVersion rootProject.ext.has('compileSdkVersion') ? rootProject.ext.compileSdkVersion : 36
+  defaultConfig { minSdkVersion 24; targetSdkVersion 36 }
+  compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+  kotlinOptions { jvmTarget = '17' }
+  testOptions { unitTests.returnDefaultValues = true }
+  if (expoModulesCore != null) { sourceSets.main.java.srcDir 'src/expo/java' }
+}
+
+dependencies {
+  implementation 'com.facebook.react:react-android'
+  implementation 'com.squareup.okhttp3:okhttp:4.9.2'
+  if (expoModulesCore != null) { implementation expoModulesCore }
+  testImplementation 'junit:junit:4.13.2'
+  testImplementation 'org.json:json:20180813'
+}

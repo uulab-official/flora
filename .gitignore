@@ -4,3 +4,24 @@ dist/
 *.db
 *.db-shm
 *.db-wal
+
+# Local build and browser QA output; keep existing artifacts on disk.
+.build/
+.playwright-cli/
+output/
+.wrangler/
+
+# Operator credentials and native signing material never belong in source.
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+*.p8
+*.p12
+*.pfx
+*.mobileprovision
+*.keystore
+*.jks
+*.key
+key.properties

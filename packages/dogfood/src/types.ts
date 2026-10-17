@@ -168,6 +168,9 @@ export interface VerificationCompletion {
 export type VerificationCreation = Readonly<{ record: VerificationRecord; created: boolean }>;
 export type PreparedBaselineImport = Readonly<{ snapshotId: string; evidence: BaselineEvidence; assessment: ReportAssessment; now: number }>;
 export interface DogfoodStore {
+  applications?: import("./applications.js").ApplicationStore;
+  operations?: import("./operations.js").OperationsStore;
+  automation?: import("./automation.js").AutomationStore;
   saveInventory(snapshot: InventorySnapshot): Promise<InventorySnapshot>;
   listInventory(): Promise<InventorySnapshot[]>;
   getInventory(snapshotId: string): Promise<InventorySnapshot | null>;
@@ -188,5 +191,5 @@ export interface DogfoodStore {
 
 /** Import-only storage port; contains no selection or Runner lifecycle operations. */
 export type ImportStore = Pick<DogfoodStore,
-  "saveInventory" | "getInventory" | "saveHeadObservation" | "getHeadObservation" | "persistBaseline"
+  "saveInventory" | "getInventory" | "saveHeadObservation" | "getHeadObservation" | "persistBaseline" | "applications" | "operations" | "automation"
 >;

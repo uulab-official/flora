@@ -282,3 +282,14 @@ test("comparison failure rejects without exposing native error or verifier", asy
     sensitiveValues,
   );
 });
+
+
+test("an explicit deployment policy accepts 12 codepoints while default policy remains 15", async () => {
+  const password = syntheticPassword(12);
+  await assert.rejects(createPasswordVerifier(password));
+  const verifier = await createPasswordVerifier(password, 12);
+  assert.equal(await verifyPassword(password, verifier, 12), true);
+  assert.equal(await verifyPassword(password, verifier), false);
+  await assert.rejects(createPasswordVerifier(syntheticPassword(11), 12));
+  await assert.rejects(createPasswordVerifier(password, 11 as 12));
+});

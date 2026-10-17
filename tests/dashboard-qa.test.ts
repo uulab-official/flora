@@ -127,7 +127,7 @@ test("local, hosted and auth surfaces share restrained elevation and preserve mo
   const styles = ["packages/dashboard/public/app.css", "packages/cloudflare/public/app.css", "packages/cloudflare/public/auth.css"].map(path => readFileSync(new URL("../" + path, import.meta.url), "utf8"));
   const tokens = ["--shadow-control", "--shadow-panel", "--shadow-raised", "--shadow-primary", "--shadow-primary-hover", "--shadow-nav"];
   for (const token of tokens) {
-    const values = styles.map(css => css.match(new RegExp(token + ":([^;}]+)"))?.[1]);
+    const values = styles.map(css => [...css.matchAll(new RegExp(token + ":([^;}]+)", "g"))].at(-1)?.[1]?.trim());
     assert.ok(values[0], `Missing elevation token ${token}`);
     assert.deepEqual(values, [values[0], values[0], values[0]], `${token} differs between shipped UIs`);
   }
@@ -137,10 +137,14 @@ test("local, hosted and auth surfaces share restrained elevation and preserve mo
     assert.match(css, /box-shadow:var\(--shadow-primary-hover\)/);
     assert.match(css, /@media\(prefers-reduced-motion:no-preference\)\{[^{}]+\{[^{}]*transition:[^{}]*box-shadow/);
     assert.match(css, /:disabled[^{}]*\{[^{}]*box-shadow:none/);
-    assert.ok(!/transition:\s*all\b|transform:\s*translate/.test(css), "Elevation must not shift dense rows or animate arbitrary properties");
+    assert.ok(!/transition:\s*all\b/.test(css), "Controls must not animate arbitrary properties");
+    for (const [, selectors, declarations] of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      if (!/transform:\s*translate/.test(declarations!)) continue;
+      assert.ok(selectors!.split(",").every(selector => /(?:^|\s)\.studio-sidebar$/.test(selector.trim())), "Only the responsive sidebar drawer may translate; dense rows and controls must keep their geometry");
+    }
   }
   assert.match(styles[1]!, /\.app-open:focus-visible\{outline-offset:-3px\}/, "Keyboard ring must remain inside the clipped table");
-  assert.match(styles[1]!, /@media\(max-width:760px\)\{\.app-table-shell\{box-shadow:none\}/, "Mobile rows retain the compact borderless list");
+  assert.match(styles[1]!, /@media\(max-width:760px\)\{\.app-table-shell\{box-shadow:none\}/, "Mobile table elevation remains flat through the QA viewport boundary");
 });
 
 test("both browser render gates check actual elevation, reduced motion and stable geometry", () => {
@@ -168,6 +172,6 @@ test("disabled elevation resets outrank primary hover and pagination controls", 
 test("switching to reduced motion cancels in-flight control transitions", () => {
   for (const path of ["packages/dashboard/public/app.css", "packages/cloudflare/public/app.css", "packages/cloudflare/public/auth.css"]) {
     const css = readFileSync(new URL("../" + path, import.meta.url), "utf8");
-    assert.match(css, /@media\(prefers-reduced-motion:reduce\)\{button,\.button,a\{transition:none\}\}/);
+    assert.match(css, /@media\(prefers-reduced-motion:reduce\)\{(?:button,\.button,a\{transition:none\}|\*,\*::before,\*::after\{[^{}]*transition:none!important;[^{}]*\})\}/, "Reduced motion must stop control transitions, including the stronger universal reset");
   }
 });

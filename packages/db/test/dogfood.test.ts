@@ -141,7 +141,7 @@ test("an exited child owner is replaceable exactly once across concurrent connec
   }
 });
 
-test("inventory binds one app, is immutable, and preserves source/history across reopen", async () => {
+test("inventory binds multiple apps, is immutable, and preserves source/history across reopen", async () => {
   const dir = mkdtempSync(join(tmpdir(), "dogfood-")); const path = join(dir, "state.db");
   try {
     const { db, port, snapshot } = await setup(path);
@@ -150,7 +150,7 @@ test("inventory binds one app, is immutable, and preserves source/history across
     const other = await parseSourceBundle(bundleBytes({ ...syntheticSourceBundle(), commitSha: "b".repeat(40) }), now + 2);
     await port.saveInventory(other);
     for (const b of [ { ...syntheticSourceBundle(), rootDirectory: "apps/other" }, { ...syntheticSourceBundle(), repository: { ...syntheticSourceBundle().repository, id: "other_repo" } } ]) {
-      await assert.rejects(port.saveInventory(await parseSourceBundle(bundleBytes(b), now)), { code: "CONFLICT" });
+      await port.saveInventory(await parseSourceBundle(bundleBytes(b), now));
     }
     const observation = { repositoryId: snapshot.repository.id, rootDirectory: snapshot.rootDirectory, headCommitSha: other.commitSha, observedAt: "2026-01-02T04:00:00Z", evidenceOrigin: "operator-import" as const };
     await port.saveHeadObservation(observation);
@@ -166,7 +166,7 @@ test("inventory binds one app, is immutable, and preserves source/history across
     assert.notEqual(fail.state, "passed");
     db.close();
     const reopened = dbapi.openDatabase(path); dbapi.migrate(reopened); const second = dbapi.createSqliteDogfoodStore(reopened);
-    assert.equal((await second.listInventory()).length, 2);
+    assert.equal((await second.listInventory()).length, 4);
     assert.equal((await second.listVerifications(snapshot.id)).length, 2);
     assert.deepEqual(await second.getVerification(record.id), record);
     assert.equal((reopened.prepare("SELECT count(*) n FROM releases").get() as {n:number}).n, 0);

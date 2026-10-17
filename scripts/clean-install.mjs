@@ -18,6 +18,19 @@ export function requireLockfile(directory) {
   if (!existsSync(file) || !statSync(file).isFile() || !statSync(file).size)
     throw Error("LOCKFILE_REQUIRED");
 }
+export function requireWorkspaceSources(root, paths) {
+  const manifests = ["package.json", ...paths.filter(path => /^packages\/[^/]+\/package\.json$/.test(path))]
+    .map(path => JSON.parse(readFileSync(join(root, path), "utf8")));
+  const names = new Set(manifests.slice(1).map(manifest => manifest.name));
+  for (const manifest of manifests) {
+    for (const field of ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"]) {
+      for (const [name, version] of Object.entries(manifest[field] ?? {})) {
+        if (typeof version === "string" && version.startsWith("workspace:") && !names.has(name))
+          throw Error("WORKSPACE_SOURCE_INCOMPLETE");
+      }
+    }
+  }
+}
 export function snapshotFiles(root, paths) {
   return new Map(
     paths.map((path) => [
@@ -61,6 +74,7 @@ export async function verifyClean() {
   const files = run("git", ["ls-files", "-z"], root, process.env)
     .split("\0")
     .filter(Boolean);
+  requireWorkspaceSources(root, files);
   const before = snapshotFiles(root, files);
   const temp = mkdtempSync(join(tmpdir(), "app-ops-clean-"));
   try {

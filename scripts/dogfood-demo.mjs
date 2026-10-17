@@ -1,6 +1,7 @@
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { join, resolve } from "node:path";
 import os from "node:os";
+import { readFile } from "node:fs/promises";
 import { runCli } from "@app-ops/cli";
 
 /** A reproducible fictional example; this does not execute source or attest a real test run. */
@@ -14,6 +15,14 @@ export async function runDogfoodDemo(dbPath = join(os.homedir(), ".flora", "dogf
     });
     if (code !== 0) throw new Error(stderr.trim());
     return JSON.parse(stdout);
+  }
+  // The old one-app storage guard also protected demo stores. Keep that boundary
+  // explicitly now that ordinary stores support many applications.
+  const expected = JSON.parse(await readFile(new URL("../examples/dogfood-source.synthetic.json", import.meta.url), "utf8"));
+  const state = await invoke(["status", "--json"]);
+  for (const app of state.applications ?? []) {
+    const selected = await invoke(["status", "--app", app.id, "--json"]);
+    if (selected.selectedApplication.repositoryId !== expected.repository.id || selected.selectedApplication.rootDirectory !== expected.rootDirectory) throw new Error("CONFLICT");
   }
   const source = await invoke(["import-source", "--file", fileURLToPath(new URL("../examples/dogfood-source.synthetic.json", import.meta.url))]);
   const baseline = await invoke(["import-baseline", "--snapshot", source.snapshotId, "--file", fileURLToPath(new URL("../examples/dogfood-baseline.synthetic.json", import.meta.url))]);

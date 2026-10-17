@@ -14,14 +14,20 @@ const assetBinding = { fetch: async (request: Request) => new Response(["/index.
 export class HostedFixtureAuth {
   private authority: FloraAuth;
   private readonly fixtureEnv: FloraEnv;
-  private failD1 = false;
+  private failD1: boolean | "daily-read" = false;
   private failAuth = false;
   private revokeBeforeD1Read = false;
   private revokeAfterSubmission = false;
   private loseResponse = false;
   private writes = 0;
   private held: { release: () => void; response: Promise<Response> } | null = null;
+  private readonly heldLogins = new Map<string, { release: () => void; cancel: () => void; response: Promise<Response> }>();
   private readonly recreate: () => void;
+  private d1Failure(): Error {
+    return new Error(this.failD1 === "daily-read"
+      ? "D1_ERROR: Your account has exceeded D1's free tier daily row read limit. SYNTHETIC_PRIVATE_D1_TOKEN SELECT PRIVATE_SQL"
+      : "SYNTHETIC_PRIVATE_D1_QUOTA");
+  }
   constructor(private readonly ctx: DurableObjectState, env: FloraEnv) {
     const sql = ctx.storage.sql, exec = sql.exec.bind(sql);
     sql.exec = ((query: string, ...args: (string | number | null | ArrayBuffer)[]) => {
@@ -34,7 +40,7 @@ export class HostedFixtureAuth {
       const member = Reflect.get(target, key);
       if (typeof member !== "function") return member;
       return async (...args: unknown[]) => {
-        if (this.failD1) throw new Error("SYNTHETIC_PRIVATE_D1_QUOTA");
+        if (this.failD1) throw this.d1Failure();
         const result = await member.apply(target, args);
         if (this.revokeBeforeD1Read) { this.revokeBeforeD1Read = false; revoke(); }
         return result;
@@ -44,7 +50,7 @@ export class HostedFixtureAuth {
       if (key === "prepare") return (query: string) => wrapStatement(target.prepare(query));
       if (key === "batch") return async (statements: Parameters<FloraEnv["FLORA_DB"]["batch"]>[0]) => {
         this.writes++;
-        if (this.failD1) throw new Error("SYNTHETIC_PRIVATE_D1_QUOTA");
+        if (this.failD1) throw this.d1Failure();
         const pending = target.batch(statements);
         if (this.revokeAfterSubmission) { this.revokeAfterSubmission = false; revoke(); }
         const result = await pending;
@@ -76,12 +82,36 @@ export class HostedFixtureAuth {
         contentLength: request.headers.get("Content-Length"), writes: this.writes - writesBefore });
     }
     if (path === "/__test/control") {
-      const data = await request.json() as { now?: number; restart?: boolean; failD1?: boolean; failAuth?: boolean; revokeBeforeD1Read?: boolean; revokeAfterSubmission?: boolean; loseResponse?: boolean; stats?: boolean; evict?: boolean; sql?: string; captureConsole?: boolean; probeConsole?: boolean; resetConsole?: boolean; holdImport?: string; releaseImport?: boolean };
+      const data = await request.json() as { now?: number; restart?: boolean; failD1?: boolean | "daily-read"; failAuth?: boolean; revokeBeforeD1Read?: boolean; revokeAfterSubmission?: boolean; loseResponse?: boolean; stats?: boolean; evict?: boolean; sql?: string; captureConsole?: boolean; probeConsole?: boolean; resetConsole?: boolean; holdImport?: string; releaseImport?: boolean; holdLogin?: string; releaseLogin?: boolean; cancelLogin?: boolean; loginBodyId?: string };
       if (data.probeConsole) console.info("SYNTHETIC_CAPTURE_PROBE");
       if (data.resetConsole) consoleRecords.length = 0;
       if (data.captureConsole) return Response.json({ logs: consoleRecords });
       if (data.sql) return Response.json(this.ctx.storage.sql.exec(data.sql).toArray());
       if (data.evict) this.ctx.abort("Synthetic eviction");
+      if (data.holdLogin !== undefined) {
+        const id = data.loginBodyId ?? "default";
+        if (this.heldLogins.has(id)) return new Response("held", { status: 409 });
+        let begin!: () => void, release!: () => void;
+        let reads = 0;
+        const started = new Promise<void>(resolve => { begin = resolve; });
+        const gate = new Promise<void>(resolve => { release = resolve; });
+        const body = new ReadableStream<Uint8Array>({ async pull(c) { reads++; begin(); await gate; c.enqueue(new TextEncoder().encode(data.holdLogin!)); c.close(); } }, { highWaterMark: 0 });
+        // The stalled request is unauthenticated even though the control caller is not.
+        const headers = new Headers({ Origin: this.fixtureEnv.FLORA_ORIGIN, "Content-Type": "application/json" });
+        const controller = new AbortController();
+        const response = this.authority.fetch(new Request(this.fixtureEnv.FLORA_ORIGIN + "/api/auth/login", { method: "POST", headers, body, signal: controller.signal }));
+        this.heldLogins.set(id, { release, cancel: () => { controller.abort(); release(); }, response }); this.ctx.waitUntil(response.then(() => {}));
+        const admission = await Promise.race([started.then(() => null), response]);
+        if (admission) { this.heldLogins.delete(id); admission.headers.set("X-Flora-Test-Body-Reads", String(reads)); return admission; }
+        return Response.json({ held: true });
+      }
+      if (data.releaseLogin || data.cancelLogin) {
+        const id = data.loginBodyId ?? "default", held = this.heldLogins.get(id);
+        if (!held) return new Response("missing", { status: 404 });
+        if (data.cancelLogin) held.cancel(); else held.release();
+        const response = await held.response; this.heldLogins.delete(id);
+        return Response.json({ status: response.status, body: await response.json() });
+      }
       if (data.holdImport !== undefined) {
         if (this.held) return new Response("held", { status: 409 });
         let begin!: () => void, release!: () => void;
@@ -100,7 +130,8 @@ export class HostedFixtureAuth {
         return Response.json({ status: response.status, body: await response.json() });
       }
       if (data.now !== undefined) clock = data.now;
-      for (const key of ["failD1", "failAuth", "revokeBeforeD1Read", "revokeAfterSubmission", "loseResponse"] as const) if (data[key] !== undefined) this[key] = data[key];
+      if (data.failD1 !== undefined) this.failD1 = data.failD1;
+      for (const key of ["failAuth", "revokeBeforeD1Read", "revokeAfterSubmission", "loseResponse"] as const) if (data[key] !== undefined) this[key] = data[key];
       if (data.restart) this.recreate();
       return Response.json({ writes: this.writes });
     }

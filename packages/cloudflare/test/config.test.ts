@@ -57,3 +57,28 @@ test("setup_window_is_exact_bounded_and_owned", () => {
     { purpose: "login" }, { ownerId: "untrusted" }]) rejects({ FLORA_SETUP: { ...setup, ...patch } });
   rejects({ FLORA_SETUP: JSON.stringify(setup) });
 });
+
+
+test("only explicit UULab deployments can opt into the 12 codepoint policy", () => {
+  const uulab = { ...environment(), FLORA_WORKSPACE_NAME: "UULab", FLORA_PASSWORD_MIN_LENGTH: "12" };
+  assert.equal(readConfig(uulab).passwordMinimum, 12);
+  assert.equal(readConfig(uulab).workspaceName, "UULab");
+  assert.equal(readConfig(environment()).passwordMinimum, undefined);
+  assert.equal(readConfig({ ...environment(), FLORA_WORKSPACE_NAME: "UULab" }).passwordMinimum, undefined);
+  for (const patch of [{FLORA_PASSWORD_MIN_LENGTH: "12"}, {FLORA_WORKSPACE_NAME: "Other", FLORA_PASSWORD_MIN_LENGTH: "12"},
+    {FLORA_WORKSPACE_NAME: "UULab", FLORA_PASSWORD_MIN_LENGTH: "11"}, {FLORA_PASSWORD_MIN_LENGTH: 12}, {FLORA_WORKSPACE_NAME: "UULab\n"}]) rejects(patch);
+});
+
+test("optional private R2 binding is structurally checked without any provider call", () => {
+  const never = () => { throw new Error("Configuration must not call R2"); };
+  assert.deepEqual(readConfig({ ...environment(), FLORA_OTA_ASSETS: { get: never, put: never } as unknown as NonNullable<FloraEnv["FLORA_OTA_ASSETS"]> }), readConfig(environment()));
+  for (const value of [null, "bucket", {}, { get: never }, { put: never }, { get: never, put: true }]) rejects({ FLORA_OTA_ASSETS: value });
+});
+
+test("GitHub asset storage pins private repository identity and excludes simultaneous R2 configuration", () => {
+  const github = { FLORA_OTA_ASSET_STORAGE: "github-releases", FLORA_OTA_ASSET_REPOSITORY: "uulab-official/flora-ota-assets", FLORA_OTA_ASSET_REPOSITORY_ID: "1422798122", FLORA_OTA_ASSET_INSTALLATION_ID: "170528052" };
+  assert.deepEqual(readConfig({ ...environment(), ...github }), readConfig(environment()));
+  for (const key of ["FLORA_OTA_ASSET_REPOSITORY", "FLORA_OTA_ASSET_REPOSITORY_ID", "FLORA_OTA_ASSET_INSTALLATION_ID"]) for (const value of [undefined, null, "", "01", "bad/repo/path"]) rejects({ ...github, [key]: value });
+  for (const patch of [{FLORA_OTA_ASSET_STORAGE:"disk"}, {FLORA_OTA_ASSETS:{get(){},put(){}}}, {FLORA_OTA_ASSET_REPOSITORY_ID:"9007199254740992"}, {FLORA_OTA_ASSET_REPOSITORY:"https://github.com/owner/repo"}]) rejects({...github,...patch});
+  rejects({ FLORA_OTA_ASSET_REPOSITORY: github.FLORA_OTA_ASSET_REPOSITORY });
+});

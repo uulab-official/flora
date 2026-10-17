@@ -1,5 +1,6 @@
-import type { D1Database, DurableObjectNamespace, Fetcher } from "@cloudflare/workers-types";
+import type { D1Database, DurableObjectNamespace, Fetcher, R2Bucket } from "@cloudflare/workers-types";
 import type { Freshness, HeadObservation, ImportStore, InventorySnapshot, VerificationProfile, VerificationRecord } from "@app-ops/dogfood";
+import type { ApplicationSummary, ManagedApplication } from "@app-ops/dogfood";
 
 export interface SetupWindow {
   digest: string;
@@ -9,6 +10,8 @@ export interface SetupWindow {
   purpose: "enroll" | "recover";
 }
 export interface FloraConfig {
+  workspaceName?: string;
+  passwordMinimum?: 12 | 15;
   origin: string;
   ownerId: string;
   ownerEmail: string;
@@ -16,12 +19,30 @@ export interface FloraConfig {
   setup: SetupWindow | null;
 }
 export interface FloraEnv {
+  /** Display-only analytics reporter; not used to enforce quotas. */
+  FLORA_USAGE_REPORTER_ID?: string;
+  FLORA_CLOUDFLARE_ACCOUNT_ID?: string;
+  /** Operator key ring; exclusively a Worker Secret, never a public var. */
+  FLORA_VAULT_KEYS?: string;
+  FLORA_WORKSPACE_NAME?: string;
+  FLORA_PASSWORD_MIN_LENGTH?: string;
+  FLORA_GITHUB_WEBHOOK_SECRET?: string;
+  FLORA_GITHUB_APP_ID?: string;
+  FLORA_GITHUB_PRIVATE_KEY?: string;
+  FLORA_OTA_SIGNING_PRIVATE_KEY?: string;
+  FLORA_OTA_SIGNING_KEY_ID?: string;
   FLORA_ORIGIN: string;
   FLORA_OWNER_ID: string;
   FLORA_OWNER_EMAIL: string;
   FLORA_DB_IDENTITY: string;
   FLORA_SETUP?: SetupWindow;
   FLORA_DB: D1Database;
+  /** Private, binding-only Standard storage. Never exposed as a public URL. */
+  FLORA_OTA_ASSETS?: R2Bucket;
+  FLORA_OTA_ASSET_STORAGE?: string;
+  FLORA_OTA_ASSET_REPOSITORY?: string;
+  FLORA_OTA_ASSET_REPOSITORY_ID?: string;
+  FLORA_OTA_ASSET_INSTALLATION_ID?: string;
   FLORA_AUTH: DurableObjectNamespace;
   ASSETS: Fetcher;
 }
@@ -44,12 +65,14 @@ export type BaselineSummary = Pick<VerificationRecord, "id" | "snapshotId" | "st
 };
 export interface SafeLog { id: string; safeLog: string; logTruncated: boolean }
 export interface HostedReadStore {
-  pageInventory(cursor: string | null): Promise<Page<SnapshotSummary>>;
-  pageBaselines(snapshotId: string, cursor: string | null): Promise<Page<BaselineSummary>>;
-  getSafeLog(recordId: string): Promise<SafeLog | null>;
+  pageInventory(cursor: string | null, appId?: string): Promise<Page<SnapshotSummary>>;
+  pageBaselines(snapshotId: string, cursor: string | null, appId?: string): Promise<Page<BaselineSummary>>;
+  getSafeLog(recordId: string, appId?: string): Promise<SafeLog | null>;
 }
 export type HostedStore = ImportStore & HostedReadStore;
 export interface HostedState {
+  applications?: ApplicationSummary[];
+  selectedApplication?: ManagedApplication | null;
   snapshots: Page<SnapshotSummary>;
   selected: InventorySnapshot | null;
   history: Page<BaselineSummary>;

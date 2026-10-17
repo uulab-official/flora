@@ -7,10 +7,12 @@ import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 import type { Json } from "miniflare";
 
 export interface TestRuntimeOptions {
+  outboundService?: (request: Request) => Response | Promise<Response>;
   entrypoint: string | URL;
   bindings?: Record<string, Json>;
   /** Every test DO is SQLite backed. Keys are bindings; values are class exports. */
   durableObjects?: Record<string, string>;
+  r2Buckets?: Record<string, string>;
 }
 
 /** Local-only workerd harness. No account, remote proxy, credentials or deployment. */
@@ -29,14 +31,16 @@ export async function createTestRuntime(options: TestRuntimeOptions) {
       resourcePersistencePath: directory,
       bindings: options.bindings ?? {},
       d1Databases: { FLORA_DB: "flora-synthetic-db" },
+      r2Buckets: options.r2Buckets ?? {},
       durableObjects: Object.fromEntries(Object.entries(options.durableObjects ?? {}).map(([name, className]) => [name, { className, useSQLite: true }])),
-      outboundService: () => new Response("External network disabled in synthetic tests", { status: 503 }),
+      outboundService: options.outboundService ?? (() => new Response("External network disabled in synthetic tests", { status: 503 })),
     }));
     const runtime = mf;
     const d1 = await runtime.getD1Database("FLORA_DB");
     return {
       mf: runtime, d1, inputs: Object.keys(output.metafile.inputs),
       namespace: (name: string) => runtime.getDurableObjectNamespace(name),
+      bucket: (name: string) => runtime.getR2Bucket(name),
       fetch: runtime.dispatchFetch.bind(runtime),
       async dispose(): Promise<void> {
         try { await runtime.dispose(); }

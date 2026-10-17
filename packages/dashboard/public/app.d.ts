@@ -3,6 +3,7 @@ export interface DashboardElement {
   id: string;
   firstElementChild: DashboardElement | null;
   open: boolean;
+  checked: boolean;
   textContent: string | null;
   value: string;
   disabled: boolean;
@@ -14,7 +15,7 @@ export interface DashboardElement {
   setAttribute(name: string, value: string): void;
   append(...children: DashboardElement[]): void;
   replaceChildren(...children: DashboardElement[]): void;
-  addEventListener(name: string, listener: (event: { target: { value: string; files?: readonly { size: number; text(): Promise<string> }[]; getAttribute?(name: string): string | null } }) => void): void;
+  addEventListener(name: string, listener: (event: { preventDefault(): void; target: { value: string; files?: readonly { size: number; text(): Promise<string> }[]; getAttribute?(name: string): string | null } }) => void): void;
 }
 export interface DashboardDocument {
   activeElement?: DashboardElement | null;
@@ -23,7 +24,9 @@ export interface DashboardDocument {
 }
 export interface ClientEnvironment {
   document: DashboardDocument;
-  location: { hash: string; pathname: string; search: string };
+  location: { hash: string; pathname: string; search: string; origin?: string };
+  navigator?: { clipboard?: { writeText(value: string): Promise<void> } };
+  addEventListener?(name: string, handler: () => void): void;
   history: { replaceState(data: unknown, unused: string, url?: string): void };
   fetch(url: string, init?: RequestInit): Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
   setTimeout(callback: () => void, delay: number): unknown;
@@ -35,8 +38,25 @@ export function renderStatus(document: DashboardDocument, status: "ready" | "loa
 export function startClient(environment: ClientEnvironment): Promise<{
   close(): void;
   refresh(): Promise<boolean>;
+  loadOperations(): Promise<boolean | undefined>;
+  loadAutomation(): Promise<boolean>;
+  loadAutomationJob(jobId: string): Promise<void>;
+  copyRunnerConfig(): Promise<void>;
+  queueAutomation(): Promise<void>;
+  saveAutomationPolicy(): Promise<void>;
+  cancelAutomation(jobId: string): Promise<void>;
+  enrollRunner(): Promise<void>;
+  revokeRunner(runnerId: string): Promise<void>;
+  copyRunnerToken(): Promise<void>;
+  hideRunnerToken(): void;
+  connectGitHub(): Promise<void>;
+  syncGitHub(): Promise<void>;
+  deployOTA(): Promise<void>;
   run(): Promise<void>;
   cancel(recordId: string): Promise<void>;
   importFile(kind: "source" | "baseline", file?: { size: number; text(): Promise<string> }): Promise<void>;
   chooseSnapshot(snapshotId: string): Promise<void>;
+  chooseApplication(appId: string): Promise<void>;
+  registerApplication(): Promise<void>;
+  saveSettings(): Promise<void>;
 }>;

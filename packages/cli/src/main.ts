@@ -18,7 +18,7 @@ const productName = (process.env.PRODUCT_NAME || "Flora")
 const help =
   productName +
   " — " +
-  "Local App Operations Foundation\nplatform doctor [--json]\nplatform config validate --file <json>\nplatform job simulate --file <json> [--scenario happy-path|runner-replacement|unsafe-expiry]\nflora dogfood --help\nNo native builds, provider connections or deployments.\n";
+  "Local App Operations Foundation\nplatform doctor [--json] [--strict]\nplatform config validate --file <json>\nplatform job simulate --file <json> [--scenario happy-path|runner-replacement|unsafe-expiry]\nflora dogfood --help\nDoctor --strict exits 1 when Node, pnpm or Git prerequisites are not verified.\nNo native builds, provider connections or deployments.\n";
 export async function runCli(
   argv: readonly string[],
   io: CliIO,
@@ -35,10 +35,13 @@ export async function runCli(
     }
     if (
       argv[0] === "doctor" &&
-      (argv.length === 1 || (argv.length === 2 && argv[1] === "--json"))
+      argv.length <= 3 &&
+      argv.slice(1).every(flag => flag === "--json" || flag === "--strict") &&
+      new Set(argv.slice(1)).size === argv.length - 1
     ) {
-      io.stdout(JSON.stringify(await inspectToolchain(), null, 2) + "\n");
-      return 0;
+      const report = await inspectToolchain();
+      io.stdout(JSON.stringify(report, null, 2) + "\n");
+      return argv.includes("--strict") && !report.readiness.ready ? 1 : 0;
     }
     const config = argv[0] === "config" && argv[1] === "validate",
       simulation = argv[0] === "job" && argv[1] === "simulate";

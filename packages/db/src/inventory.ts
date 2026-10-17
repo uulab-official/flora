@@ -3,6 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { digest, ensure, integer, object, safeJson, text } from "@app-ops/core";
 import { canonicalJson, freeze } from "@app-ops/config";
 import type { HeadObservation, InventorySnapshot } from "@app-ops/dogfood";
+import { registerApplicationInTransaction } from "./applications.js";
 import { row, rows, transaction } from "./database.js";
 
 export function getInventory(db: DatabaseSync, snapshotId: string): InventorySnapshot | null {
@@ -20,8 +21,7 @@ export function saveInventory(db: DatabaseSync, snapshot: InventorySnapshot): In
   const expected = createHash("sha256").update(canonicalJson({ repository: owned.repository, commitSha: owned.commitSha, rootDirectory: owned.rootDirectory, selectedFlavor: owned.selectedFlavor, files: owned.files })).digest("hex");
   ensure(expected === owned.digest);
   return transaction(db, () => {
-    const first = row(db, "SELECT repository_id,root_directory FROM inventory_snapshots LIMIT 1");
-    ensure(!first || (first.repository_id === owned.repository.id && first.root_directory === owned.rootDirectory), "CONFLICT");
+    registerApplicationInTransaction(db, { name: owned.repository.fullName.slice(0, 256), repositoryId: owned.repository.id, rootDirectory: owned.rootDirectory }, owned.importedAt, true);
     const existing = row(db, "SELECT id FROM inventory_snapshots WHERE digest=?", owned.digest);
     if (existing) return getInventory(db, String(existing.id))!;
     db.prepare("INSERT INTO inventory_snapshots(id,digest,repository_id,root_directory,commit_sha,imported_at,data) VALUES(?,?,?,?,?,?,?)")

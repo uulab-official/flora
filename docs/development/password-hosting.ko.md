@@ -1,6 +1,6 @@
 # 비밀번호 보호 웹 반입 개발 가이드
 
-이 경로는 단일 소유자의 비밀번호 로그인, 한 앱의 원본 source/baseline JSON 반입, 저장된 사실·provenance·반입 이력 조회를 제공한다. 한 앱의 여러 flavor를 표시하며 수십·수백 개 독립 앱의 통합 관리는 아직 지원하지 않는다. [고정 source 구조와 검사 profile](dogfood.ko.md#3-자신의-자료-가져오기)을 만족하는 자료만 반입할 수 있다. 웹에서는 Runner 실행·취소를 사용할 수 없다. 외부 OAuth, Access, R2, 유료 대체 경로, AI·OTA·광고·분석·오류수집 기능은 포함하지 않는다.
+이 경로는 단일 소유자의 비밀번호 로그인, 여러 repository/root 앱의 registry·설정·원본 source/baseline 반입·이력 조회를 제공합니다. GitHub 연결·OTA·외부 Runner의 자동 export 작업 관리는 [자동 배포 가이드](automation-runner.ko.md)를 따릅니다. Worker 안에서 앱 코드를 실행하지 않습니다. 외부 OAuth, Vault, 네이티브 빌드·스토어 제출, 광고·분석·오류수집은 후속 범위입니다. 기존 자료 보존은 [멀티앱 migration](multi-app.ko.md)을 따릅니다.
 
 로컬 검증과 운영 배포는 별도다. 현재 검증 범위와 아직 열려 있는 출시 조건은 [출시 증거](../release/password-hosting-evidence.md)에 기록한다. 로컬 native scrypt 또는 Miniflare 성공만으로 실제 Workers Free의 CPU·메모리·공유 계정 용량을 통과했다고 판단하지 않는다.
 
@@ -58,7 +58,7 @@ VALUES (1, 'OWNER_ID', 'https://your-flora.example', 'DB_IDENTITY');
 npm exec --yes --package=pnpm@11.19.0 -- pnpm --dir packages/cloudflare exec wrangler d1 execute FLORA_DB --remote --config "PRIVATE_CONFIG" --file "PRIVATE_SQL_FILE"
 ```
 
-적용 후 같은 SELECT로 marker 1개와 값 일치를 확인하고, `SELECT * FROM flora_capacity;`가 새 DB에서 count/bytes 모두 0인지, `PRAGMA foreign_key_check;`가 비어 있는지 확인한다. 실제 앱에 쓸 DB에 demo를 먼저 넣지 않는다. 첫 앱 반입 후에는 그 repository/root에 묶이고 다른 앱 반입은 충돌한다.
+적용 후 같은 SELECT로 marker 1개와 값 일치를 확인하고, `SELECT * FROM flora_capacity;`가 새 DB에서 count/bytes 모두 0인지, `PRAGMA foreign_key_check;`가 비어 있는지 확인한다. 실제 앱에 쓸 DB에 demo를 먼저 넣지 않는다. 다른 repository/root의 source를 가져오면 별도 앱으로 등록한다. 등록·설정 변경은 같은 작업실 용량 한도 안에서 동작한다.
 
 6. **잠긴 Worker와 정확한 hostname을 연결한다.** 설정·배포 파일 hash와 Git SHA를 기록한 후 아래 명령으로 최초 Worker/DO를 배포한다. 아직 route와 workers.dev가 모두 꺼져 있으므로 접속 주소는 없다. 같은 설정에 본인 hostname의 Custom Domain route(`pattern`, 확인한 `zone_id`, `custom_domain: true`)를 추가하고, DNS 충돌·TLS·무료 조건을 확인한 뒤 같은 명령으로 반영한다. Worker 이름·DO namespace·D1 UUID를 바꾸어 새 저장소를 만들지 않는다.
 
@@ -86,7 +86,7 @@ Worker와 DO를 함께 내보내는 설정에는 `limits.cpu_ms`를 지정하지
 
 DO와 D1에는 공유 transaction이 없다. logout·복구·만료는 다음 쓰기 제출을 막지만 이미 D1에 제출된 쓰기는 완료될 수 있다. 응답을 잃으면 같은 원본을 다시 보내서 저장된 immutable receipt를 확인한다. 자동 이력 삭제나 용량 초과 시 유료 저장소 전환은 없다.
 
-현재 용량 거부와 다른 앱 충돌은 모두 `409/CONFLICT`로 응답할 수 있다. 이 응답만으로 원인을 특정하거나 저장 한도를 올리지 말고 선택한 앱·원본·이력과 용량을 확인한다.
+현재 용량 거부와 중복 등록/설정 버전 충돌은 모두 `409/CONFLICT`로 응답할 수 있다. 이 응답만으로 원인을 특정하거나 저장 한도를 올리지 말고 선택한 앱·원본·이력과 용량을 확인한다.
 
 ## 고정 제한
 
@@ -97,8 +97,9 @@ DO와 D1에는 공유 transaction이 없다. logout·복구·만료는 다음 �
 | 인증 body | ≤8,192바이트 |
 | source / baseline / HEAD body | ≤1,048,576 / 131,072 / 4,096바이트; 초과 413 |
 | body 읽기 | 절대 10,000ms; 만료 408; 요청 범위 timer만 사용 |
+| 인증 입력 admission | 별도 슬롯 최대 4개, 각 body ≤8,192바이트; 검증·KDF 진입·종료까지 유지, 포화 시 body를 읽지 않고 409/BUSY; 반입 슬롯은 점유하지 않음 |
 | 무거운 작업 | DO 전체 KDF 또는 반입 1개; 이미 진행 중이면 409/BUSY, Retry-After 1 |
-| 인증 admission | 고정 900,000ms 창에 5회; KDF는 고정 3,600,000ms 창에 60회; 초과 429, 창 종료까지 제한된 Retry-After |
+| 인증 실행 admission | 지정 소유자의 실행 가능한 로그인 또는 유효 setup 요청만 고정 900,000ms 창에 5회; KDF는 고정 3,600,000ms 창에 60회; 초과 429, 창 종료까지 제한된 Retry-After; 비소유자 로그인은 두 예산 모두 소비하지 않음 |
 | 세션 | 절대 3,600,000ms, 최대 5개; 6번째 로그인은 가장 오래된 세션 취소 |
 | row / JSON 응답 | ≤524,288 / 1,048,576바이트 |
 | 목록 | keyset page 최대 20개, SELECT 21개로 다음 page 확인; 전체 report/log를 목록에서 읽지 않음 |
@@ -106,6 +107,10 @@ DO와 D1에는 공유 transaction이 없다. logout·복구·만료는 다음 �
 | 앱 저장 상한 | snapshot 100개, baseline 500개, 계산된 payload 합계 134,217,728바이트; 새 row만 거부하고 기존 receipt 조회 유지 |
 
 세션·CSRF는 독립적인 32바이트 난수이며 hash만 영속 저장한다. 두 `__Host-` cookie 모두 `Secure; HttpOnly; SameSite=Strict; Path=/`, Domain 없음이다. 변경 요청에는 정확한 Origin과 세션에 결합된 `X-Flora-CSRF`가 필요하다. 요청 body·비밀번호·설정 토큰·cookie·CSRF·비공개 내용·원문 SQL 오류는 로그에 남기지 않는다.
+
+인증 body를 읽는 동안 KDF·반입 공용 슬롯을 잡지 않는다. body·schema·소유자 또는 setup 검증 후 공용 슬롯을 즉시 획득하거나 `BUSY`로 거절하며, 비밀번호를 대기열에 넣지 않는다. 시작부터 공용 슬롯이 사용 중이면 body를 읽지 않고 거절한다. 입력 슬롯은 취소·timeout·검증/저장/KDF 오류에서도 반환된다. 비소유자 요청 8회 뒤 정상 로그인, 지연 입력 중 로그인·반입, 입력 슬롯 포화와 취소/timeout 복구, 입력 완료 전 시작한 반입과의 경쟁을 로컬 Worker/DO/D1 회귀 테스트로 확인한다. 운영 edge의 입력 지연 동작은 별도 검증이 필요하다.
+
+이 분리는 지연된 요청 하나가 정상 반입을 막는 문제와 비소유자 요청이 소유자 실행 한도를 소비하는 문제를 다룬다. 요청자별/IP별 제한은 제공하지 않는다. 입력 슬롯 전체를 채우는 공격, 지정 소유자 이메일을 아는 요청자의 전역 인증 한도 소진, 분산 부하는 남은 가용성 경계다. 공용 KDF 비용 제한을 제거하거나 사용자 지정 forwarded-IP 헤더를 신뢰하는 방식으로 우회하지 않는다.
 
 ## 등록·복구와 운영 중단 조건
 

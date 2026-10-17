@@ -16,9 +16,12 @@
     "platform": "node packages/cli/dist/main.js",
     "flora": "node packages/cli/dist/main.js",
     "verify:clean": "pnpm build && node scripts/clean-install.mjs",
-    "doctor:toolchain": "pnpm build && node scripts/verify-toolchain.mjs"
+    "doctor:toolchain": "pnpm build && node scripts/verify-toolchain.mjs",
+    "sdk:pack": "node scripts/pack-ota-sdk.mjs"
   },
   "devDependencies": {
+    "@flora/ota": "workspace:*",
+    "@flora/runner": "workspace:*",
     "typescript": "5.9.3",
     "@types/node": "24.19.1",
     "@app-ops/core": "workspace:*",

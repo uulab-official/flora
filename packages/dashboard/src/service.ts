@@ -1,12 +1,17 @@
 import { DomainError, ensure, object, text } from "@app-ops/core";
 import { freeze } from "@app-ops/config";
-import { assertParsedBaseline, assessReport, CONFIG_RUNTIME_SMOKE_V1, deriveFreshness } from "@app-ops/dogfood";
+import { applicationId, assertParsedBaseline, assessReport, CONFIG_RUNTIME_SMOKE_V1, deriveFreshness, parseApplicationRegistration, parseSettingsUpdate } from "@app-ops/dogfood";
+import type { ApplicationRegistration, ApplicationSummary, ManagedApplication, SettingsUpdate } from "@app-ops/dogfood";
+import { createOperationsService, createAutomationService } from "@app-ops/dogfood";
+import type { OperationsService, GitHubResolver, ExpoManifestSigner, AutomationService, AutomationSourceProvider } from "@app-ops/dogfood";
 import type { DogfoodStore, Freshness, HeadObservation, InventorySnapshot, VerificationCompletion, VerificationFence, VerificationProfile, VerificationRecord } from "@app-ops/dogfood";
 import { capabilities, selectProvider, VERIFICATION_CHECKS } from "@app-ops/runner-protocol";
 import type { CapabilityReport, CleanupReport, ExecutionRequirements, ProviderResult, VerificationProvider } from "@app-ops/runner-protocol";
-import { createImportService } from "./import-service.js";
+import { assertApplicationSource, createImportService } from "./import-service.js";
 
 export interface DashboardState {
+  applications?: ApplicationSummary[];
+  selectedApplication?: ManagedApplication | null;
   snapshots: InventorySnapshot[];
   selectedSnapshotId: string | null;
   freshness: Freshness;
@@ -16,12 +21,16 @@ export interface DashboardState {
   providers: CapabilityReport[];
 }
 export interface DogfoodService {
-  importSource(bytes: Uint8Array): Promise<InventorySnapshot>;
-  importBaseline(snapshotId: string, bytes: Uint8Array): Promise<VerificationRecord>;
-  importHead(observation: HeadObservation): Promise<void>;
-  getState(snapshotId?: string): Promise<DashboardState>;
-  requestRun(snapshotId: string, requestKey: string): Promise<VerificationRecord>;
-  cancelRun(recordId: string): Promise<VerificationRecord>;
+  automation?: AutomationService;
+  operations?: OperationsService;
+  registerApplication?(input: ApplicationRegistration): Promise<ManagedApplication>;
+  updateApplicationSettings?(appId: string, input: SettingsUpdate): Promise<ManagedApplication>;
+  importSource(bytes: Uint8Array, appId?: string): Promise<InventorySnapshot>;
+  importBaseline(snapshotId: string, bytes: Uint8Array, appId?: string): Promise<VerificationRecord>;
+  importHead(observation: HeadObservation, appId?: string): Promise<void>;
+  getState(snapshotId?: string, appId?: string): Promise<DashboardState>;
+  requestRun(snapshotId: string, requestKey: string, appId?: string): Promise<VerificationRecord>;
+  cancelRun(recordId: string, appId?: string): Promise<VerificationRecord>;
   close(): Promise<void>;
 }
 const requirements: ExecutionRequirements = freeze({
@@ -78,7 +87,7 @@ interface Attempt {
  * Production composition must register only createBlockedProvider(). Supported
  * branches exist solely for injected contract-test providers until adapter review.
  */
-export async function createDogfoodService(store: DogfoodStore, providers: readonly VerificationProvider[], now: () => number): Promise<DogfoodService> {
+export async function createDogfoodService(store: DogfoodStore, providers: readonly VerificationProvider[], now: () => number, options: { github?: GitHubResolver; publicOrigin?: string | (() => string); signer?: ExpoManifestSigner; automationSource?: AutomationSourceProvider } = {}): Promise<DogfoodService> {
   const imports = createImportService(store, now);
   const registered = [...providers];
   const identities = registered.map(provider => text(provider.id, 256));
@@ -95,6 +104,33 @@ export async function createDogfoodService(store: DogfoodStore, providers: reado
   const lifecycle = new Set<Promise<void>>();
   const errors: unknown[] = [];
   const open = () => ensure(!closed, "INVALID_TRANSITION");
+  const operationRequests = new Set<Promise<unknown>>();
+  async function operation<T>(work: () => Promise<T>): Promise<T> {
+    open();
+    const pending = Promise.resolve().then(work); operationRequests.add(pending);
+    try { return await pending; } finally { operationRequests.delete(pending); }
+  }
+  const rawOperations = store.applications && store.operations ? createOperationsService({ applications: store.applications, operations: store.operations }, options.github, now, { ...(options.publicOrigin ? { publicOrigin: options.publicOrigin } : {}), ...(options.signer ? { signer: options.signer } : {}) }) : null;
+  const operations: OperationsService | null = rawOperations ? {
+    getState: (...args) => operation(() => rawOperations.getState(...args)),
+    connect: (...args) => operation(() => rawOperations.connect(...args)),
+    detect: (...args) => operation(() => rawOperations.detect(...args)),
+    detectCommit: (...args) => operation(() => rawOperations.detectCommit(...args)),
+    uploadAsset: (...args) => operation(() => rawOperations.uploadAsset(...args)),
+    publish: (...args) => operation(() => rawOperations.publish(...args)),
+    rollback: (...args) => operation(() => rawOperations.rollback(...args)),
+    getUpdate: (...args) => operation(() => rawOperations.getUpdate(...args)),
+    getPublishedAsset: (...args) => operation(() => rawOperations.getPublishedAsset(...args)),
+  } : null;
+  const rawAutomation = store.applications && store.operations && store.automation && options.publicOrigin
+    ? createAutomationService({ applications: store.applications, operations: store.operations, automation: store.automation }, {
+      now, publicOrigin: options.publicOrigin, ...(options.automationSource ? { source: options.automationSource } : {}),
+      ...(rawOperations ? { detectCommit: (appId, sha) => rawOperations.detectCommit(appId, sha),
+        detectPushCommit: (appId, sha) => rawOperations.detectCommit(appId, sha, { requireCurrentRef: true }) } : {}),
+    }) : null;
+  const automation = rawAutomation ? Object.fromEntries(Object.entries(rawAutomation).map(([key, method]) =>
+    [key, (...args: unknown[]) => operation(() => (method as (...values: unknown[]) => Promise<unknown>)(...args))],
+  )) as unknown as AutomationService : null;
   function stopTimer(attempt: Attempt): void {
     if (attempt.timer !== null) clearTimeout(attempt.timer);
     attempt.timer = null;
@@ -255,9 +291,13 @@ export async function createDogfoodService(store: DogfoodStore, providers: reado
     }
     return record;
   }
-  function requestRun(snapshotId: string, requestKey: string): Promise<VerificationRecord> {
+  function requestRun(snapshotId: string, requestKey: string, appId?: string): Promise<VerificationRecord> {
     const pending = (async () => {
       open();
+      if (appId !== undefined) {
+        const snapshot = await store.getInventory(snapshotId); ensure(snapshot, "NOT_FOUND");
+        await assertApplicationSource(store, appId, snapshot);
+      }
       const receipt = await store.createVerification({ snapshotId, requestKey, now: now() });
       if (receipt.created) {
         let resolve!: () => void;
@@ -278,33 +318,57 @@ export async function createDogfoodService(store: DogfoodStore, providers: reado
     return pending;
   }
   return {
-    async importSource(bytes) {
+    ...(automation ? { automation } : {}),
+    ...(operations ? { operations } : {}),
+    async registerApplication(input) {
+      open(); ensure(store.applications, "PROVIDER_UNSUPPORTED");
+      return store.applications.registerApplication(parseApplicationRegistration(input), now());
+    },
+    async updateApplicationSettings(appId, input) {
+      open(); ensure(store.applications, "PROVIDER_UNSUPPORTED");
+      return store.applications.updateApplicationSettings(applicationId(appId), parseSettingsUpdate(input), now());
+    },
+    async importSource(bytes, appId) {
       open();
-      const snapshot = await imports.importSource(bytes);
+      const snapshot = await imports.importSource(bytes, appId);
       lastImportedId = snapshot.id;
       return snapshot;
     },
-    async importBaseline(snapshotId, bytes) {
+    async importBaseline(snapshotId, bytes, appId) {
       open();
-      return imports.importBaseline(snapshotId, bytes);
+      return imports.importBaseline(snapshotId, bytes, appId);
     },
-    async importHead(observation) { open(); await imports.importHead(observation); },
-    async getState(snapshotId) {
-      const snapshots = await store.listInventory();
-      const selectedSnapshotId = snapshotId ?? lastImportedId ?? snapshots.at(-1)?.id ?? null;
+    async importHead(observation, appId) { open(); await imports.importHead(observation, appId); },
+    async getState(snapshotId, appId) {
+      const all = await store.listInventory();
+      let selectedApplication = appId === undefined ? null : await store.applications?.getApplication(applicationId(appId));
+      ensure(appId === undefined || selectedApplication, "NOT_FOUND");
+      const requested = snapshotId ?? lastImportedId ?? all.at(-1)?.id;
+      if (appId === undefined && requested && store.applications) selectedApplication = await store.applications.getApplicationForSnapshot(requested);
+      const snapshots = selectedApplication ? all.filter(item => item.repository.id === selectedApplication!.repositoryId && item.rootDirectory === selectedApplication!.rootDirectory) : all;
+      const selectedSnapshotId = snapshotId ?? (snapshots.some(item => item.id === lastImportedId) ? lastImportedId : undefined) ?? snapshots.at(-1)?.id ?? null;
       const snapshot = snapshots.find(item => item.id === selectedSnapshotId);
       ensure(selectedSnapshotId === null || snapshot, "NOT_FOUND");
       const [headObservation, history] = snapshot
         ? await Promise.all([store.getHeadObservation(snapshot), store.listVerifications(snapshot.id)]) : [null, []];
-      return freeze({ snapshots, selectedSnapshotId, freshness: snapshot ? deriveFreshness(snapshot, headObservation) : "freshness_unknown",
+      return freeze({ ...(store.applications ? { applications: await store.applications.listApplications(), selectedApplication: selectedApplication ?? null } : {}), snapshots, selectedSnapshotId, freshness: snapshot ? deriveFreshness(snapshot, headObservation) : "freshness_unknown",
         headObservation, history, profile: CONFIG_RUNTIME_SMOKE_V1, providers: [...reports] });
     },
     requestRun,
-    cancelRun(recordId) { return trackRequest((async () => { open(); return cancelRun(recordId); })()); },
+    cancelRun(recordId, appId) { return trackRequest((async () => {
+      open();
+      if (appId !== undefined) {
+        const record = await store.getVerification(recordId); ensure(record, "NOT_FOUND");
+        const snapshot = await store.getInventory(record.snapshotId); ensure(snapshot, "NOT_FOUND");
+        await assertApplicationSource(store, appId, snapshot);
+      }
+      return cancelRun(recordId);
+    })()); },
     close() {
       if (closing) return closing;
       closed = true;
       closing = (async () => {
+        await Promise.allSettled([...operationRequests]);
         await Promise.allSettled([...requests]);
         const owned = [...attempts.values()];
         await Promise.all(owned.map(async attempt => {

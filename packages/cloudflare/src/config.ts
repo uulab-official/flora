@@ -39,5 +39,18 @@ export function readConfig(env: FloraEnv): FloraConfig {
   binding(env.FLORA_DB, ["prepare", "batch", "exec"]);
   binding(env.FLORA_AUTH, ["idFromName", "get"]);
   binding(env.ASSETS, ["fetch"]);
-  return Object.freeze({ origin: url.origin, ownerId, ownerEmail: env.FLORA_OWNER_EMAIL, dbIdentity, setup: setupWindow(env.FLORA_SETUP) });
+  if (env.FLORA_OTA_ASSETS !== undefined) binding(env.FLORA_OTA_ASSETS, ["get", "put"]);
+  const githubAssets = env.FLORA_OTA_ASSET_STORAGE;
+  requireConfig(githubAssets === undefined || githubAssets === "github-releases");
+  const positiveIdentifier = (value: unknown) => typeof value === "string" && /^[1-9][0-9]{0,15}$/.test(value) && Number.isSafeInteger(Number(value));
+  if (githubAssets === "github-releases") {
+    requireConfig(env.FLORA_OTA_ASSETS === undefined && typeof env.FLORA_OTA_ASSET_REPOSITORY === "string" && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/.test(env.FLORA_OTA_ASSET_REPOSITORY));
+    requireConfig(positiveIdentifier(env.FLORA_OTA_ASSET_INSTALLATION_ID) && positiveIdentifier(env.FLORA_OTA_ASSET_REPOSITORY_ID));
+  } else requireConfig(env.FLORA_OTA_ASSET_REPOSITORY === undefined && env.FLORA_OTA_ASSET_INSTALLATION_ID === undefined && env.FLORA_OTA_ASSET_REPOSITORY_ID === undefined);
+  const workspaceName = env.FLORA_WORKSPACE_NAME;
+  requireConfig(workspaceName === undefined || typeof workspaceName === "string" && /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/.test(workspaceName));
+  const minimum = env.FLORA_PASSWORD_MIN_LENGTH;
+  requireConfig(minimum === undefined || minimum === "15" || minimum === "12" && workspaceName === "UULab");
+  return Object.freeze({ origin: url.origin, ownerId, ownerEmail: env.FLORA_OWNER_EMAIL, dbIdentity, setup: setupWindow(env.FLORA_SETUP),
+    ...(workspaceName === undefined ? {} : { workspaceName }), ...(minimum === undefined ? {} : { passwordMinimum: Number(minimum) as 12 | 15 }) });
 }

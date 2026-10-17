@@ -28,6 +28,45 @@ test("doctor reports actual local OS without pretending native readiness", () =>
   assert.equal(report.node.version, process.version);
   assert.equal(report.nativeBuildVerified, false);
 });
+test("strict doctor fails missing prerequisites while legacy doctor remains informational", () => {
+  const env = { ...process.env, PATH: "", npm_execpath: "" };
+  for (const flags of [["--strict", "--json"], ["--json", "--strict"], ["--strict"]]) {
+    const result = run(["doctor", ...flags], env);
+    assert.equal(result.status, 1, result.stderr);
+    const report = JSON.parse(result.stdout);
+    assert.equal(report.readiness.ready, false);
+    assert.ok(report.readiness.issues.some((issue: { code: string }) => issue.code === "PNPM_NOT_VERIFIED"));
+    assert.ok(report.readiness.issues.some((issue: { code: string }) => issue.code === "GIT_UNAVAILABLE"));
+    assert.equal(report.nativeBuildVerified, false);
+    assert.equal(result.stderr, "");
+  }
+  const legacy = run(["doctor", "--json"], env);
+  assert.equal(legacy.status, 0);
+  assert.equal(JSON.parse(legacy.stdout).readiness.ready, false);
+  for (const flags of [["--strict", "--strict"], ["--json", "--json"], ["--strict", "--invalid"]])
+    assert.equal(run(["doctor", ...flags], env).status, 2);
+});
+test("strict doctor succeeds on verified prerequisites and rejects the actual pnpm version mismatch", () => {
+  const directory = mkdtempSync(join(tmpdir(), "flora-doctor-toolchain-"));
+  try {
+    const entry = join(directory, "pnpm.cjs");
+    writeFileSync(join(directory, "package.json"), JSON.stringify({ name: "pnpm", version: "11.19.0" }));
+    writeFileSync(entry, "console.log('11.19.0');console.error('private-sample')");
+    const env = { ...process.env, npm_execpath: entry };
+    const healthy = run(["doctor", "--strict", "--json"], env);
+    assert.equal(healthy.status, 0, healthy.stderr + healthy.stdout);
+    const report = JSON.parse(healthy.stdout);
+    assert.deepEqual(report.readiness, { ready: true, issues: [] });
+    assert.equal(report.nativeBuildVerified, false);
+    assert.ok(!healthy.stdout.includes("private-sample"));
+    writeFileSync(entry, "console.log('10.9.0')");
+    const mismatch = run(["doctor", "--strict"], env);
+    assert.equal(mismatch.status, 1);
+    assert.equal(JSON.parse(mismatch.stdout).readiness.issues[0].code, "PNPM_VERSION_UNSUPPORTED");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 test("configuration CLI hides values and aliases share implementation", () => {
   const r = run(["config", "validate", "--file", example]);
   assert.equal(r.status, 0, r.stderr);

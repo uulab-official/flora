@@ -1,4 +1,5 @@
 export function requireLockfile(directory: string): void;
+export function requireWorkspaceSources(root: string, paths: readonly string[]): void;
 export function snapshotFiles(
   root: string,
   paths: readonly string[],

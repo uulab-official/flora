@@ -4,6 +4,7 @@ import { DomainError, ensure, integer, object, safeJson, text } from "@app-ops/c
 import { canonicalJson, freeze } from "@app-ops/config";
 import { assertParsedBaseline, assessReport, CONFIG_RUNTIME_SMOKE_V1, parseBaselineBundle } from "@app-ops/dogfood";
 import type { BaselineEvidence, PreparedBaselineImport, ReportAssessment, VerificationCompletion, VerificationCreation, VerificationFence, VerificationRecord, VerificationState } from "@app-ops/dogfood";
+import { getApplicationForSnapshot } from "./applications.js";
 import { getInventory } from "./inventory.js";
 import { row, rows, transaction } from "./database.js";
 import type { Row } from "./database.js";
@@ -42,21 +43,21 @@ function fromRow(value: Row): VerificationRecord {
     id: String(value.id), snapshotId: String(value.snapshot_id), sourceDigest: String(value.source_digest), profileId: String(value.profile_id),
     evidenceKind: value.evidence_kind as VerificationRecord["evidenceKind"], evidenceOrigin: value.evidence_origin as VerificationRecord["evidenceOrigin"],
     state: value.state as VerificationState, code: value.code as string | null, cleanupCode: value.cleanup_code as VerificationRecord["cleanupCode"],
-    requestKind: value.request_kind as VerificationRecord["requestKind"], requestKey: String(value.request_key), attemptId: value.attempt_id as string | null,
+    requestKind: value.request_kind as VerificationRecord["requestKind"], requestKey: String(value.raw_request_key ?? value.request_key), attemptId: value.attempt_id as string | null,
     fence: Number(value.fence), leaseUntil: value.lease_until as number | null, createdAt: Number(value.created_at), updatedAt: Number(value.updated_at),
     evidence: value.evidence === null ? null : JSON.parse(String(value.evidence)) as BaselineEvidence,
     assessment: value.assessment === null ? null : JSON.parse(String(value.assessment)) as ReportAssessment,
   });
 }
 export function getVerification(db: DatabaseSync, recordId: string): VerificationRecord | null {
-  const found = row(db, "SELECT * FROM verification_records WHERE id=?", text(recordId));
+  const found = row(db, "SELECT v.*,k.request_key AS raw_request_key FROM verification_records v LEFT JOIN application_request_keys k ON k.record_id=v.id WHERE v.id=?", text(recordId));
   return found ? fromRow(found) : null;
 }
 function requireRecord(db: DatabaseSync, id: string): VerificationRecord {
   const record = getVerification(db, id); ensure(record, "NOT_FOUND"); return record;
 }
 export function listVerifications(db: DatabaseSync, snapshotId: string): VerificationRecord[] {
-  return rows(db, "SELECT * FROM verification_records WHERE snapshot_id=? ORDER BY created_at,id", text(snapshotId)).map(fromRow);
+  return rows(db, "SELECT v.*,k.request_key AS raw_request_key FROM verification_records v LEFT JOIN application_request_keys k ON k.record_id=v.id WHERE v.snapshot_id=? ORDER BY v.created_at,v.id", text(snapshotId)).map(fromRow);
 }
 function safeCode(value: unknown): string {
   const code = text(value, 96); ensure(/^[A-Z][A-Z0-9_]*$/.test(code)); return code;
@@ -104,14 +105,16 @@ export function createVerification(db: DatabaseSync, input: { snapshotId: string
   const id = "verification_" + randomUUID();
   return transaction(db, () => {
     const snapshot = getInventory(db, snapshotId); ensure(snapshot, "NOT_FOUND");
-    const existing = row(db, "SELECT * FROM verification_records WHERE request_kind='run-request' AND request_key=?", requestKey);
+    const app = getApplicationForSnapshot(db, snapshotId); ensure(app, "INVALID_RELATION");
+    const existing = row(db, "SELECT v.*,k.request_key AS raw_request_key FROM application_request_keys k JOIN verification_records v ON v.id=k.record_id WHERE k.app_id=? AND k.request_key=?", app.id, requestKey);
     if (existing) {
       const record = fromRow(existing); ensure(record.snapshotId === snapshotId, "IDEMPOTENCY_CONFLICT");
       return { record, created: false };
     }
     db.prepare(`INSERT INTO verification_records(id,snapshot_id,source_digest,profile_id,evidence_kind,evidence_origin,state,code,cleanup_code,request_kind,request_key,attempt_id,fence,lease_until,created_at,updated_at,evidence,assessment)
       VALUES(?,?,?,?,'isolated-runner-result','flora-request','queued',NULL,NULL,'run-request',?,NULL,0,NULL,?,?,NULL,NULL)`)
-      .run(id, snapshot.id, snapshot.digest, CONFIG_RUNTIME_SMOKE_V1.id, requestKey, now, now);
+      .run(id, snapshot.id, snapshot.digest, CONFIG_RUNTIME_SMOKE_V1.id, "internal_" + randomUUID(), now, now);
+    db.prepare("INSERT INTO application_request_keys VALUES(?,?,?)").run(app.id, requestKey, id);
     return { record: requireRecord(db, id), created: true };
   });
 }

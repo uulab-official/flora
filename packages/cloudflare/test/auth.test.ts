@@ -17,10 +17,10 @@ function capability(generation = 1, purpose: SetupWindow["purpose"] = "enroll", 
   const bytes = randomBytes(32);
   return { token: bytes.toString("base64url"), setup: { digest: createHash("sha256").update(bytes).digest("hex"), issuedAt: now, expiresAt: now + 600_000, generation, purpose } };
 }
-async function harness(t: TestContext, setup?: SetupWindow, entrypoint: string | URL = new URL("./fixtures/auth-entry.ts", import.meta.url)) {
+async function harness(t: TestContext, setup?: SetupWindow, entrypoint: string | URL = new URL("./fixtures/auth-entry.ts", import.meta.url), extraBindings: Record<string, string> = {}) {
   const runtime = await createTestRuntime({ entrypoint, durableObjects: { FLORA_AUTH: "FixtureAuth" }, bindings: {
     FLORA_ORIGIN: origin, FLORA_OWNER_ID: "synthetic-owner", FLORA_OWNER_EMAIL: email, FLORA_DB_IDENTITY: "synthetic-db",
-    ...(setup ? { FLORA_SETUP: setup } : {}),
+    ...(setup ? { FLORA_SETUP: setup } : {}), ...extraBindings,
   } });
   t.after(() => runtime.dispose());
   const call = (path: string, body?: unknown, headers: Record<string, string> = {}) => runtime.fetch(origin + path, {
@@ -231,6 +231,22 @@ test("wrong_owner_and_malformed_capabilities_cannot_spend_kdf_or_provision", asy
   assert.deepEqual(await (await h.control({ sql: "SELECT COUNT(*) AS n FROM flora_auth_budget" })).json(), [{ n: 1 }]);
 });
 
+test("non_owner_logins_cannot_exhaust_the_owner_authentication_budget", async t => {
+  const cap = capability(), h = await harness(t, cap.setup), first = await enroll(h, cap);
+  const before = await h.stats();
+  for (let i = 0; i < 8; i++) {
+    const rejected = await h.call("/api/auth/login", { email: `unrelated-${i}@example.test`, password: password() });
+    assert.equal(rejected.status, 401);
+    assert.equal(rejected.headers.getSetCookie().length, 0);
+    await rejected.json();
+  }
+  assert.deepEqual(await h.stats(), before, "Non-owner requests must not charge either durable budget");
+  assert.equal((await h.call("/api/auth/login", { email, password: first.secret })).status, 200);
+  const after = (await h.stats())[0]!;
+  assert.equal(after.attempts, before[0]!.attempts + 1);
+  assert.equal(after.kdfs, before[0]!.kdfs + 1);
+});
+
 test("stale_generation_after_kdf_cannot_replace_new_window", async t => {
   const cap = capability(), h = await harness(t, cap.setup), next = capability(2);
   await h.control({ setupOnReservation: next.setup });
@@ -371,7 +387,12 @@ test("kernel_rejection_maps_to_503_in_the_real_do", async t => {
   await writeFile(faultKernel, `export { createPasswordVerifier } from ${JSON.stringify(kernelPath)}; export async function verifyPassword() { throw new Error("PASSWORD_KDF_FAILED"); }`);
   const source = await readFile(authorityPath, "utf8");
   assert.equal(source.split('from "./auth/password.js"').length, 2);
-  const authority = source.replace(/from "(\.[^"]+)"/g, (_, specifier: string) => `from ${JSON.stringify(specifier === "./auth/password.js" ? faultKernel : resolve(dirname(authorityPath), specifier))}`);
+  const authority = source.replace(/from "(\.[^"]+)"/g, (_, specifier: string) => `from ${JSON.stringify(specifier === "./auth/password.js" ? faultKernel : resolve(dirname(authorityPath), specifier))}`)
+    .replace('from "@app-ops/dogfood"', `from ${JSON.stringify(fileURLToPath(new URL("../../dogfood/dist/index.js", import.meta.url)))}`)
+    .replace('from "@app-ops/core"', `from ${JSON.stringify(fileURLToPath(new URL("../../core/dist/index.js", import.meta.url)))}`)
+    .replace('from "@app-ops/config"', `from ${JSON.stringify(fileURLToPath(new URL("../../config/dist/index.js", import.meta.url)))}`)
+    .replace('from "@app-ops/dashboard/automation-http"', `from ${JSON.stringify(fileURLToPath(new URL("../../dashboard/dist/automation-http.js", import.meta.url)))}`)
+    .replace('from "@app-ops/dashboard/operations-http"', `from ${JSON.stringify(fileURLToPath(new URL("../../dashboard/dist/operations-http.js", import.meta.url)))}`);
   const injectedAuthority = join(directory, "auth-do.mjs");
   await writeFile(injectedAuthority, authority);
   const fixture = await readFile(new URL("./fixtures/auth-entry.ts", import.meta.url), "utf8");
@@ -397,10 +418,10 @@ test("unicode_codepoint_boundaries_work_through_native_do_kdf", async t => {
   }
 });
 
-test("body_deadline_releases_heavy_guard_without_kdf", async t => {
+test("body_deadline_releases_all_auth_body_slots_without_kdf", async t => {
   const cap = capability(), h = await harness(t, cap.setup);
-  const result = await h.call("/__test/slow-body");
-  assert.equal(result.status, 408);
+  const results = await Promise.all(Array.from({ length: 4 }, () => h.call("/__test/slow-body")));
+  for (const result of results) { assert.equal(result.status, 408); await result.json(); }
   assert.equal((await h.stats())[0]!.kdfs, 0);
   await enroll(h, cap);
 });
@@ -429,4 +450,20 @@ test("enroll_and_recover_require_exact_confirmation_before_kdf", async t => {
   assert.equal(missingRecovery.status, 400);
   assert.equal((await h.call("/api/auth/recover", { email, password: secret, confirmation: secret.normalize("NFD") + " ", token: next.token })).status, 400);
   assert.equal((await h.stats())[0]!.kdfs, 1);
+});
+
+
+test("UULab-only deployment policy enrolls and logs in a 12 codepoint owner without changing default policy", async t => {
+  const cap = capability(), secret = randomBytes(6).toString("hex");
+  const normal = await harness(t, cap.setup);
+  const rejected = await normal.call("/api/auth/enroll", {email, password: secret, token: cap.token});
+  assert.equal(rejected.status, 400); assert.equal((await normal.stats())[0]!.kdfs, 0);
+  const h = await harness(t, cap.setup, new URL("./fixtures/auth-entry.ts", import.meta.url), {
+    FLORA_WORKSPACE_NAME: "UULab", FLORA_PASSWORD_MIN_LENGTH: "12",
+  });
+  const owner = await enroll(h, cap, secret);
+  const session = await h.call("/api/auth/session", undefined, {Cookie: owner.cookie});
+  assert.equal(session.status, 200); assert.equal((await session.json() as {workspaceName:string}).workspaceName, "UULab");
+  const login = await h.call("/api/auth/login", {email, password: secret}); assert.equal(login.status, 200);
+  assert.equal((await h.call("/api/auth/login", {email, password: secret.slice(1)})).status, 401);
 });

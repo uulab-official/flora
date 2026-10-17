@@ -14,7 +14,7 @@ class Element {
   set textContent(value: string) { this.text = value; this.children = []; }
   get textContent(): string { return this.text + this.children.map(child => child.textContent).join(""); }
   set innerHTML(_value: string) { assert.fail("Untrusted content reached innerHTML"); }
-  open = false;
+  open = false; checked = false;
   get firstElementChild(): Element | null { return this.children[0] ?? null; }
   focused = false;
   focus() { this.focused = true; }
@@ -67,7 +67,7 @@ test("loading, session and error messages offer a practical next step and no cac
   renderStatus(document, "error", "INVALID_INPUT"); assert.ok(document.text.includes("JSON"));
   const source = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
   assert.ok(!/innerHTML|outerHTML|insertAdjacentHTML|localStorage|sessionStorage|serviceWorker/.test(source));
-  assert.ok(!/https?:\/\//.test(source), "no external runtime resources or untrusted links");
+  assert.ok(!/https?:\/\//.test(source.replace("https://flora.example.com", "")), "no external runtime resources or untrusted links");
 });
 
 test("bootstrap fragment is erased before exchange; reload restores cookie session without new bootstrap", async () => {
@@ -90,7 +90,7 @@ async function controller(initial: DashboardState, intercept: (url: string, init
     fetch: async (url, init) => {
       calls.push({ url, ...(init ? { init } : {}) }); const override = await intercept(url, init);
       return { ok: true, status: 200, json: async () => override ?? (url === "/api/session" ? { csrfToken: "c".repeat(64) } : current) };
-    }, setTimeout(callback, delay) { assert.equal(delay, 1000); const id = ++nextTimer; timers.set(id, callback); return id; }, clearTimeout(handle) { timers.delete(handle as number); } });
+    }, setTimeout(callback, delay) { assert.ok([1000, 5000, 10000, 30000].includes(delay)); const id = ++nextTimer; timers.set(id, callback); return id; }, clearTimeout(handle) { timers.delete(handle as number); } });
   return { client, document, calls, timers, setState(value: DashboardState) { current = value; } };
 }
 
@@ -252,4 +252,199 @@ test("all declared small text colors meet 4.5:1 on their current CSS backgrounds
   assert.deepEqual(checked, new Set(Object.keys(backgrounds)));
   const focus = "button:focus-visible,a:focus-visible,summary:focus-visible,select:focus-visible,.file-input:focus-visible";
   for (const surface of [":root", ".topbar", ".card", ".trust-note", ".notice"]) assertContrast(styles.color(focus, "outline"), styles.color(surface, "background"), 3, "focus on " + surface);
+});
+
+function registered(id: string) { return { id, name: "등록 앱 " + id, repositoryId: "repo_" + id, rootDirectory: ".", createdAt: 0, settings: { version: 0, values: { PUBLIC_NAME: id }, updatedAt: 0 } }; }
+async function registeredState(id: string): Promise<DashboardState> { return { ...await state(), applications: [registered("a"), registered("b")].map(({ id, name, createdAt }) => ({ id, name, createdAt })), selectedApplication: registered(id) } as DashboardState; }
+
+test("local application selector and settings remain available without a source snapshot", async () => {
+  const data = { ...await registeredState("a"), snapshots: [], selectedSnapshotId: null };
+  const app = await controller(data);
+  assert.equal(app.document.getElementById("application-panel").hidden, false);
+  assert.equal(app.document.getElementById("application-settings").hidden, false);
+  assert.equal(app.document.getElementById("application-count").textContent, "2개");
+  assert.equal(app.document.getElementById("settings-editor").open, false);
+  assert.ok(!app.document.getElementById("application-select").textContent.includes("undefined"));
+  assert.equal(app.document.getElementById("run-button").disabled, true);
+  app.client.close();
+  assert.equal(app.document.getElementById("settings-json").value, "");
+});
+
+test("local app switch clears private content before loading and ignores older responses", async () => {
+  const gate = deferred<DashboardState>(); let delayed = false;
+  const app = await controller(await registeredState("a"), async url => {
+    if (delayed && url.includes("appId=a")) return gate.promise;
+    if (url.includes("appId=b")) return registeredState("b");
+  });
+  delayed = true; const old = app.client.refresh(); const switching = app.client.chooseApplication("b");
+  assert.equal(app.document.getElementById("settings-json").value, "");
+  assert.equal(app.document.getElementById("baseline-file").disabled, true);
+  await app.client.run(); assert.ok(!app.calls.some(call => call.url.startsWith("/api/runs")));
+  await switching; gate.resolve(await registeredState("a")); await old;
+  assert.equal(app.document.getElementById("application-select").value, "b");
+  assert.equal(JSON.parse(app.document.getElementById("settings-json").value).PUBLIC_NAME, "b");
+  app.client.close();
+});
+
+test("local settings and registration post bounded JSON with version and identity", async () => {
+  const app = await controller(await registeredState("a"), async (url, init) => {
+    if (url === "/api/apps/a/settings") { assert.deepEqual(JSON.parse(init!.body as string), { expectedVersion: 0, values: { PUBLIC_NAME: "updated" } }); return { ...registered("a"), settings: { version: 1, values: { PUBLIC_NAME: "updated" }, updatedAt: 1 } }; }
+    if (url === "/api/apps") { assert.deepEqual(JSON.parse(init!.body as string), { name: "New", repositoryId: "repo_new", rootDirectory: "apps/new" }); return registered("b"); }
+  });
+  app.document.getElementById("settings-json").value = '{"PUBLIC_NAME":"updated"}'; await app.client.saveSettings();
+  app.document.getElementById("application-name").value = "New"; app.document.getElementById("application-repository").value = "repo_new"; app.document.getElementById("application-root").value = "apps/new";
+  app.document.getElementById("application-registration").open = true;
+  await app.client.registerApplication(); assert.equal(app.document.getElementById("application-registration").open, false); assert.ok(app.calls.some(call => call.url === "/api/state?appId=b"));
+  app.client.close();
+});
+
+function localOps() { const connection = { appId: "a", version: 1, installationId: 123, owner: "synthetic", repository: "expo-app", ref: "main", connectedAt: 0 }; return { connection, detections: [{ id: "detection_a", appId: "a", connection, rootDirectory: ".", detectedAt: 0, commitSha: "a".repeat(40), framework: "expo", expoVersion: "57", reactNativeVersion: "0.86", configSource: "app.json", runtimeVersion: "1.0.0", platforms: ["ios"], updatesEnabled: true, updatesUrl: "/updates/a", reasons: [] }], assets: [], deployments: [] }; }
+
+test("local GitHub operations use selected app, real export uploads and pinned publication fields", async () => {
+  let count = 0; let publication: any;
+  const app = await controller(await registeredState("a"), async (url, init) => {
+    if (url === "/api/apps/a/operations") return localOps();
+    if (url.startsWith("/api/apps/a/ota/assets?")) { assert.ok(init?.body instanceof File); return { id: "asset_" + ++count, appId: "a" }; }
+    if (url === "/api/apps/a/ota/deployments") { publication = JSON.parse(init!.body as string); return { id: "deployment_1", appId: "a" }; }
+  });
+  await app.client.loadOperations();
+  assert.ok(app.document.getElementById("framework-detection").textContent.includes("1.0.0"));
+  app.document.getElementById("ota-platform").value = "ios"; app.document.getElementById("ota-channel").value = "preview";
+  app.document.getElementById("ota-launch").files = [new File(["real export"], "ios.js")];
+  await app.client.deployOTA();
+  assert.equal(publication.commitSha, "a".repeat(40)); assert.equal(publication.runtimeVersion, "1.0.0"); assert.equal(publication.launchAssetId, "asset_1");
+  app.client.close(); assert.equal(app.document.getElementById("github-owner").value, "");
+});
+
+test("session clearing also erases the connected GitHub summary for apps without legacy snapshots", async () => {
+  const app = await controller({ ...await registeredState("a"), snapshots: [], selectedSnapshotId: null }, async url => url === "/api/apps/a/operations" ? localOps() : undefined);
+  await app.client.loadOperations(); assert.ok(app.document.getElementById("empty").textContent.includes("synthetic/expo-app"));
+  app.client.close(); assert.equal(app.document.getElementById("empty").textContent, ""); assert.ok(!app.document.text.includes("synthetic/expo-app"));
+});
+
+test("local visible automation polls active jobs and clears timers and nonsecret template on close", async () => {
+  let terminal = false; const app = await controller(await registeredState("a"), async url => {
+    if (url === "/api/apps/a/operations") return localOps();
+    if (url === "/api/apps/a/automation") return { jobs: [{ id: "job_a", appId: "a", state: terminal ? "failed" : "queued", attemptCount: 0 }], runners: [] };
+  });
+  app.document.getElementById("automation-editor").open = true; await app.client.loadAutomation(); assert.equal(app.timers.size, 1);
+  terminal = true; [...app.timers.values()][0]!(); await new Promise(resolve => setImmediate(resolve)); assert.equal(app.timers.size, 0);
+  assert.ok(app.document.getElementById("runner-config-template").textContent.includes("REPLACE_WITH_ONE_TIME")); app.client.close();
+  assert.equal(app.document.getElementById("runner-config-template").textContent, "");
+});
+
+test("project cards show real registry entries, search safely and keep repository details scoped to selection", async () => {
+  const document = new Document();
+  const data = await registeredState("a");
+  data.applications![1]!.name = '<img src=x onerror="bad()">';
+  renderDashboard(document, data);
+  const list = document.getElementById("project-list");
+  assert.equal(list.children.length, 2);
+  assert.equal(list.children[0]!.getAttribute("data-select-application"), data.applications![0]!.id);
+  assert.equal(list.children[0]!.getAttribute("aria-pressed"), "true");
+  assert.equal(list.children[1]!.getAttribute("aria-pressed"), "false");
+  assert.ok(list.textContent.includes('<img src=x'));
+  assert.ok(list.textContent.includes(data.selectedApplication!.repositoryId));
+  assert.ok(!list.textContent.includes(registered("b").repositoryId));
+  assert.equal(document.getElementById("project-total").textContent, "2개 프로젝트");
+  document.getElementById("project-search").value = "does-not-exist";
+  renderDashboard(document, data);
+  assert.equal(list.textContent, "검색한 프로젝트가 없습니다.");
+  document.getElementById("project-search").value = data.applications![1]!.id;
+  renderDashboard(document, data);
+  assert.equal(list.children.length, 1);
+  assert.equal(list.children[0]!.getAttribute("data-select-application"), data.applications![1]!.id);
+  assert.equal(list.children[0]!.getAttribute("aria-pressed"), "false");
+});
+
+test("local OTA links use public content digests and invalid metadata cannot create a download link", async () => {
+  const result: any = localOps();
+  result.deployments = [{ id: "deployment_a", appId: "a", channel: "preview", runtimeVersion: "1.0.0", platform: "ios", commitSha: "a".repeat(40), createdAt: 1, launchAsset: { id: "asset_" + "e".repeat(64), digest: "e".repeat(64) }, assets: [] }];
+  const app = await controller(await registeredState("a"), async url => url === "/api/apps/a/operations" ? result : undefined);
+  await app.client.loadOperations();
+  const history = app.document.getElementById("ota-history");
+  const link = history.children[0]!.children.find(child => child.tagName === "a")!;
+  assert.equal((link as any).href, "/updates/a/assets/" + "e".repeat(64));
+  result.deployments[0].launchAsset.digest = "../private";
+  await app.client.loadOperations();
+  assert.ok(history.textContent.includes("다운로드 주소 확인 필요"));
+  assert.ok(!history.children[0]!.children.some(child => child.tagName === "a"));
+  app.client.close();
+});
+
+test("registered projects without a selected snapshot use project guidance instead of legacy flavor import", async () => {
+  const document = new Document();
+  const data = await registeredState("a");
+  renderDashboard(document, { ...data, snapshots: [], selectedSnapshotId: null, selectedApplication: null });
+  assert.ok(document.getElementById("empty").textContent.includes("프로젝트를 선택해 주세요"));
+  assert.ok(!document.getElementById("empty").textContent.includes("11개 flavor"));
+});
+
+test("successful registration clears the old project filter and focuses the new selected card", async () => {
+  const next = await registeredState("b");
+  const app = await controller(await registeredState("a"), async url => url === "/api/apps" ? registered("b") : url === "/api/state?appId=b" ? next : undefined);
+  app.document.getElementById("project-search").value = "only-old-project";
+  app.document.getElementById("application-name").value = "B";
+  app.document.getElementById("application-repository").value = "repo_b";
+  app.document.getElementById("application-root").value = ".";
+  await app.client.registerApplication();
+  assert.equal(app.document.getElementById("project-search").value, "");
+  assert.equal(app.document.getElementById("project-list").children.length, 2);
+  const card = app.document.getElementById("project-card-b");
+  assert.equal(card.getAttribute("aria-pressed"), "true");
+  assert.equal(card.focused, true);
+  app.client.close();
+});
+
+function localAutomatedOps(id = "a", platforms = ["ios", "android"]) {
+  const result:any = localOps();result.connection.appId=id;const detection=result.detections[0];detection.appId=id;detection.configSource="flora.config.json";detection.automationConfig={bundler:"metro",entryFile:"index.js",runtimeVersion:"1.0.0",platforms,toolchain:{nodeVersion:"24.19.0",packageManager:{name:"npm",version:"10.9.8"}}};return result;
+}
+const localRunner={id:"runner_a",name:"Runner",appIds:["a"],revokedAt:null};
+test("local push policy saves both platforms separately from manual jobs and retains sibling failures", async()=>{
+  assert.ok(readFileSync(new URL("../public/index.html", import.meta.url), "utf8").includes('id="automation-policy-platforms"'));
+  let saved:any;let queued:any;const jobs=[{id:"ios_job",appId:"a",state:"succeeded",platform:"ios",channel:"preview",commitSha:"a".repeat(40),runtimeVersion:"1.0.0",attemptCount:1,deploymentId:"ios_deploy"},{id:"android_job",appId:"a",state:"failed",platform:"android",channel:"preview",commitSha:"a".repeat(40),runtimeVersion:"1.0.0",attemptCount:1,code:"EXPORT_FAILED"}];
+  const app=await controller(await registeredState("a"),async(url,init)=>{
+    if(url.endsWith("/operations"))return localAutomatedOps();
+    if(url.endsWith("/automation"))return {jobs,runners:[localRunner],policy:{appId:"a",version:2,enabled:true,channel:"preview",platforms:["ios","android"]}};
+    if(url.endsWith("/policy")){saved=JSON.parse(init!.body as string);return {appId:"a",version:3,...saved};}
+    if(url.endsWith("/jobs")){queued=JSON.parse(init!.body as string);return {appId:"a",id:"manual_job",state:"queued"};}
+  });
+  await app.client.loadAutomation();assert.equal(app.document.getElementById("automation-policy-platforms").value,"both");assert.ok(app.document.getElementById("automation-policy-status").textContent.includes("iOS + Android"));assert.ok(app.document.getElementById("automation-history").textContent.includes("ios_deploy"));assert.ok(app.document.getElementById("automation-history").textContent.includes("EXPORT_FAILED"));
+  app.document.getElementById("automation-platform").value="android";await app.client.queueAutomation();assert.equal(queued.platform,"android");assert.equal(queued.platforms,undefined);
+  await app.client.saveAutomationPolicy();assert.deepEqual(saved,{expectedVersion:2,enabled:true,channel:"preview",platforms:["ios","android"]});
+  app.document.getElementById("automation-policy-platforms").value="ios";await app.client.loadAutomation();assert.equal(app.document.getElementById("automation-policy-platforms").value,"ios");app.client.close();
+});
+test("local policy supports legacy singleton and fences late response during two-app switch", async()=>{
+  const gate=deferred<any>();let reads=0;const app=await controller(await registeredState("a"),async url=>{
+    if(url.endsWith("/operations"))return localAutomatedOps(url.includes("/b/")?"b":"a");
+    if(url==="/api/apps/a/automation")return ++reads===1?{jobs:[],runners:[localRunner],policy:{appId:"a",version:1,enabled:true,channel:"a-preview",platforms:["ios","android"]}}:gate.promise;
+    if(url==="/api/apps/b/automation")return {jobs:[],runners:[{...localRunner,appIds:["b"]}],policy:{appId:"b",version:1,enabled:true,channel:"b-preview",platform:"android"}};
+    if(url.includes("appId=b"))return registeredState("b");
+  });
+  await app.client.loadAutomation();const pending=app.client.loadAutomation();await app.client.chooseApplication("b");await app.client.loadAutomation();gate.resolve({jobs:[],runners:[localRunner],policy:{appId:"a",version:2,enabled:true,channel:"late-a",platforms:["ios","android"]}});await pending;
+  assert.equal(app.document.getElementById("automation-policy-platforms").value,"android");assert.equal(app.document.getElementById("automation-channel").value,"b-preview");assert.ok(!app.document.text.includes("late-a"));assert.ok(!app.calls.some(c=>c.url.endsWith("/policy")));app.client.close();
+});
+test("local policy defaults to supported platforms and refuses unsupported or empty selections",async()=>{
+  const app=await controller(await registeredState("a"),async url=>url.endsWith("/operations")?localAutomatedOps("a",["ios"]):url.endsWith("/automation")?{jobs:[],runners:[localRunner],policy:null}:undefined);
+  await app.client.loadAutomation();assert.equal(app.document.getElementById("automation-policy-platforms").value,"ios");app.document.getElementById("automation-policy-enabled").checked=true;
+  for(const value of ["both","android",""]){app.document.getElementById("automation-policy-platforms").value=value;await app.client.saveAutomationPolicy();}
+  assert.ok(!app.calls.some(c=>c.url.endsWith("/policy")));assert.ok(app.document.getElementById("automation-status").textContent.includes("플랫폼"));app.client.close();
+});
+
+test("local PC Runner presence preserves unseen legacy rows and refreshes idle scoped status", async () => {
+  const app = await controller(await registeredState("a"), async url => {
+    if (url.endsWith("/operations")) return localAutomatedOps();
+    if (url.endsWith("/automation")) return { jobs: [], runners: [
+      {...localRunner, presence:{status:"online",lastSeenAt:1}},
+      {...localRunner,id:"offline",presence:{status:"offline",lastSeenAt:1}},
+      {...localRunner,id:"old"},
+      {...localRunner,id:"revoked",revokedAt:1,presence:{status:"online",lastSeenAt:1}},
+    ] };
+  });
+  app.document.getElementById("automation-editor").open = true;await app.client.loadAutomation();
+  const rows = app.document.getElementById("automation-runners").children;
+  assert.ok(rows[0]);assert.ok(rows[1]);assert.ok(rows[2]);assert.ok(rows[3]);
+  assert.ok(rows[0].textContent.includes("온라인"));assert.ok(rows[1].textContent.includes("오프라인"));
+  assert.ok(rows[2].textContent.includes("연결 기록 없음"));assert.ok(rows[3].textContent.includes("폐기됨"));assert.ok(!rows[3].textContent.includes("온라인"));
+  assert.equal(app.timers.size,1);app.client.close();assert.equal(app.timers.size,0);
 });

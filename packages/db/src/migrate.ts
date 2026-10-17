@@ -4,7 +4,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { ensure } from "@app-ops/core";
 import { transaction, rows } from "./database.js";
 export function migrate(db: DatabaseSync): void {
-  const migrations = ["0001_foundation.sql", "0002_dogfood.sql"].map((name, i) => {
+  const migrations = ["0001_foundation.sql", "0002_dogfood.sql", "0003_multi_app.sql", "0004_operations.sql", "0005_automation.sql"].map((name, i) => {
     const sql = readFileSync(new URL(`../migrations/${name}`, import.meta.url), "utf8");
     return { version: i + 1, sql, checksum: createHash("sha256").update(sql).digest("hex") };
   });

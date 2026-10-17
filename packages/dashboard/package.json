@@ -5,6 +5,14 @@
   "type": "module",
   "license": "Apache-2.0",
   "exports": {
+    "./automation-http": {
+      "types": "./dist/automation-http.d.ts",
+      "default": "./dist/automation-http.js"
+    },
+    "./operations-http": {
+      "types": "./dist/operations-http.d.ts",
+      "default": "./dist/operations-http.js"
+    },
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"

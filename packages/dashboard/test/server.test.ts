@@ -39,6 +39,49 @@ function raw(origin: string, headers: string, path = "/api/state") {
   });
 }
 
+test("two repository apps isolate configuration revisions and history through the authenticated API", async () => {
+  const app = await setup();
+  try {
+    const headers = await login(app);
+    const post = (path: string, body: unknown) => http(app.origin, path, "POST", headers, JSON.stringify(body));
+    const bundles = [syntheticSourceBundle(), { ...syntheticSourceBundle(), repository: { id: "synthetic-second", fullName: "synthetic/second", visibility: "private" as const } }];
+    const apps: { id: string }[] = [];
+    const snapshots: ReturnType<typeof JSON.parse>[] = [];
+    for (const [i, bundle] of bundles.entries()) {
+      const registered = await post("/api/apps", { name: `App ${i + 1}`, repositoryId: bundle.repository.id, rootDirectory: bundle.rootDirectory });
+      assert.equal(registered.status, 201);
+      const registeredApp = JSON.parse(registered.body); apps.push(registeredApp);
+      const empty = await http(app.origin, `/api/state?appId=${registeredApp.id}`, "GET", headers);
+      assert.equal(JSON.parse(empty.body).selectedApplication.id, registeredApp.id);
+      assert.deepEqual(JSON.parse(empty.body).snapshots, []);
+      const imported = await post(`/api/sources?appId=${registeredApp.id}`, bundle);
+      assert.equal(imported.status, 201); const snapshot = JSON.parse(imported.body); snapshots.push(snapshot);
+      const baseline = await post(`/api/baselines?snapshotId=${snapshot.id}&appId=${registeredApp.id}`, { ...syntheticBaseline(snapshot), log: `only-app-${i + 1}` });
+      assert.equal(baseline.status, 201);
+      const settings = await post(`/api/apps/${registeredApp.id}/settings`, { expectedVersion: 0, values: { APP_LABEL: `value-${i + 1}` } });
+      assert.equal(settings.status, 200);
+    }
+    assert.notEqual(apps[0]!.id, apps[1]!.id);
+    for (const [i, registered] of apps.entries()) {
+      const result = await http(app.origin, `/api/state?appId=${registered.id}`, "GET", headers);
+      assert.equal(result.status, 200); const state = JSON.parse(result.body);
+      assert.equal(state.applications.length, 2);
+      assert.deepEqual(state.selectedApplication.settings.values, { APP_LABEL: `value-${i + 1}` });
+      assert.deepEqual(state.snapshots.map((snapshot: { id: string }) => snapshot.id), [snapshots[i].id]);
+      assert.equal(state.history.length, 1);
+      assert.equal(state.history[0].evidence.safeLog, `only-app-${i + 1}`);
+    }
+    const cross = await http(app.origin, `/api/state?appId=${apps[0]!.id}&snapshotId=${snapshots[1].id}`, "GET", headers);
+    assert.equal(cross.status, 404);
+    const wrongBaseline = await post(`/api/baselines?appId=${apps[0]!.id}&snapshotId=${snapshots[1].id}`, syntheticBaseline(snapshots[1]));
+    assert.equal(wrongBaseline.status, 404);
+    const stale = await post(`/api/apps/${apps[0]!.id}/settings`, { expectedVersion: 0, values: { APP_LABEL: "stale" } });
+    assert.equal(stale.status, 409);
+    assert.equal((await http(app.origin, "/api/apps", "GET")).status, 401);
+    assert.equal((await http(app.origin, `/api/apps/${apps[0]!.id}/settings`, "POST", { ...headers, "X-Flora-CSRF": "" }, "{}")).status, 403);
+  } finally { await app.dispose(); }
+});
+
 test("loopback assets are fixed, private APIs require a session, and every response is hardened", async () => {
   const app = await setup();
   try {

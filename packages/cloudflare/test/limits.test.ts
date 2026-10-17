@@ -45,7 +45,8 @@ async function harness(t: test.TestContext) {
   });
   t.after(() => runtime.dispose());
   const db = runtime.d1 as unknown as D1Database;
-  const migration = await readFile(new URL("../migrations/0001_private_imports.sql", import.meta.url), "utf8");
+  const firstMigration = await readFile(new URL("../migrations/0001_private_imports.sql", import.meta.url), "utf8");
+  const migration = firstMigration + "\n" + await readFile(new URL("../migrations/0002_multi_app.sql", import.meta.url), "utf8") + "\n" + await readFile(new URL("../migrations/0003_github_ota.sql", import.meta.url), "utf8") + "\n" + await readFile(new URL("../migrations/0004_automation.sql", import.meta.url), "utf8");
   await db.exec(migration.replace(/^--.*$/gm, "").split(/;\s*(?=CREATE|INSERT|PRAGMA|$)/)
     .filter(value => value.trim()).map(value => value.replace(/\s*\n\s*/g, " ").trim() + ";").join("\n"));
   await db.prepare("INSERT INTO flora_deployment(singleton,owner_id,origin,db_identity) VALUES(1,?,?,?)")
@@ -145,6 +146,76 @@ test("supported_size_synthetic_envelopes_keep_limits", async t => {
   const baselineRow = await h.db.prepare("SELECT max(stored_bytes) AS bytes FROM baseline_imports").first<{ bytes: number }>();
   t.diagnostic(JSON.stringify({ syntheticSourceBytes: [752_158, sourceLimit], syntheticBaselineBytes: [6_122, baselineLimit],
     maxSourceStoredBytes: sourceRow!.bytes, maxBaselineStoredBytes: baselineRow!.bytes, payloadBytes: afterHead!.payload_bytes }));
+});
+
+test("unfinished_public_login_does_not_block_owner_login_or_authenticated_import", async t => {
+  const h = await harness(t);
+  const budget = () => h.control({ sql: "SELECT attempts,kdfs FROM flora_auth_budget" }).then(response => response.json());
+  const before = await budget();
+  const stalled = await h.control({ holdLogin: JSON.stringify({ email: "unrelated@example.test", password: h.secret }) });
+  assert.equal(stalled.status, 200);
+  assert.deepEqual(await stalled.json(), { held: true });
+  try {
+    assert.deepEqual(await budget(), before, "An incomplete body must not reserve a KDF attempt");
+    const login = await h.call("/api/auth/login", JSON.stringify({ email, password: h.secret }));
+    assert.equal(login.status, 200);
+    await login.json();
+    const imported = await h.call("/api/sources", bundleBytes(syntheticSourceBundle()));
+    assert.equal(imported.status, 201);
+    await imported.json();
+    assert.equal((await h.capacity())!.snapshot_count, 1);
+  } finally {
+    const released = await h.control({ releaseLogin: true });
+    await released.json();
+  }
+});
+
+test("full_auth_body_pool_rejects_unread_without_blocking_import_and_cancel_releases_slots", async t => {
+  const h = await harness(t);
+  const input = JSON.stringify({ email: "unrelated@example.test", password: h.secret });
+  const ids = ["a", "b", "c", "d"];
+  for (const loginBodyId of ids) {
+    const held = await h.control({ holdLogin: input, loginBodyId });
+    assert.equal(held.status, 200);
+    assert.deepEqual(await held.json(), { held: true });
+  }
+  try {
+    const overflow = await h.control({ holdLogin: input, loginBodyId: "overflow" });
+    assert.equal(overflow.status, 409);
+    assert.equal(overflow.headers.get("X-Flora-Test-Body-Reads"), "0");
+    assert.deepEqual(await overflow.json(), { error: "BUSY" });
+    const imported = await h.call("/api/sources", bundleBytes(syntheticSourceBundle()));
+    assert.equal(imported.status, 201);
+    await imported.json();
+  } finally {
+    for (const loginBodyId of ids) {
+      const response = await h.control({ cancelLogin: true, loginBodyId });
+      assert.equal(response.status, 200);
+      const cancelled = await response.json() as { status: number };
+      assert.equal(cancelled.status, 400);
+    }
+  }
+  assert.equal((await h.call("/api/auth/login", JSON.stringify({ email, password: h.secret }))).status, 200);
+});
+
+test("completed_login_body_cannot_queue_or_reserve_budget_behind_a_new_import", async t => {
+  const h = await harness(t);
+  const budget = () => h.control({ sql: "SELECT attempts,kdfs FROM flora_auth_budget" }).then(response => response.json());
+  const before = await budget();
+  const held = await h.control({ holdLogin: JSON.stringify({ email, password: h.secret }) });
+  assert.equal(held.status, 200); await held.json();
+  const imported = await h.control({ holdImport: JSON.stringify(syntheticSourceBundle()) });
+  assert.equal(imported.status, 200); await imported.json();
+  try {
+    const released = await (await h.control({ releaseLogin: true })).json() as { status: number; body: unknown };
+    assert.equal(released.status, 409);
+    assert.deepEqual(released.body, { error: "BUSY" });
+    assert.deepEqual(await budget(), before);
+  } finally {
+    const released = await (await h.control({ releaseImport: true })).json() as { status: number };
+    assert.equal(released.status, 201);
+  }
+  assert.equal((await h.call("/api/auth/login", JSON.stringify({ email, password: h.secret }))).status, 200);
 });
 
 // This fails if imports use a different guard from password verification or queue passwords.

@@ -2,7 +2,7 @@
 
 [README](../../README.md) · [최초 실행 가이드](../getting-started.ko.md) · [실제 연동 현황](integration-status.ko.md) · [단계별 로드맵](../roadmap/milestones.ko.md)
 
-2026-10-12 UTC 문서 인수인계. 사용자 PC의 OS는 아직 정해지지 않았다. 다른 PC를 원격 조작하지 않고 GitHub에서 받아 이어갈 수 있게 준비한다. 현재 동작 범위는 한 앱의 정적 자료 반입·조회와 로컬 Foundation이다. 제품 구현·반입 증거·합성 테스트·운영 연결을 구분한다.
+2026-10-12 UTC 문서 인수인계. 사용자 PC의 OS는 아직 정해지지 않았다. 다른 PC를 원격 조작하지 않고 GitHub에서 받아 이어갈 수 있게 준비한다. 현재 동작 범위는 멀티앱 registry·공개 CONFIG·앱별 정적 자료 반입·조회와 로컬 Foundation이다. 기존 데이터 보존·새 CLI/API는 [멀티앱 가이드](multi-app.ko.md)를 따른다. 제품 구현·반입 증거·합성 테스트·운영 연결을 구분한다.
 
 ## 1. 저장소와 도구 준비
 
@@ -131,23 +131,25 @@ git status --short
 
 완료 조건: 같은 SHA에서 0 fail, 지원 도구 버전, 반입 provenance와 실행 차단을 구분한 비밀 없는 기록. 실제 서비스 인증은 필요하지 않다.
 
-### P1 — 앱 하나의 읽기 전용 GitHub 연결 (다음 첫 구현)
+### P1 — GitHub 인식·OTA 코드와 실제 계정 연결
 
-- [ ] 한 repo·root·타깃을 선정하고 현재 고정 importer/profile의 호환성을 먼저 확인.
-- [ ] 기존 승인 설계의 SourceProvider 경계를 사용해 repo ID·고정 commit·허용 파일·CI 상태 읽기 어댑터 구현.
-- [ ] 일반 저장소가 고정 형식에 맞지 않으면 별도 importer/profile을 설계하고 coverage를 명시. 테스트 성공값 변조 금지.
-- [ ] provider 응답의 안전한 정규화·수집 시각·stale/error·rate limit을 UI와 이력에 기록.
-- [ ] 공개 fixture contract test와 권한 부족/응답 유실 테스트 후, 필요한 경우 선택 repo의 최소 읽기 scope만 사용자에게 설명.
+- [x] 고정 JSON importer와 독립적인 GitHub App 기반 Expo/RN 인식·고정 SHA·정적/제출 설정 검사 구현.
+- [x] 앱별 연결 CAS·불변 인식 이력, OTA asset staging·발행 receipt·manifest·다운로드와 선택적 RSA 서명 구현.
+- [x] 기존 데이터 보존과 두 앱의 배포/이력 분리를 실제 SQLite/workerd 및 합성 GitHub HTTP 응답으로 검사.
+- [ ] 운영자의 GitHub App 설치·서버 secret 설정·선정 저장소의 실제 권한과 조회 결과 확인.
+- [ ] 운영 HTTPS 배포, 해당 Flora 주소/runtime/인증서의 native binary, 기기 수신·재시작·채널 전환·오류 복구 확인.
 
 완료 조건: 앱 하나의 실제 읽기 결과를 source SHA와 시각으로 추적하고 `operator-import`/`provider-observed`를 구분한다. 지속 권한·키 보관 경로가 없으면 fixture 검증까지만 완료로 표시한다. 현재 개발 도구의 자격정보를 Flora로 복사하지 않는다.
 
 ### P2 — 검증된 Runner와 실제 artifact
 
-- [ ] 원본 source fetch/digest 재검증과 격리된 job workspace adapter 구현.
+- [x] OTA Runner의 GitHub SHA fetch/digest 재검증과 Docker export adapter 코드를 구현하고 로컬 계약·실제 Metro 결과를 검증.
 - [ ] CPU/메모리/PID/디스크/출력 제한·network 정책·전체 process 취소·cleanup을 실제 검증.
-- [ ] 조직/job/attempt/fence에 묶인 등록·claim/heartbeat/result·revoke 구현. 새 machine credential은 직접 승인 필요.
+- [x] 앱/job/attempt/fence에 묶인 등록·claim/heartbeat/result·revoke와 배포 응답 유실 복구 journal·reconcile 구현. 등록은 인증된 운영자 또는 명시적 CLI 요청으로 수행.
+- [ ] 조직 RBAC와 실제 Docker 등록·실행·네트워크·격리 증거 확인. 현재 앱별 권한을 조직 권한 구현으로 세지 않음.
 - [ ] smoke job → Web 타깃 build 순서로 확대하고 source/config/toolchain/adapter·artifact hash 기록.
-- [ ] lease 만료·중복 요청·취소·runner 교체·cleanup 실패를 fail closed로 검증.
+- [x] 로컬 SQLite/workerd에서 lease 만료·중복 요청·취소·runner 교체·cleanup 불확실성의 차단과 분리된 두 앱 이력을 검증.
+- [ ] 같은 실패·복구 시나리오를 운영 Docker·GitHub 연결에서 재검증.
 
 완료 조건: 실제 adapter의 preflight와 bounded 실행·cleanup 증거. contract test용 provider나 일반 subprocess fallback을 제품 Runner로 등록하지 않는다. 본인 PC가 켜져 있다는 사실만으로 완료되지 않는다.
 
@@ -161,7 +163,7 @@ git status --short
 
 완료 조건: 정확한 계정·호스트·version과 접속/복구 증거. Node/SQLite 로컬 성공이나 dry-run으로 완료하지 않는다. 이전 거절된 OAuth를 재시도·우회하지 않는다. 새 권한·리소스/보안 변경·법적 동의가 필요하면 정확한 항목에서 중단한다. R2/Access/유료/초과과금 fallback 금지. 일반 main push만으로 새 자동 운영 배포를 켜지 않는다.
 
-### P4 — Apple/Google/EAS 상태와 native/OTA 확장
+### P4 — Apple/Google 상태와 native/OTA 확장
 
 - [ ] 선택 app ID/package/project의 상태 조회 어댑터부터 구현하고 마지막 관측 시각·error 표시.
 - [ ] 다른 작업의 API 키·서명 파일·로그인을 Flora에 이전하지 않고 제품 credential 경계를 설계.
@@ -173,15 +175,16 @@ git status --short
 
 ### P5 — 다중 앱과 조직 공용 운영
 
-- [ ] multi-app registry·repo/root/target mapping 및 앱별 store/이력 분리.
+- [x] 개인 작업실의 multi-app registry·repo/root mapping·공개 CONFIG·반입 이력 분리와 기존 데이터 보존 migration 구현.
+- [ ] 조직/target mapping과 실제 Runner/provider 실행으로 확대.
 - [ ] 조직 로그인·action별 RBAC·tenant isolation·audit/reconciliation 구현.
 - [ ] Vault key custody·회전·backup/restore·credential revoke 검증.
 - [ ] 조직 Runner pool·다른 PC 요청·유일한 Mac offline·복구 경로 검증.
 
-완료 조건: 두 조직/복수 앱의 교차 접근 거부와 PC 교체 후 동일 입력의 검증 가능한 실행. 기존 단일 앱 DB의 한계를 일반 설정만으로 해결했다고 표시하지 않는다. 이 경계는 여러 앱에 production 권한을 부여하기 전에 준비한다.
+완료 조건: 두 조직/복수 앱의 교차 접근 거부와 PC 교체 후 동일 입력의 검증 가능한 실행. 새 migration의 멀티앱 반입 범위를 조직 RBAC·실제 운영 실행 완료로 표시하지 않는다. 이 경계는 여러 앱에 production 권한을 부여하기 전에 준비한다.
 
 ## 7. 다음 개발자의 첫 작업
 
-먼저 P0으로 자신의 PC에서 기준 상태를 재현한다. 그 뒤 **P1의 한 repo/root를 읽는 SourceProvider 어댑터와 import/profile 호환성 검사**부터 시작한다. 실제 build/store/OTA 버튼을 한꺼번에 추가하지 않는다. 현재 UI가 운영값을 얻을 수 있는 첫 연결 고리를 만든 뒤 Runner와 Web 파일럿으로 확대한다.
+먼저 P0으로 자신의 PC에서 기준 상태를 재현한다. 그 뒤 [GitHub·OTA 가이드](github-ota.ko.md)에 따라 선정한 실제 저장소의 설치 권한·서버 자격정보·native runtime/주소를 확인하고, 배포된 호스트와 기기에서 수신을 검증한다. 코드·합성 테스트·실제 계정 연결·기기 실행을 별도로 기록한 뒤 Runner 자동 export와 분석 서비스 연동으로 확대한다.
 
 작업 기록에는 OS·SHA·명령·pass/fail/미실행·변경 파일·다음 blocker를 남긴다. 새 인증/권한이 필요하면 서비스·앱/프로젝트·읽기/쓰기 목적을 구체화하고 사용자 직접 입력/승인 단계로 넘긴다. source 커밋·푸시와 실제 운영 배포는 서로 다른 결과로 보고한다.

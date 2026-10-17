@@ -27,3 +27,9 @@ export type { ArtifactInput, Artifact, ReleaseSummary } from "./artifacts.js";
 export * from "./inventory.js";
 export * from "./verifications.js";
 export * from "./dogfood-store.js";
+
+export { registerApplication, listApplications, getApplication, getApplicationForSnapshot, updateApplicationSettings } from "./applications.js";
+
+export * from "./operations.js";
+
+export * from "./dbautomation.js";

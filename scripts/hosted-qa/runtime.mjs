@@ -52,7 +52,8 @@ export async function createHostedQaHarness() {
     }));
     const runtime = mf, runtimeUrl = await runtime.ready, db = await runtime.getD1Database("FLORA_DB");
     if (runtimeUrl.protocol !== "http:" || runtimeUrl.hostname !== "127.0.0.1" || !runtimeUrl.port || runtimeUrl.username || runtimeUrl.password) throw new Error("LOOPBACK_RUNTIME_REQUIRED");
-    const migration = await readFile(new URL("../../packages/cloudflare/migrations/0001_private_imports.sql", import.meta.url), "utf8");
+    const firstMigration = await readFile(new URL("../../packages/cloudflare/migrations/0001_private_imports.sql", import.meta.url), "utf8");
+    const migration = firstMigration + "\n" + await readFile(new URL("../../packages/cloudflare/migrations/0002_multi_app.sql", import.meta.url), "utf8") + "\n" + await readFile(new URL("../../packages/cloudflare/migrations/0003_github_ota.sql", import.meta.url), "utf8") + "\n" + await readFile(new URL("../../packages/cloudflare/migrations/0004_automation.sql", import.meta.url), "utf8");
     await db.exec(migration.replace(/^--.*$/gm, "").split(/;\s*(?=CREATE|INSERT|PRAGMA|$)/).filter(value => value.trim()).map(value => value.replace(/\s*\n\s*/g, " ").trim() + ";").join("\n"));
     await db.prepare("INSERT INTO flora_deployment(singleton,owner_id,origin,db_identity) VALUES(1,?,?,?)")
       .bind("synthetic-owner", SYNTHETIC_ORIGIN, "synthetic-db").run();

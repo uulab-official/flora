@@ -1,0 +1,26 @@
+{
+  "name": "@flora/runner",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "license": "Apache-2.0",
+  "exports": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "flora-ota-runner": "./dist/main.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/bundle-pnpm-helper.mjs",
+    "runner": "node dist/main.js"
+  },
+  "dependencies": {
+    "@app-ops/core": "workspace:*",
+    "@app-ops/dogfood": "workspace:*",
+    "yaml": "2.9.1"
+  },
+  "devDependencies": {
+    "metro": "0.84.5",
+    "@app-ops/db": "workspace:*",
+    "@app-ops/dashboard": "workspace:*"
+  }
+}

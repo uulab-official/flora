@@ -6,20 +6,24 @@ import { assessReport, CONFIG_RUNTIME_SMOKE_V1, parseBaselineBundle, parseSource
 import type { InventorySnapshot } from "@app-ops/dogfood";
 import type { D1Database } from "@cloudflare/workers-types";
 import { bundleBytes, syntheticBaseline, syntheticSourceBundle } from "../../../tests/dogfood-fixtures.ts";
-import { createD1ImportStore, verifyD1Identity } from "../src/d1-import-store.ts";
+import { createD1ImportStore, verifyD1Identity } from "../dist/d1-import-store.js";
 import type { FloraConfig } from "../src/contracts.ts";
 import { createTestRuntime } from "./runtime.ts";
 import { observeD1Capacity } from "./d1-capacity-diagnostics.ts";
 
 const config: FloraConfig = { ownerId: "owner-fixture", ownerEmail: "owner@example.invalid", origin: "https://flora.example.com", dbIdentity: "fixture-identity", setup: null };
 const now = 1770000000000;
-async function setup(t: test.TestContext, beforeCommit: () => void = () => {}, identity = config, seed = true) {
+async function setup(t: test.TestContext, beforeCommit: () => void = () => {}, identity = config, seed = true, multiApp = true) {
   const runtime = await createTestRuntime({ entrypoint: new URL("./fixtures/runtime-entry.ts", import.meta.url) });
   t.after(() => runtime.dispose());
   const db = runtime.d1 as unknown as D1Database;
   const migration = await readFile(new URL("../migrations/0001_private_imports.sql", import.meta.url), "utf8");
   // D1 exec consumes one statement per line, including whole trigger bodies.
   await db.exec(migration.replace(/^--.*$/gm, "").split(/;\s*(?=CREATE|INSERT|PRAGMA|$)/).filter(s => s.trim()).map(s => s.replace(/\s*\n\s*/g, " ").trim() + ";").join("\n"));
+  if (multiApp) {
+    const multi = await readFile(new URL("../migrations/0002_multi_app.sql", import.meta.url), "utf8");
+    await db.exec(multi.replace(/^--.*$/gm, "").split(/;\s*(?=CREATE|INSERT|DROP|PRAGMA|$)/).filter(s => s.trim()).map(s => s.replace(/\s*\n\s*/g, " ").trim() + ";").join("\n"));
+  }
   if (seed) await db.prepare("INSERT INTO flora_deployment(singleton,owner_id,origin,db_identity) VALUES(1,?,?,?)")
     .bind(identity.ownerId, identity.origin, identity.dbIdentity).run();
   return { db, store: createD1ImportStore(db, identity, beforeCommit) };
@@ -71,13 +75,12 @@ test("raw_sql_guards_reject_cross_app_or_mutation", async t => {
     await assert.rejects(db.prepare(`DELETE FROM ${table}`).run());
   }
   await assert.rejects(db.prepare("UPDATE flora_capacity SET payload_bytes=0").run());
-  await assert.rejects(store.saveInventory(await parseSourceBundle(bundleBytes({ ...syntheticSourceBundle(), repository: { id: "other", fullName: "example/other", visibility: "private" } }), now)), code("CONFLICT"));
   const row = await db.prepare("SELECT * FROM inventory_snapshots").first<Record<string, unknown>>();
   const keys = Object.keys(row!);
   const changed = { ...JSON.parse(String(row!.data)), id: "inventory-other" };
   const wrong: Record<string, unknown> = { ...row!, owner_id: "other-owner", id: changed.id, data: canonicalJson(changed) };
   wrong.stored_bytes = Buffer.byteLength(canonicalJson([wrong.owner_id, wrong.id, wrong.digest, wrong.repository_id, wrong.root_directory, wrong.commit_sha, wrong.imported_at, wrong.data]));
-  await assert.rejects(db.prepare(`INSERT INTO inventory_snapshots(${keys.join(",")}) VALUES(${keys.map(() => "?").join(",")})`).bind(...keys.map(k => wrong[k])).run(), /one app only|FOREIGN KEY/);
+  await assert.rejects(db.prepare(`INSERT INTO inventory_snapshots(${keys.join(",")}) VALUES(${keys.map(() => "?").join(",")})`).bind(...keys.map(k => wrong[k])).run(), /unknown app|FOREIGN KEY/);
   assert.equal(await count(db, "inventory_snapshots"), 1);
 });
 
@@ -304,6 +307,11 @@ test("payload_capacity_is_atomic_and_sql_checks_actual_utf8_bytes", async t => {
   assert.equal(race.filter(r => r.status === "fulfilled").length, 1);
   assert.equal((await db.prepare("SELECT payload_bytes FROM flora_capacity").first<{ payload_bytes: number }>())!.payload_bytes, 134217728);
   assert.equal(await count(db, "source_head_observations"), 256);
+  const app = (await store.applications!.getApplicationForSnapshot(value.id))!;
+  await assert.rejects(store.applications!.registerApplication({ name: "Full", repositoryId: "full", rootDirectory: "." }, now), code("CONFLICT"));
+  await assert.rejects(store.applications!.updateApplicationSettings(app.id, { expectedVersion: 0, values: {} }, now), code("CONFLICT"));
+  assert.equal(await count(db, "applications"), 1);
+  assert.equal(await count(db, "application_settings"), 1);
   await assert.rejects(store.saveInventory(await snapshot(1)), code("CONFLICT"));
   assert.equal((await store.saveInventory(value)).id, value.id);
 });
@@ -317,4 +325,136 @@ test("raw_replace_cannot_bypass_immutable_history_or_deployment", async t => {
     await assert.rejects(db.prepare(`INSERT OR REPLACE INTO ${table} SELECT * FROM ${table}`).run(), /immutable|replace|capacity/i, table);
   }
   assert.equal(await count(db, "inventory_snapshots"), 1);
+});
+
+test("multiple_apps_have_isolated_snapshots_settings_and_logs", async t => {
+  const { db, store } = await setup(t);
+  assert.ok(store.applications);
+  const registry = store.applications!;
+  const first = await store.saveInventory(await snapshot());
+  const a = (await registry.getApplicationForSnapshot(first.id))!;
+  const b = await registry.registerApplication({ name: "Second", repositoryId: "other", rootDirectory: first.rootDirectory }, now);
+  assert.deepEqual((await store.pageInventory(null, b.id)).items, []);
+  const second = await store.saveInventory(await parseSourceBundle(bundleBytes({ ...syntheticSourceBundle(), commitSha: first.commitSha,
+    repository: { id: "other", fullName: "example/other", visibility: "private" } }), now));
+  assert.notEqual(first.digest, second.digest);
+  assert.equal((await registry.getApplicationForSnapshot(second.id))!.id, b.id);
+  await assert.rejects(registry.registerApplication({ name: "Ignored", repositoryId: "other", rootDirectory: first.rootDirectory }, now + 1), code("CONFLICT"));
+  assert.equal((await registry.getApplication(b.id))!.name, "Second");
+  const updated = await registry.updateApplicationSettings(b.id, { expectedVersion: 0, values: { APP_NAME: "Second" } }, now + 1);
+  assert.equal(updated.settings.version, 1);
+  await assert.rejects(registry.updateApplicationSettings(b.id, { expectedVersion: 0, values: {} }, now + 2), code("CONFLICT"));
+  assert.equal((await registry.getApplication(a.id))!.settings.version, 0);
+  assert.equal(await count(db, "application_settings"), 3);
+  const record = await store.persistBaseline(await prepared(first));
+  assert.equal(await store.getSafeLog(record.id, b.id), null);
+  await assert.rejects(store.pageBaselines(first.id, null, b.id), code("NOT_FOUND"));
+  assert.deepEqual((await store.pageInventory(null, b.id)).items.map(v => v.id), [second.id]);
+  assert.equal((await registry.listApplications()).length, 2);
+  for (let n = 1; n < 21; n++) await store.saveInventory(await snapshot(n));
+  const cursor = (await store.pageInventory(null, a.id)).nextCursor!;
+  assert.ok(cursor);
+  await assert.rejects(store.pageInventory(cursor, b.id), code("INVALID_INPUT"));
+  await assert.rejects(store.pageInventory(cursor), code("INVALID_INPUT"));
+});
+
+test("additive_migration_preserves_legacy_rows_capacity_and_receipts", async t => {
+  const { db, store } = await setup(t, () => {}, config, true, false);
+  const value = await snapshot();
+  const source = [config.ownerId, value.id, value.digest, value.repository.id, value.rootDirectory, value.commitSha, value.importedAt, canonicalJson(value)];
+  await db.prepare("INSERT INTO inventory_snapshots(owner_id,id,digest,repository_id,root_directory,commit_sha,imported_at,data,stored_bytes) VALUES(?,?,?,?,?,?,?,?,?)")
+    .bind(...source, Buffer.byteLength(canonicalJson(source))).run();
+  const input = await prepared(value); const e = input.evidence; const a = input.assessment;
+  const recordId = "verification_legacy";
+  const record = [config.ownerId, recordId, value.id, e.sourceDigest, e.sourceDigest + ":" + e.attemptKey, now, a.status, a.code,
+    e.platform, e.runtime.node, e.exitCode, e.evidenceDigest, e.logTruncated ? 1 : 0, canonicalJson(a), e.safeLog, canonicalJson(e)];
+  await db.prepare(`INSERT INTO baseline_imports(owner_id,id,snapshot_id,source_digest,request_key,created_at,state,code,platform,node,exit_code,evidence_digest,log_truncated,assessment,safe_log,evidence,stored_bytes) VALUES(${Array(17).fill("?").join(",")})`)
+    .bind(...record, Buffer.byteLength(canonicalJson(record))).run();
+  const observation = { repositoryId: value.repository.id, rootDirectory: value.rootDirectory, headCommitSha: value.commitSha, observedAt: value.fetchedAt, evidenceOrigin: "operator-import" as const };
+  await store.saveHeadObservation(observation);
+  const tables = ["flora_deployment", "flora_capacity", "inventory_snapshots", "baseline_imports", "source_head_observations"];
+  const before = await Promise.all(tables.map(table => db.prepare(`SELECT * FROM ${table}`).all()));
+  const migration = await readFile(new URL("../migrations/0002_multi_app.sql", import.meta.url), "utf8");
+  await db.exec(migration.replace(/^--.*$/gm, "").split(/;\s*(?=CREATE|INSERT|DROP|PRAGMA|$)/).filter(s => s.trim()).map(s => s.replace(/\s*\n\s*/g, " ").trim() + ";").join("\n"));
+  for (let n = 0; n < tables.length; n++) assert.deepEqual((await db.prepare(`SELECT * FROM ${tables[n]}`).all()).results, before[n]!.results);
+  assert.equal((await store.saveInventory(value)).id, value.id);
+  assert.equal((await store.persistBaseline(input)).id, recordId);
+  assert.deepEqual(await store.getInventory(value.id), value);
+  assert.deepEqual(await store.getHeadObservation(value), observation);
+  const app = (await store.applications!.getApplicationForSnapshot(value.id))!;
+  assert.equal(app.id, "application_" + value.digest);
+  assert.equal(app.settings.version, 0);
+  const priorBytes = Number((before[1]!.results[0] as { payload_bytes: number }).payload_bytes);
+  await store.applications!.updateApplicationSettings(app.id, { expectedVersion: 0, values: { APP_NAME: "Legacy" } }, now + 1);
+  const bytes = await db.prepare("SELECT sum(stored_bytes) AS n FROM application_settings").first<{ n: number }>();
+  assert.equal((await db.prepare("SELECT payload_bytes FROM flora_capacity").first<{ payload_bytes: number }>())!.payload_bytes, priorBytes + bytes!.n);
+  for (const table of ["applications", "application_settings", ...tables]) {
+    await assert.rejects(db.prepare(`INSERT OR REPLACE INTO ${table} SELECT * FROM ${table}`).run(), /immutable|capacity|version/i);
+  }
+});
+
+test("application_settings_are_atomic_bounded_and_commit_fenced", async t => {
+  let allowed = true;
+  const { db, store } = await setup(t, () => { if (!allowed) throw new Error("revoked"); });
+  const registry = store.applications!;
+  const input = { name: "Empty", repositoryId: "empty", rootDirectory: "." };
+  const race = await Promise.all([registry.registerApplication(input, now), registry.registerApplication(input, now)]);
+  assert.equal(race[0].id, race[1].id);
+  const appId = race[0].id;
+  const updates = await Promise.allSettled([
+    registry.updateApplicationSettings(appId, { expectedVersion: 0, values: { APP_NAME: "A" } }, now + 1),
+    registry.updateApplicationSettings(appId, { expectedVersion: 0, values: { APP_NAME: "B" } }, now + 1),
+  ]);
+  assert.equal(updates.filter(v => v.status === "fulfilled").length, 1);
+  assert.equal(await count(db, "application_settings"), 2);
+  const before = await db.prepare("SELECT * FROM flora_capacity").first();
+  allowed = false;
+  await assert.rejects(registry.updateApplicationSettings(appId, { expectedVersion: 1, values: {} }, now + 2), /revoked/);
+  await assert.rejects(registry.registerApplication({ ...input, repositoryId: "new" }, now), /revoked/);
+  assert.deepEqual(await db.prepare("SELECT * FROM flora_capacity").first(), before);
+  for (const table of ["applications", "application_settings"]) {
+    await assert.rejects(db.prepare(`UPDATE ${table} SET owner_id='other'`).run(), /immutable/);
+    await assert.rejects(db.prepare(`DELETE FROM ${table}`).run(), /immutable/);
+  }
+});
+
+test("registry_limit_keeps_existing_registration_retryable", async t => {
+  const { db, store } = await setup(t);
+  const registry = store.applications!;
+  const first = await registry.registerApplication({ name: "First", repositoryId: "r0", rootDirectory: "." }, now);
+  for (let n = 1; n < 100; n++) await registry.registerApplication({ name: "App", repositoryId: "r" + n, rootDirectory: "." }, now);
+  assert.equal((await registry.listApplications()).length, 100);
+  const before = await db.prepare("SELECT * FROM flora_capacity").first();
+  await assert.rejects(registry.registerApplication({ name: "Overflow", repositoryId: "r100", rootDirectory: "." }, now), code("CONFLICT"));
+  assert.equal((await registry.registerApplication({ name: "First", repositoryId: "r0", rootDirectory: "." }, now)).id, first.id);
+  assert.deepEqual(await db.prepare("SELECT * FROM flora_capacity").first(), before);
+  assert.equal(await count(db, "application_settings"), 100);
+});
+
+test("first_source_sql_failure_rolls_back_registry_settings_and_capacity", async t => {
+  let submissions = 0;
+  const { db, store } = await setup(t, () => { submissions++; });
+  const value = await snapshot();
+  const before = await db.prepare("SELECT * FROM flora_capacity").first();
+  // Invalid input never submits. A late SQL rejection, including a capacity or
+  // constraint failure, must undo earlier registration statements in the batch.
+  await assert.rejects(store.saveInventory({ ...value, connection: "one-shot-source-snapshot", evidenceOrigin: "operator-import", id: "" }));
+  assert.equal(submissions, 0);
+  await db.exec("CREATE TRIGGER synthetic_source_failure BEFORE INSERT ON inventory_snapshots BEGIN SELECT RAISE(ABORT,'synthetic source failure'); END;");
+  await assert.rejects(store.saveInventory(value), /synthetic source failure/);
+  assert.equal(submissions, 1);
+  for (const table of ["applications", "application_settings", "inventory_snapshots"]) assert.equal(await count(db, table), 0);
+  assert.deepEqual(await db.prepare("SELECT * FROM flora_capacity").first(), before);
+});
+
+test("settings_reject_backwards_timestamps_and_registration_name_conflicts", async t => {
+  const { db, store } = await setup(t);
+  const registry = store.applications!;
+  const input = { name: "Named", repositoryId: "named", rootDirectory: "." };
+  const app = await registry.registerApplication(input, now);
+  const before = await db.prepare("SELECT * FROM flora_capacity").first();
+  await assert.rejects(registry.registerApplication({ ...input, name: "Other" }, now), code("CONFLICT"));
+  await assert.rejects(registry.updateApplicationSettings(app.id, { expectedVersion: 0, values: {} }, now - 1), code("INVALID_INPUT"));
+  assert.deepEqual(await db.prepare("SELECT * FROM flora_capacity").first(), before);
+  assert.equal((await registry.updateApplicationSettings(app.id, { expectedVersion: 0, values: {} }, now)).settings.version, 1);
 });

@@ -1,5 +1,7 @@
 # Flora
 
+2026-10-17 검증 기록: Isso·Promise·Reward의 iOS Simulator·Android Emulator 6개 조합에서 GitHub 커밋 → PC Runner 자동 export·OTA 게시 → 다운로드 중 네트워크 실패 → 재시도·적용·재시작 → Flora 상세 화면의 복구 집계까지 확인했습니다. 검증 설치는 각 배포 1개이며 물리 기기·전체 사용자 적용률이나 현재 서비스 상태를 보장하지 않습니다. [장애·복구 검증과 한계](docs/development/github-release-ota-network-2026-10-17.ko.md)를 확인하세요. 이 경로는 EAS·GitHub Actions·R2 구독을 사용하지 않습니다.
+
 [한국어](README.md) · [English](README.en.md)
 
 **Open Source App Operations Platform**
@@ -16,9 +18,11 @@ Flora는 iOS, Android, Web 앱의 빌드·서명·환경설정·스토어·OTA·
 - 특정 개발자 PC가 꺼져 있거나 바뀌어도, 권한이 있는 다른 개발자가 작업을 이어갈 수 있는 조직 공용 Runner
 - 설정과 인증서 파일을 사람마다 복사하지 않아도 되는 팀 운영
 
-**현재 상태: 로컬 Foundation과 앱 검증 화면.** 타깃·설정·SQLite Job/lease/fence, 정적 앱 snapshot과 개발 baseline import, 이력과 보호된 loopback Dashboard/CLI를 제공합니다. 기본 실행 provider는 blocked입니다. 조직 로그인, 실제 Runner/native build, Vault, OTA, 스토어 업로드, Cloudflare 배포와 AI 코드 수정은 후속 단계입니다.
+**현재 상태: 멀티앱 기반, GitHub 앱 인식, 자체 네이티브 OTA SDK와 자동 export Runner 코드.** 고정 GitHub 커밋을 Flora SDK 설정으로 인식하고 앱별 정책·Job·Runner 권한·시도·배포 이력을 분리합니다. 기본은 Metro와 자체 OTA이며 Expo CLI export는 선택 가능한 오픈소스 어댑터입니다. EAS 계정·API는 사용하지 않습니다. [자동 배포·무료 운영 구성](docs/development/automation-runner.ko.md), [네이티브 SDK 연결](docs/development/native-ota.ko.md), [SDK](packages/ota-sdk/README.md), [Runner](packages/ota-runner/README.md)를 확인하세요.
 
-별도 Cloudflare 경로에는 단일 소유자 비밀번호 로그인과 비공개 source/baseline 반입·이력 조회를 구현하고 로컬 Worker/DO/D1 합성 테스트를 추가했습니다. 실제 Free 계정 용량·성능, 운영 배포·도메인/TLS, 소유자 등록과 비공개 파일 업로드는 아직 미검증입니다. [비밀번호 보호 웹 반입 개발 가이드](docs/development/password-hosting.ko.md)와 [출시 증거·남은 조건](docs/release/password-hosting-evidence.md)을 확인하세요. 호스팅 경로에서는 Runner를 실행하지 않습니다. 현재 로컬 store와 hosted 배포는 각각 **한 repository/root 앱과 그 앱의 여러 flavor**만 다룹니다. 수십·수백 앱 통합 관리는 아직 구현되지 않았으며, 반입도 [고정된 source·검사 형식](docs/development/dogfood.ko.md#3-자신의-자료-가져오기)을 만족해야 합니다.
+기존 SQLite/D1 source·baseline·설정·OTA 자료는 additive migration으로 보존합니다. 로컬 Foundation의 모의 Job과 실제 OTA 운영 경로는 별개입니다. UULab 배포에서는 세 앱의 GitHub 연결·앱별 정책과 이력·PC Runner·서명된 OTA와 실패·복구 상세 화면을 검증했습니다. [처음 네이티브 엔진 검증](docs/development/native-ota-evidence.ko.md)과 [최신 실제 앱 검증](docs/development/github-release-ota-network-2026-10-17.ko.md)은 날짜·대상·환경별 증거입니다. 다른 설치의 연결과 무료 한도는 별도로 확인해야 합니다.
+
+실제 운영에는 [호스팅 준비](docs/development/password-hosting.ko.md), [PC Runner 설치·운영](docs/development/local-pc-runner.ko.md), [구독 없는 GitHub Release 자산 저장소](docs/development/github-release-ota-storage.ko.md)를 순서대로 확인하세요. PC가 꺼지거나 잠들면 새 export는 대기합니다. GitHub에 게시가 확정된 자산의 다운로드는 PC와 분리됩니다. 조직 로그인·스토어 제출 등 전체 제품 계획을 이번 OTA 검증이 인증하는 것은 아닙니다.
 
 [처음 실행하기: 준비 → 설치 → 결과 확인 → 문제 해결](docs/getting-started.ko.md)부터 따라 해보세요. [가상의 앱으로 웹 화면 열기](docs/development/dogfood.ko.md)는 계정이나 실제 저장소 없이 체험할 수 있습니다. 현재 컴퓨터의 loopback URL이며 공개 서비스 주소가 아닙니다.
 
@@ -31,12 +35,17 @@ git clone https://github.com/uulab-official/flora.git
 cd flora
 npm exec --yes --package=pnpm@11.19.0 -- pnpm install --frozen-lockfile --ignore-scripts
 npm exec --yes --package=pnpm@11.19.0 -- pnpm check
+npm exec --yes --package=pnpm@11.19.0 -- pnpm platform doctor --strict --json
 npm exec --yes --package=pnpm@11.19.0 -- pnpm platform job simulate --file examples/local-workflow.json --scenario runner-replacement
 ```
+
+`doctor --strict --json`은 Node 24.19.0·pnpm 11.19.0·Git 준비 여부를 검사합니다. `readiness.ready: true`이면 종료 코드 0, 필수 도구 누락·지원하지 않는 버전·검사 시간 초과로 준비되지 않으면 종료 코드 1입니다. `readiness.issues`의 `code`·`remediation`을 따라 같은 명령을 다시 실행하세요. 기존 `doctor` / `doctor --json`은 진단 보고용이며 준비 실패만으로 종료 코드 1을 반환하지 않습니다. 두 옵션의 순서는 바꿔도 됩니다. 도구 설치·설정 변경은 하지 않으며, Xcode·Java는 로컬 체험에 선택 항목입니다. `nativeBuildVerified: false`는 정상이고 실제 네이티브 빌드 준비를 증명하지 않습니다.
 
 확인할 결과는 `check`의 **0 fail**, simulation의 `mode: "local-simulation"`, Job의 `status: "success"`, `attemptCount: 2`, `fence: 2`, `rejectedOperations`의 `LEASE_STALE`입니다. 오래된 실행권을 거부한 정상 결과이며 실제 앱 빌드 성공이 아닙니다. 임시 SQLite DB는 실행이 끝나면 제거됩니다.
 
 Windows에서 `npm.ps1` 실행 정책 오류가 나면 위 명령의 `npm`만 `npm.cmd`로 바꾸세요. 보안 정책을 낮출 필요가 없습니다. [전체 시작 가이드](docs/getting-started.ko.md)에 정확한 예상 출력과 복구 방법이 있습니다. API key·로그인·클라우드 계정은 필요하지 않습니다. 최초 설치는 공개 패키지를 내려받으므로 인터넷 연결이 필요합니다.
+
+새 clone의 독립 설치를 확인할 때는 [소스 완전성·격리 설치 절차](docs/development/clean-clone-source.ko.md)를 따르세요. `verify:clean`은 Git 추적 파일의 workspace 의존성이 빠지면 `WORKSPACE_SOURCE_INCOMPLETE`로 중단합니다. 이 검사는 추적 파일의 임시 사본을 사용하며 실제 Git clone 검증과는 구분합니다.
 
 ## 가상의 앱으로 로컬 화면 열기
 
@@ -65,6 +74,8 @@ node scripts/dogfood-demo.mjs --serve
 7. [공식 문서로 확인한 제약과 비용](docs/reference/provider-facts.ko.md)
 8. [Foundation 상세 구현 계획](docs/superpowers/plans/2026-10-06-foundation-implementation.md)
 9. [웹 AI 코드 수정: 검토 대기 중인 상세 설계 제안](docs/proposals/web-ai/next-slice-spec.ko.md) · [아키텍처 추가안](docs/proposals/web-ai/architecture-addendum.ko.md)
+10. [OTA 자산의 private R2 분리·무료 범위 보호·기존 D1 보존 절차](docs/development/r2-ota-assets.ko.md)
+11. [구독 없는 GitHub Release OTA 저장소·PC Runner 연결](docs/development/github-release-ota-storage.ko.md)
 
 ## 완전 오픈소스 원칙
 

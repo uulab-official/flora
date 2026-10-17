@@ -434,12 +434,21 @@ test("hosted " + compositionTransport + " composition requires real enrollment, 
       assert.equal(response.status, status);
       assert.deepEqual(await response.json(), body);
     };
+    const expectLoginRedirect = async (response: Awaited<ReturnType<typeof call>>) => {
+      assert.equal(response.status, 302);
+      const headers = new Headers([...response.headers]);
+      assert.equal(headers.get("Location"), "/login");
+      assert.equal(headers.get("Cache-Control"), "no-store");
+      assert.equal(headers.get("X-Content-Type-Options"), "nosniff");
+      assert.equal(await response.text(), "");
+    };
     for (const url of ["http://flora.example.test/", "https://other.example.test/", "https://flora.example.test.evil.test/", "https://user@flora.example.test/", "https://flora.example.test:444/", "file:///tmp/fixture", SYNTHETIC_ORIGIN + "/#fragment"]) {
       await assert.rejects(harness.httpFetch(url), /SYNTHETIC_ORIGIN_REQUIRED/);
     }
     await expectJson(await call("//other.example.test/"), 404, { error: "NOT_FOUND" });
     await expectJson(await call("/api/state", undefined, { "MF-Original-URL": "https://other.example.test/" }), 401, { error: "UNAUTHENTICATED" });
     await expectJson(await call("/api/state"), 401, { error: "UNAUTHENTICATED" });
+    await expectLoginRedirect(await call("/"));
     for (const path of ["/app.js", "/app.css"]) await expectJson(await call(path), 401, { error: "UNAUTHENTICATED" });
     for (const [path, mime] of [["/brand.png", "image/png"], ["/icons.svg", "image/svg+xml; charset=utf-8"]]) {
       const asset = await call(path!); assert.equal(asset.status, 200);
@@ -549,7 +558,8 @@ test("hosted " + compositionTransport + " composition requires real enrollment, 
     assert.equal((await (await call("/api/state", undefined, { Cookie: secondCookie })).json() as { selected: { id: string } }).selected.id, state.selected.id);
     await expectJson(await call("/api/auth/logout", "{}", auth), 200, { ok: true });
     await expectJson(await call("/api/state", undefined, auth), 401, { error: "UNAUTHENTICATED" });
-    for (const path of ["/", "/app.js", "/app.css"]) await expectJson(await call(path, undefined, auth), 401, { error: "UNAUTHENTICATED" });
+    await expectLoginRedirect(await call("/", undefined, auth));
+    for (const path of ["/app.js", "/app.css"]) await expectJson(await call(path, undefined, auth), 401, { error: "UNAUTHENTICATED" });
     for (const path of ["/brand.png", "/icons.svg"]) {
       const asset = await call(path); assert.equal(asset.status, 200);
       assert.deepEqual(Buffer.from(await asset.arrayBuffer()), await readFile(new URL("../packages/cloudflare/public" + path, import.meta.url)));
