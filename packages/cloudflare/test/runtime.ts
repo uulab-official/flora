@@ -36,11 +36,13 @@ export async function createTestRuntime(options: TestRuntimeOptions) {
       outboundService: options.outboundService ?? (() => new Response("External network disabled in synthetic tests", { status: 503 })),
     }));
     // Synchronous binding serialization can outlive workerd's idle sockets
-    // while starving Node's pool timers. Drain pending I/O before dispatching
-    // once; never retry a mutation whose response may have been lost.
+    // while starving Node's pool timers. Yield only native binding RPC, keeping
+    // ordinary HTTP body/admission timing intact. Never replay a lost response.
     const dispatchFetch = mf.dispatchFetch;
     mf.dispatchFetch = async (input, init) => {
-      await new Promise<void>(resolve => setImmediate(resolve));
+      const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
+      if (url.pathname === "/cdn-cgi/local/platform-proxy")
+        await new Promise<void>(resolve => setImmediate(resolve));
       return dispatchFetch(input, init);
     };
     const runtime = mf;
