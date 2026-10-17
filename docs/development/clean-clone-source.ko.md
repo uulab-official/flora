@@ -30,8 +30,12 @@ FLORA_CLONE_QA=$(mktemp -d "${TMPDIR:-/tmp}/flora-clone-qa.XXXXXX")
 mkdir -p "$FLORA_CLONE_QA/home" "$FLORA_CLONE_QA/npm-cache" \
   "$FLORA_CLONE_QA/pnpm-store" "$FLORA_CLONE_QA/xdg-cache" \
   "$FLORA_CLONE_QA/xdg-data" "$FLORA_CLONE_QA/xdg-config"
+: > "$FLORA_CLONE_QA/user.npmrc"
+: > "$FLORA_CLONE_QA/global.npmrc"
 env -i PATH="$PATH" HOME="$FLORA_CLONE_QA/home" \
   npm_config_cache="$FLORA_CLONE_QA/npm-cache" \
+  npm_config_userconfig="$FLORA_CLONE_QA/user.npmrc" \
+  npm_config_globalconfig="$FLORA_CLONE_QA/global.npmrc" \
   XDG_CACHE_HOME="$FLORA_CLONE_QA/xdg-cache" \
   XDG_DATA_HOME="$FLORA_CLONE_QA/xdg-data" \
   XDG_CONFIG_HOME="$FLORA_CLONE_QA/xdg-config" \
@@ -62,7 +66,7 @@ QA
 
 `sh -eu`는 실패한 명령 뒤의 검사를 중단합니다. 설치는 lockfile을 고정하고 lifecycle script를 실행하지 않습니다. `check`가 빌드·타입 검사·전체 테스트를 실행한 뒤 doctor의 `readiness.ready: true`와 종료 코드 0을 확인하세요. simulation은 `mode: "local-simulation"`, Job `success`, `attemptCount: 2`, `fence: 2`, 오래된 실행권을 거부한 `LEASE_STALE`이 예상 결과입니다. 마지막 `git status --porcelain`은 추적 소스의 변경이 없는지 확인하는 자료이며 검사 결과를 대신하지 않습니다.
 
-빈 HOME에는 기존 Git 자격 증명·SSH key가 없습니다. 비공개 원격 저장소 인증 실패를 우회하려고 실서비스 key를 이 폴더에 복사하지 마세요. 공개된 검증 ref나 검토한 로컬 후보 URL로 검사할 수 있습니다. 네트워크 오류는 TLS 검증을 유지한 채 원인을 해결하고 다시 실행합니다. Windows에서는 전용 임시 폴더와 별도 환경 변수를 사용해 같은 격리 조건을 구성하고 `npm.cmd`를 사용할 수 있지만, 위 shell 명령 자체의 Windows 실행을 검증한 것은 아닙니다.
+빈 HOME과 별도의 빈 npm 설정을 사용하므로 기존 Git 자격 증명·SSH key·npm 인증 설정을 가져오지 않습니다. npm의 user/global 설정 경로는 서로 다른 파일이어야 합니다. 비공개 원격 저장소 인증 실패를 우회하려고 실서비스 key를 이 폴더에 복사하지 마세요. 공개된 검증 ref나 검토한 로컬 후보 URL로 검사할 수 있습니다. 네트워크 오류는 TLS 검증을 유지한 채 원인을 해결하고 다시 실행합니다. Windows에서는 전용 임시 폴더와 별도 환경 변수를 사용해 같은 격리 조건을 구성하고 `npm.cmd`를 사용할 수 있지만, 위 shell 명령 자체의 Windows 실행을 검증한 것은 아닙니다.
 
 ## 이 검사가 증명하는 범위
 

@@ -40,7 +40,7 @@ export async function createTestRuntime(options: TestRuntimeOptions) {
     // ordinary HTTP body/admission timing intact. Never replay a lost response.
     const dispatchFetch = mf.dispatchFetch;
     mf.dispatchFetch = async (input, init) => {
-      const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
+      const url = new URL(typeof input === "string" ? input : "url" in input ? input.url : input.href);
       if (url.pathname === "/cdn-cgi/local/platform-proxy")
         await new Promise<void>(resolve => setImmediate(resolve));
       return dispatchFetch(input, init);
