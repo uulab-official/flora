@@ -35,6 +35,14 @@ export async function createTestRuntime(options: TestRuntimeOptions) {
       durableObjects: Object.fromEntries(Object.entries(options.durableObjects ?? {}).map(([name, className]) => [name, { className, useSQLite: true }])),
       outboundService: options.outboundService ?? (() => new Response("External network disabled in synthetic tests", { status: 503 })),
     }));
+    // Synchronous binding serialization can outlive workerd's idle sockets
+    // while starving Node's pool timers. Drain pending I/O before dispatching
+    // once; never retry a mutation whose response may have been lost.
+    const dispatchFetch = mf.dispatchFetch;
+    mf.dispatchFetch = async (input, init) => {
+      await new Promise<void>(resolve => setImmediate(resolve));
+      return dispatchFetch(input, init);
+    };
     const runtime = mf;
     const d1 = await runtime.getD1Database("FLORA_DB");
     return {
