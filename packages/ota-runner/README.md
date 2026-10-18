@@ -5,6 +5,12 @@ an app-scoped job, verifies a pinned Git commit and committed `flora.config.json
 exports inside Docker, uploads the actual bundle/assets, and submits a fenced
 publication receipt. It does not use an EAS account, EAS Build, or EAS Update.
 
+## Guided setup
+
+After building Flora, use `npm exec --yes --package=pnpm@11.19.0 -- pnpm flora setup runner` from its root. The authenticated `/onboarding` wizard generates the app's public SDK files; its PC Runner screen issues a one-time token and downloads `flora.runner-binding.json` for exactly one app. CLI checks SDK origin/app, expected Runner prefix, local Docker socket, fixed image tools and disk headroom before presence/foreground execution. Token input has no echo; new private files are exclusive. Reuse the same directory to verify its fingerprints, without reissuing a token or replacing recovery/fatal-stop files.
+
+This uses the existing supervisor with 30-second polling and adaptive idle backoff up to five minutes. It does not use the default daemon as an idle presence loop, install UULab's LaunchAgent, or claim a completed job from presence. The two supported preparation profiles are npm 10.9.8 and the existing bounded pnpm 11.10.0 workspace profile, both on Node 24.19.0. See the [full walkthrough](../../README.en.md#follow-the-path-to-your-first-ota) for first-owner/GitHub setup. The manual configuration below remains a recovery/operator reference.
+
 ## Run
 
 Follow the [root README](../../README.en.md) to install and build Flora with Node

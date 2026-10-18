@@ -1,3 +1,5 @@
+import {Writable} from "node:stream";
+import {createSetupIO} from "./setup/terminal.js";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 import { DomainError, ensure } from "@app-ops/core";
@@ -19,13 +21,13 @@ const productName = (process.env.PRODUCT_NAME || "Flora")
 const help =
   productName +
   " — " +
-  "Local App Operations Foundation\nplatform doctor [--json] [--strict]\nplatform config validate --file <json>\nplatform job simulate --file <json> [--scenario happy-path|runner-replacement|unsafe-expiry]\nflora dogfood --help\nflora setup [runner | --resume <private-state> | inspect --state <private-state> --json]\nDoctor --strict exits 1 when Node, pnpm or Git prerequisites are not verified.\nNo native builds, provider connections or deployments.\n";
+  "Local App Operations Foundation\nplatform doctor [--json] [--strict]\nplatform config validate --file <json>\nplatform job simulate --file <json> [--scenario happy-path|runner-replacement|unsafe-expiry]\nflora dogfood --help\nflora setup [runner | --resume <private-state> | inspect --state <private-state> --json]\nDoctor --strict exits 1 when Node, pnpm or Git prerequisites are not verified.\nFoundation commands are local. setup can provision a new Cloudflare server and guide a PC Runner; review its explicit resource scope.\n";
 export async function runCli(
   argv: readonly string[],
   io: CliIO,
 ): Promise<number> {
   try {
-    if (argv[0] === "setup") return await runSetupCommand(argv.slice(1));
+    if (argv[0] === "setup") return await runSetupCommand(argv.slice(1),createSetupIO(new Writable({write(chunk,_encoding,done){try{io.stdout(chunk.toString());done();}catch(error){done(error as Error);}}})));
     if (argv[0] === "dogfood") return await runDogfoodCommand(argv.slice(1), io);
     if (argv.length === 0 || (argv.length === 1 && argv[0] === "--help")) {
       io.stdout(help);

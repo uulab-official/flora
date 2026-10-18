@@ -11,7 +11,7 @@ GitHub push → Flora's app-scoped policy and job queue → Docker export on you
             → OTA publication → installed app downloads, applies and restarts → app history
 ```
 
-Flora is currently a single-owner self-hosting preview. The SDK is not published to npm, and first-owner enrollment is a manual operator procedure. This guide uses **D1 asset storage and an independent PC Runner**. It does not assume UULab's dedicated GitHub Release repository or LaunchAgent is a general installation feature.
+Flora is currently a single-owner self-hosting preview. The SDK is not published to npm. A local CLI and authenticated web wizard guide initial installation. This guide uses **D1 asset storage and an independent PC Runner**. It does not assume UULab's dedicated GitHub Release repository or LaunchAgent is a general installation feature.
 
 ## Follow the path to your first OTA
 
@@ -46,23 +46,36 @@ Node must report `v24.19.0`. Check for `readiness.ready: true` and exit code 0. 
 
 To inspect a fictional example without an account, seed it with `node scripts/dogfood-demo.mjs`, then run `node scripts/dogfood-demo.mjs --serve` and open its one-time URL. This synthetic demo does not connect real GitHub or OTA; a `blocked` run is expected. It uses a separate demo database instead of your operational database. Stop it with Ctrl+C.
 
-### 2. Prepare the Flora server and sign in
+### 2. Start the installation wizard
 
-If an operator has already given you a Flora address and account, sign in at `https://YOUR_FLORA_HOST/login`. `flora.uulab.co.kr` is UULab's existing installation, not a public demo anyone can sign into. There is no shared default administrator password.
+From the built Flora checkout, sign into pinned Wrangler and start setup. A new server needs your Cloudflare account, free-plan usage headroom and a domain you control.
 
-To operate a new server, complete [Self-host a new server](#self-host-a-new-server) in this README, then return here. GitHub requires an externally reachable, exact HTTPS origin and webhook address. A local demo's loopback URL is not a public server address.
+```sh
+npm exec --yes --package=pnpm@11.19.0 -- pnpm --filter @app-ops/cloudflare exec wrangler login
+npm exec --yes --package=pnpm@11.19.0 -- pnpm flora setup
+```
 
-**Completion check:** `/projects` opens after sign-in. Keep an existing installation intact; do not initialize it again with a new database, owner or keys.
+- `new`: enter the account ID, zone ID, new HTTPS origin and owner email. Unique suffixes keep new Worker/D1 names separate. Review the exact scope and current free-plan headroom. After schema, locked deployment and HTTPS checks, setup writes a **10-minute first-owner approval code** to a new private directory on your PC. The terminal displays its path, never the code. Open that file yourself and enter the code at the HTTPS `/setup` page. Set the password only in that page; keep code/password/callback URLs out of Git and logs.
+- `existing`: enter your existing HTTPS origin and continue to `/login?returnTo=%2Fonboarding`. Existing data, owner, keys and history stay intact. `flora.uulab.co.kr` is UULab's installation, not a public demo.
+- `runner`: configure an app-scoped PC Runner as described in step 5.
 
-### 3. Connect GitHub and register a project
+After you verify sign-in using the new password, acknowledge it in the CLI. Setup removes only `FLORA_SETUP` to close initial enrollment. Open `/onboarding` (**Flora 시작하기**) for owner → GitHub → app/SDK → PC Runner → first OTA. Do not type a password or Cloudflare credential into the CLI. Existing Wrangler auth is captured privately in memory only for fixed Cloudflare read APIs, with disk logging disabled. Fixed Wrangler commands perform mutations.
 
-1. Choose **Projects → Connect GitHub → Create connection app on GitHub** (`프로젝트 → GitHub 연결하기 → GitHub에서 연결 앱 만들기`). Leave the organization name empty for a personal account.
-2. Sign in or reauthenticate on GitHub yourself and create the App. On the callback page, choose **Complete connection in Flora** (`Flora에서 연결 완료`). Do not share the callback URL's `code` or `state`.
-3. Under **Allow repository access** (`저장소 접근 허용`), include only the repositories you intend to manage. The Flora App uses Contents/Metadata read access and push events. Signing into GitHub and granting an App access to repositories are separate steps.
-4. Back in Flora, choose **New project → Check GitHub connection → Use selected repository** (`새 프로젝트 → GitHub 연결 확인 → 선택한 저장소 사용`), select the repository, then enter a project name and root. Use `.` for a single-app repository or an app folder such as `apps/mobile` for a monorepo.
-5. In the app's **GitHub · Source** (`GitHub · 소스`), select a verification branch/ref. First use a separate app or verification channel; preserve existing production branches and settings. Register two repositories as **two separate Flora apps**.
+To inspect or resume, use the **same** private journal path printed during setup:
 
-If a repository is missing, open GitHub **Settings → Applications → Installed GitHub Apps → Flora App → Configure**, keep existing selections, add the repository and save. Refresh Flora's repository list. This is an installation-scoped GitHub App connection, not account-wide OAuth discovery of all private repositories.
+```sh
+npm exec --yes --package=pnpm@11.19.0 -- pnpm flora setup inspect --state /ABSOLUTE/PRIVATE/journal.json --json
+npm exec --yes --package=pnpm@11.19.0 -- pnpm flora setup --resume /ABSOLUTE/PRIVATE/journal.json
+```
+
+Pending/`unknown` means a mutation result needs reconciliation. Do not create a replacement installation or token. Expiry, lost replies, changed source or provider drift stop safely; consult the [manual/recovery reference](#self-host-a-new-server). Unknown mutations are not replayed automatically. Unverified permissions, usage headroom or public DNS/TLS are incomplete setup.
+
+### 3. Connect GitHub and register apps in the web wizard
+
+1. In `/onboarding`, choose **GitHub 연결·프로젝트 등록**. Leave the organization blank for a personal account and choose **GitHub에서 연결 앱 만들기**.
+2. Complete GitHub sign-in, reauthentication, App creation and repository installation approval yourself. Choose **Flora에서 연결 완료** on callback to return to the wizard. GitHub login and the App's repository access scope are separate.
+3. Select repository, project name and root: `.` for a single app, or an app folder such as `apps/mobile`. An existing repository/root reuses its app; two repositories register as two separate apps.
+4. Connect a verification ref on the source page. Preserve production branches/channels. If a repository is missing, add it in the GitHub App installation while retaining existing selections, then refresh Flora's list.
 
 ### 4. Commit the SDK/configuration and build the first binary
 
@@ -81,39 +94,9 @@ npm install --ignore-scripts --no-audit --no-fund ./vendor/flora-ota-0.3.2.tgz
 
 Check that the SDK dependency in `package.json` uses a relative `file:vendor/...` path. **Commit the tarball, manifest and lockfile together.** An absolute `file:/Users/...` path or Flora workspace dependency cannot be installed by an independent Runner. Do not convert an existing pnpm/Yarn app to npm or delete its lockfile. Select a supported preparation path from the Runner table below.
 
-In the app's **OTA deployments → Prepare OTA signing for this app** (`OTA 배포 → 이 앱의 OTA 서명 준비`), download the public certificate. The current UI does not display the key ID separately. In your browser's developer tools Network panel, inspect the **response JSON's `keyId`** for this action's `POST /api/apps/APP_ID/signing-key`. The response contains `appId`, `keyId`, `certificate` and `createdAt`; it is not a private key. Do not copy request cookies, headers or tokens.
+In the wizard's **앱·SDK**, review runtime, channel, platforms, entry and tool versions, then choose **설정 확인·공개 파일 생성**. Download `flora.connection.json` and `flora.config.json` to the app root. Public certificate and key ID are included automatically; no DevTools or manual JSON authoring is needed. Review existing files before replacing them. File generation does not install the SDK or prepare the first binary.
 
-Create a public `flora.connection.json` at the app root. Replace the app ID, URL, certificate and key ID below with **this app's actual values**. Put the entire downloaded PEM certificate in the JSON string. Do not put private keys or tokens in this file.
-
-```json
-{
-  "appId": "app_REPLACE_WITH_REGISTERED_APP_ID",
-  "url": "https://YOUR_FLORA_HOST/updates/app_REPLACE_WITH_REGISTERED_APP_ID",
-  "channel": "preview",
-  "runtimeVersion": "native-v1",
-  "certificate": "PASTE_COMPLETE_PUBLIC_PEM_CERTIFICATE",
-  "keyId": "COPY_PUBLIC_KEY_ID_FROM_RESPONSE"
-}
-```
-
-Create `flora.config.json` at the same root. This default example is for an **npm 10.9.8 / Metro / index.js** app. The actual entry file, tool versions and root lockfile must match the declaration. The app's lockfile must include `@flora/ota` and Metro.
-
-```json
-{
-  "schemaVersion": 1,
-  "ota": {
-    "runtimeVersion": "native-v1",
-    "platforms": ["ios", "android"],
-    "url": "https://YOUR_FLORA_HOST/updates/app_REPLACE_WITH_REGISTERED_APP_ID"
-  },
-  "export": {
-    "bundler": "metro",
-    "entryFile": "index.js",
-    "nodeVersion": "24.19.0",
-    "packageManager": { "name": "npm", "version": "10.9.8" }
-  }
-}
-```
+Defaults are Node/npm 24.19.0/10.9.8 and Metro/index.js. Match your actual lockfile and entry. Check the supported pnpm workspace conditions in step 5.
 
 **Installing the SDK does not add an OTA engine to an existing binary.** For a bare RN app, integrate the following native hooks, then install a new binary using the app's existing Xcode/Gradle Release build procedure. iOS builds need a Mac, Xcode and CocoaPods; Android builds need the app's compatible JDK and Android SDK. OTA export itself does not require Xcode or store signing keys.
 
@@ -146,77 +129,29 @@ In a real app, surface failures in the UI and offer a later retry. Do not mark e
 
 Review and commit the SDK, public configuration, lockfile and native/JS changes to the app repository's **verification branch**, then push. Exclude private keys and avoid `git add .`. Use `[skip ci]` in the commit message to skip push/PR Actions workflows; Flora's push webhook is separate. In Flora, choose **Sync GitHub source · Detect app** (`GitHub 소스 동기화 · 앱 인식`) and confirm the SHA, runtime, platforms and neutral export configuration were detected.
 
-### 5. Register and run the PC Runner
+### 5. Configure an app-scoped PC Runner
 
-Run the controller as a non-root macOS/Linux user with an already-running Docker daemon. Check [Docker installation](https://docs.docker.com/engine/install/) and the free-use terms for your account separately. Your PC needs no public port, Tunnel, GitHub certificate or EAS login.
+Use a non-root macOS/Linux user, running Docker and at least 2 GiB free disk. Check [Docker installation and free-use terms](https://docs.docker.com/engine/install/) for your account. Your PC needs no public port, Tunnel or EAS login.
 
-| App dependency preparation | Currently supported conditions |
+In **PC Runner → 현재 앱에 Runner 등록**, obtain the one-time token and download its public binding file. Keep the same app's `flora.connection.json` ready, then run in the Flora checkout:
+
+```sh
+npm exec --yes --package=pnpm@11.19.0 -- pnpm flora setup runner
+```
+
+Enter absolute paths to the binding/SDK files and a new private runtime directory. Token input has no echo; files use 0600 and directories 0700. App/origin/Runner mismatches are rejected before claim. Only a validated local Unix Docker socket is supported; remote TCP daemons are rejected.
+
+| Preparation | Supported conditions |
 | --- | --- |
-| Default npm path below | Node 24.19.0 / npm 10.9.8; v3 `package-lock.json` at the app root; pinned npm registry tarballs and validated `vendor/*.tgz` |
-| pnpm workspace path | Node 24.19.0 / **pnpm 11.10.0**; `dependencyPreparation: "pnpm-registry"`; repository-root lock/workspace files and a supported app importer |
-| Other | The operator must prepare the default offline cache path. Do not assume arbitrary pnpm versions or Yarn preparation work automatically |
+| `npm-registry` | Node 24.19.0 / npm 10.9.8, app-root v3 package-lock, validated registry/vendor tarballs |
+| `pnpm-registry` | Node 24.19.0 / pnpm **11.10.0**, supported repository-root workspace and app importer |
+| Other | Outside automatic wizard preparation; consult the [Runner reference](packages/ota-runner/README.md) |
 
-Flora tooling uses pnpm **11.19.0**; the pnpm app Runner profile uses **11.10.0**. These are separate versions. Build an image with tools for the default npm path and supported pnpm path. Do not put app source, private keys or tokens into the image.
+Enter a previously verified immutable `sha256:` image ID, or leave blank to build from Flora's fixed public-tool Dockerfile. App source, secrets and tokens never enter the image. Flora development pnpm 11.19.0 and app Runner pnpm 11.10.0 are separate pins. After image/tool and exact Runner presence checks, explicitly choose foreground execution.
 
-```sh
-# Run in the Flora repository; do not run the Runner as root.
-docker info
-docker pull node:24.19.0-bookworm-slim
-FLORA_BASE_IMAGE=$(docker image inspect node:24.19.0-bookworm-slim --format '{{index .RepoDigests 0}}')
-docker build --build-arg BASE_IMAGE="$FLORA_BASE_IMAGE" --build-arg PNPM_VERSION=11.10.0 -f packages/ota-runner/examples/Dockerfile -t flora-export:local packages/ota-runner/examples
-docker image inspect flora-export:local --format '{{.Id}}'
-docker context inspect --format '{{.Endpoints.docker.Host}}'
-```
+Polling starts at 30 seconds and backs off to five minutes when idle. Presence does not prove export/publication success. Ctrl-C stops only this execution. Reuse the same files/directory to verify fingerprints and scope without issuing a new token. Existing config, recovery journals and `fatal-stop` are preserved.
 
-Keep the image's actual `sha256:` ID with 64 hexadecimal digits. The controller rejects tags/`latest` and runs only an already-local pinned image. If you use a non-default `DOCKER_HOST`, put that actual `unix://...` address below instead of the context output.
-
-In the app's **PC Runner**, choose **Register Runner for current app** (`현재 앱에 Runner 등록`). Save the **one-time token** in a private `runner.json` outside the checkout. Use a separate Runner token and directory for every app.
-
-```sh
-# Choose a new path. Stop if it exists and preserve the existing configuration.
-FLORA_PC_DIR="$HOME/.flora-first-pc"
-(umask 077; mkdir "$FLORA_PC_DIR" && mkdir "$FLORA_PC_DIR/scratch" "$FLORA_PC_DIR/scratch/work" "$FLORA_PC_DIR/recovery")
-```
-
-Save the following as `$FLORA_PC_DIR/runner.json` using a **local editor**, then run `chmod 600 "$FLORA_PC_DIR/runner.json"`. Do not put the token into shell commands, environment variables, Git or chat. `origin` is the HTTPS origin without a path.
-
-```json
-{
-  "origin": "https://YOUR_FLORA_HOST",
-  "token": "PASTE_ONE_TIME_APP_RUNNER_TOKEN_PRIVATELY",
-  "dockerImage": "sha256:REPLACE_WITH_INSPECTED_LOCAL_IMAGE_ID",
-  "resourceProfile": "github-hosted",
-  "dependencyPreparation": "npm-registry",
-  "workDirectory": "/ABSOLUTE/.flora-first-pc/scratch/work",
-  "recoveryDirectory": "/ABSOLUTE/.flora-first-pc/recovery"
-}
-```
-
-`github-hosted` is the existing container resource profile's name. It also runs on your PC and does not connect Actions. npm/pnpm preparation containers fetch only validated public registry dependencies. Actual app code, install scripts and export run in a separate container without network access. The export container does not receive Runner/GitHub tokens or the Docker socket.
-
-Use the foreground supervisor to reduce free-tier reads while reporting idle presence. Save the following as `$FLORA_PC_DIR/service.json` and protect it with mode 0600. `nodePath`, `runnerMain` and `path` must use actual absolute paths; `dockerHost` is the socket verified above. If you do not use Lima, set `limaHome` to the same directory as `runtimeDirectory`.
-
-```json
-{
-  "runtimeDirectory": "/ABSOLUTE/.flora-first-pc",
-  "nodePath": "/ABSOLUTE/TO/node",
-  "runnerMain": "/ABSOLUTE/TO/flora/packages/ota-runner/dist/main.js",
-  "runnerConfigs": ["/ABSOLUTE/.flora-first-pc/runner.json"],
-  "path": "/ABSOLUTE/DOCKER/BIN:/ABSOLUTE/NODE/BIN:/usr/bin:/bin:/usr/sbin:/sbin",
-  "limaHome": "/ABSOLUTE/.flora-first-pc",
-  "dockerHost": "unix:///ACTUAL/DOCKER/SOCKET",
-  "pollIntervalMs": 30000
-}
-```
-
-```sh
-chmod 600 "$FLORA_PC_DIR/service.json"
-node scripts/local-runner/supervisor.mjs "$FLORA_PC_DIR/service.json"
-```
-
-Open another terminal and check the app's PC Runner status. The supervisor sends actual presence separately and backs off empty-queue checks to at most five-minute intervals. `node packages/ota-runner/dist/main.js --config ... --once` is a one-shot diagnostic; it does not send idle presence automatically. **Online** (`온라인`) confirms connectivity, not a successful deployment. Also check Docker, 2 GiB free disk space and failure codes.
-
-Stop with Ctrl+C. A powered-off/sleeping PC or closed terminal cannot process jobs. The reboot service installer, `service.mjs`, currently targets UULab's named macOS LaunchAgent and paths; this generic procedure does not install it. Operators needing it should review the [service guide (Korean)](docs/development/local-pc-runner.ko.md). Do not delete `fatal-stop` files or recovery journals before diagnosing their cause.
+A powered-off/sleeping PC or closed terminal cannot process jobs. The generic wizard does not install an autostart service. UULab's specific LaunchAgent is an [operator reference](docs/development/local-pc-runner.ko.md); review its names/paths before adapting it.
 
 ### 6. Publish iOS and Android OTA from a commit
 
@@ -242,6 +177,8 @@ For a failure, inspect the cause and later recovery events in the same details. 
 For two apps, create separate project IDs, signing settings, Runner tokens/directories and policies. Check that one app's OTA does not appear in the other app's list or devices. Device validation requires a compatible installed binary on each platform.
 
 ## Self-host a new server
+
+The following is a manual configuration/recovery reference. New installations should start with `flora setup` above. Do not mix manual reissuance with the wizard journal for the same installation.
 
 Skip this procedure if your installation already supports owner login. This is an **operator-managed manual preview**, with no general safe setup-token CLI or authentication-database restore tool yet. First-owner enrollment below is only for **a new dedicated database and new Worker**. For an existing installation, use the [operations/recovery guide (Korean)](docs/development/password-hosting.ko.md).
 
@@ -336,9 +273,11 @@ After a successful login, remove **only `vars.FLORA_SETUP`** from the private co
 
 Start with default D1 storage, without external asset variables or an R2 binding. Each file is limited to 16 MiB; app/shared storage caps and D1's free daily quotas also apply. The large-asset GitHub Releases path is currently a preview pinned to UULab repositories; it does not support arbitrary repositories as a general installation feature. Do not delete history or automatically upgrade to a paid tier when a limit is reached.
 
-Return to [step 2](#2-prepare-the-flora-server-and-sign-in) and connect GitHub. Actual Free-account CPU/memory/usage and public DNS/TLS must be checked separately from local tests.
+Return to [step 2](#2-start-the-installation-wizard) and connect GitHub. Actual Free-account CPU/memory/usage and public DNS/TLS must be checked separately from local tests.
 
 ## Troubleshooting and verification scope
+
+See the [installation wizard verification record](docs/development/installation-wizard-verification-2026-10-18.ko.md) for current evidence and remaining steps.
 
 | Symptom | Check |
 | --- | --- |

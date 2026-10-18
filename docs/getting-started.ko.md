@@ -4,6 +4,12 @@
 
 > **실제 앱을 연결하려면 [README의 설치 → GitHub 연결 → PC Runner → 첫 OTA 절차](../README.md)를 먼저 따르세요.** 아래는 계정·실제 앱 없이 실행하는 Foundation 체험이며 실제 OTA를 게시하지 않습니다.
 
+## 설치 마법사로 시작하기
+
+실제 운영을 시작하려면 Node 24.19.0과 고정 pnpm으로 install·build한 뒤 `npm exec --yes --package=pnpm@11.19.0 -- pnpm flora setup`을 실행합니다. `new`는 새 Cloudflare Worker/D1와 최초 관리자 등록을, `existing`은 기존 로그인과 데이터 보존을, `runner`는 앱 전용 PC 실행 환경을 안내합니다.
+
+로그인 후 `/onboarding`에서 GitHub 승인 → 프로젝트 등록 → 공개 SDK 파일 생성 → PC Runner → 모든 선택 플랫폼의 첫 OTA 게시를 확인합니다. 최초 승인 코드는 private 파일, 비밀번호는 HTTPS 화면, Runner token은 숨김 입력으로 취급합니다. 응답 유실·만료를 초기화나 재발급으로 우회하지 않습니다. [전체 따라하기](../README.md#첫-ota까지-따라하기)와 [검증 상태](development/installation-wizard-verification-2026-10-18.ko.md)를 확인하세요.
+
 ## 지금 무엇을 써볼 수 있나요?
 
 처음에는 **로컬 Foundation CLI와 보호된 loopback 웹 화면**을 체험할 수 있습니다. 설정·Job/lease를 시험하고, 정적 앱 source snapshot과 반입한 개발 baseline 이력을 봅니다. Foundation artifact는 모의 metadata이며 이 경로의 기본 실행 provider는 blocked입니다. 아래 체험은 실제 앱 빌드·OTA 배포가 아니며 앱 계정, API key, `.env`, 인증서를 넣을 필요가 없습니다.

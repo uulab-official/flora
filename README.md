@@ -11,7 +11,7 @@ GitHub push → Flora의 앱별 정책·작업 큐 → 내 PC의 Docker export
             → Flora OTA 게시 → 설치된 앱의 다운로드·적용·재시작 → 앱별 상세 이력
 ```
 
-현재는 단일 소유자 셀프호스팅 preview입니다. SDK는 npm에 게시되지 않았고, 첫 관리자 등록은 수동 운영 절차입니다. 아래 기본 경로는 **D1 자산 저장 + 독립 PC Runner**입니다. UULab 전용 GitHub Release 저장소와 LaunchAgent를 일반 설치 기능으로 가정하지 않습니다.
+현재는 단일 소유자 셀프호스팅 preview입니다. SDK는 npm에 게시되지 않았습니다. 최초 설치는 로컬 CLI와 로그인 후 웹 마법사로 안내합니다. 아래 기본 경로는 **D1 자산 저장 + 독립 PC Runner**입니다. UULab 전용 GitHub Release 저장소와 LaunchAgent를 일반 설치 기능으로 가정하지 않습니다.
 
 ## 첫 OTA까지 따라하기
 
@@ -46,23 +46,36 @@ Node 출력은 `v24.19.0`입니다. doctor의 `readiness.ready: true`와 종료 
 
 계정 없이 가상 예제를 보려면 `node scripts/dogfood-demo.mjs`로 예제를 만든 다음 `node scripts/dogfood-demo.mjs --serve`를 실행하고 출력된 일회용 URL을 엽니다. 이 가상 체험은 실제 GitHub·OTA가 아니며 `blocked` 실행이 정상입니다. 원래 운영 DB 대신 별도 demo DB를 사용합니다. 종료는 Ctrl+C입니다.
 
-### 2. Flora 웹 서버와 소유자 로그인
+### 2. 설치 마법사로 서버 준비하기
 
-이미 운영자가 준 Flora 주소·계정이 있다면 `https://본인-Flora-주소/login`에 로그인하세요. `flora.uulab.co.kr`은 UULab의 기존 설치이며 누구나 로그인할 수 있는 공개 demo가 아닙니다. 공용 기본 관리자 비밀번호는 없습니다.
+빌드한 Flora 저장소에서 실행합니다. 새 설치는 Cloudflare 계정의 무료 플랜·사용량 여유와 본인이 관리하는 도메인이 필요합니다. 먼저 고정 Wrangler로 로그인하고 `flora setup`을 실행하세요.
 
-새 서버를 직접 운영하면 먼저 이 README의 [새 서버 준비](#새-서버를-직접-운영할-때)를 완료한 뒤 돌아옵니다. GitHub 연결은 외부에서 접근 가능한 정확한 HTTPS origin과 webhook 주소가 필요합니다. 로컬 demo의 loopback URL을 공개 서버 주소로 사용하지 않습니다.
+```sh
+npm exec --yes --package=pnpm@11.19.0 -- pnpm --filter @app-ops/cloudflare exec wrangler login
+npm exec --yes --package=pnpm@11.19.0 -- pnpm flora setup
+```
 
-**준비 완료:** 로그인 후 `/projects`가 열립니다. 기존 설치는 그대로 사용하고 새 DB·새 owner·새 키로 다시 초기화하지 마세요.
+- `new`: 계정 ID·zone ID·새 HTTPS 주소·소유자 이메일을 입력합니다. 기존 리소스와 겹치지 않는 새 Worker/D1 이름에 고유 접미사를 붙입니다. 표시된 범위와 무료 여유를 확인하면 전용 DB·잠긴 서버·HTTPS를 확인한 뒤 **10분짜리 최초 승인 코드**를 PC의 새 private 디렉터리에 발급합니다. 터미널에는 코드 대신 파일 경로가 나옵니다. 코드 파일을 직접 열어 `/setup` HTTPS 화면에 입력하고, 비밀번호도 그 화면에서만 정합니다. 코드·콜백 URL·비밀번호를 로그나 Git에 넣지 마세요.
+- `existing`: 본인의 기존 HTTPS origin을 입력하고 `/login?returnTo=%2Fonboarding`으로 이어갑니다. DB·owner·키·이력을 초기화하지 않습니다. `flora.uulab.co.kr`은 UULab 기존 설치이며 공개 demo가 아닙니다.
+- `runner`: 5단계의 앱 전용 PC Runner를 준비합니다.
 
-### 3. GitHub 연결과 프로젝트 등록
+처음 만든 비밀번호로 로그인을 확인한 후 CLI에 확인하면 `FLORA_SETUP`만 제거해 최초 등록 창을 닫습니다. 그다음 `/onboarding`의 **Flora 시작하기**가 관리자 → GitHub → 앱·SDK → PC Runner → 첫 OTA를 안내합니다. CLI에 비밀번호나 Cloudflare 인증값을 입력하지 않습니다. 기존 Wrangler 인증은 메모리에서 고정 Cloudflare 조회 API에만 사용하며 디스크 로그를 끕니다. 리소스 변경은 고정 Wrangler 명령으로 진행합니다.
 
-1. **프로젝트 → GitHub 연결하기 → GitHub에서 연결 앱 만들기**를 선택합니다. 개인 계정이면 조직 이름을 비웁니다.
-2. GitHub에서 본인이 로그인·재인증하고 App 생성을 완료합니다. 콜백에서 **Flora에서 연결 완료**를 누릅니다. 콜백 URL의 `code`·`state`를 공유하지 않습니다.
-3. **저장소 접근 허용**에서 관리할 저장소만 설치 범위에 추가합니다. Flora App은 Contents·Metadata 읽기와 push 이벤트를 사용합니다. GitHub 로그인과 App에 허용한 저장소 범위는 서로 다릅니다.
-4. Flora로 돌아와 **새 프로젝트 → GitHub 연결 확인 → 선택한 저장소 사용**으로 저장소를 선택하고 프로젝트 이름·root를 입력해 등록합니다. 단일 앱 저장소는 `.`, monorepo는 `apps/mobile` 같은 앱 폴더입니다.
-5. 앱의 **GitHub · 소스**에서 검증용 브랜치/ref를 지정합니다. 이미 사용하는 운영 브랜치·설정을 덮어쓰지 말고 별도의 앱/검증 채널로 먼저 확인하세요. 두 저장소는 **서로 다른 Flora 앱**으로 등록합니다.
+중단했으면 터미널에 표시된 **같은** 원장을 사용하세요. 아래 경로는 실제 private `journal.json`으로 바꿉니다.
 
-저장소가 안 보이면 GitHub의 **Settings → Applications → Installed GitHub Apps → Flora App → Configure**에서 기존 선택을 유지한 채 저장소를 추가하고 저장한 뒤 목록을 새로 확인합니다. OAuth처럼 계정의 모든 private 저장소를 자동 조회하는 방식이 아닙니다.
+```sh
+npm exec --yes --package=pnpm@11.19.0 -- pnpm flora setup inspect --state /ABSOLUTE/PRIVATE/journal.json --json
+npm exec --yes --package=pnpm@11.19.0 -- pnpm flora setup --resume /ABSOLUTE/PRIVATE/journal.json
+```
+
+`unknown`/pending은 요청 결과를 확인하지 못했다는 뜻입니다. 새 설치·토큰을 다시 만들지 않습니다. 만료·응답 유실·소스 변경·provider 설정 변경은 안전하게 멈추며 [수동 구성·복구 참고](#새-서버를-직접-운영할-때)로 확인합니다. 현재 원장은 불명확한 변경을 자동 재실행하지 않습니다. 읽기 권한·무료 여유·DNS/TLS를 확인할 수 없으면 설치 완료가 아닙니다.
+
+### 3. 웹 마법사에서 GitHub와 앱 연결하기
+
+1. `/onboarding`의 **GitHub 연결·프로젝트 등록**을 엽니다. 개인 계정이면 조직 이름을 비우고 **GitHub에서 연결 앱 만들기**를 누릅니다.
+2. GitHub에서 직접 로그인·재인증·App 생성 및 저장소 설치 승인을 완료합니다. 콜백의 **Flora에서 연결 완료**를 누르면 마법사로 돌아옵니다. GitHub 로그인과 App이 접근할 수 있는 저장소 범위는 별개입니다.
+3. 등록 화면에서 저장소·프로젝트 이름·root를 선택합니다. 단일 앱은 `.`, monorepo는 `apps/mobile` 같은 앱 폴더입니다. 같은 저장소/root는 기존 앱을 재사용하며 두 저장소는 서로 다른 앱으로 등록합니다.
+4. 소스 화면에서 별도 검증 ref를 연결합니다. 기존 운영 ref·채널·앱을 덮어쓰지 않습니다. 저장소가 없으면 GitHub 설치 설정에서 기존 선택을 유지한 채 추가하고 Flora 목록을 다시 확인합니다.
 
 ### 4. SDK와 앱 설정을 커밋하고 첫 바이너리 만들기
 
@@ -81,39 +94,9 @@ npm install --ignore-scripts --no-audit --no-fund ./vendor/flora-ota-0.3.2.tgz
 
 `package.json`의 SDK 의존성이 상대 `file:vendor/...`를 가리키는지 확인하고 **tarball·manifest·lockfile을 함께 커밋**합니다. 개인 PC의 절대 `file:/Users/...` 경로나 Flora workspace 의존성을 앱에 넣으면 독립 Runner에서 설치할 수 없습니다. 기존 pnpm/Yarn 앱을 npm으로 전환하거나 lockfile을 지우지 마세요. 아래 Runner 지원 표에 맞는 경로를 선택합니다.
 
-앱의 **OTA 배포 → 이 앱의 OTA 서명 준비**를 누르고 공개 인증서를 받습니다. 현재 UI는 key ID를 별도 표시하지 않습니다. 브라우저 개발자 도구의 Network에서 이 동작의 `POST /api/apps/앱ID/signing-key` **응답 JSON의 `keyId`**를 확인하세요. 응답은 `appId`, `keyId`, `certificate`, `createdAt`이며 개인키가 아닙니다. 요청 cookie·header·토큰을 복사하지 마세요.
+마법사 **앱·SDK**에서 runtime·채널·플랫폼·entry·Node·package manager를 확인한 후 **설정 확인·공개 파일 생성**을 누릅니다. `flora.connection.json`과 `flora.config.json`을 내려받아 앱 root에 둡니다. 공개 인증서와 key ID는 자동으로 들어가므로 DevTools나 JSON 수동 편집은 필요 없습니다. 기존 파일이 있으면 차이를 검토하고 보존하세요. 생성만으로 앱에 SDK가 설치되거나 바이너리가 준비된 것은 아닙니다.
 
-앱 root에 공개 `flora.connection.json`을 만듭니다. 다음 예시의 앱 ID·URL·인증서·key ID를 **선택한 앱의 실제 값**으로 바꿉니다. `certificate`는 내려받은 PEM 전문을 JSON 문자열로 넣습니다. 개인키·토큰은 이 파일에 넣지 않습니다.
-
-```json
-{
-  "appId": "app_REPLACE_WITH_REGISTERED_APP_ID",
-  "url": "https://YOUR_FLORA_HOST/updates/app_REPLACE_WITH_REGISTERED_APP_ID",
-  "channel": "preview",
-  "runtimeVersion": "native-v1",
-  "certificate": "PASTE_COMPLETE_PUBLIC_PEM_CERTIFICATE",
-  "keyId": "COPY_PUBLIC_KEY_ID_FROM_RESPONSE"
-}
-```
-
-같은 root에 `flora.config.json`을 만듭니다. 아래 기본 예시는 **npm 10.9.8·Metro·index.js** 앱입니다. 실제 entry file·도구 버전·root lockfile이 선언과 일치해야 합니다. `@flora/ota`와 Metro가 앱의 lockfile에 포함돼야 합니다.
-
-```json
-{
-  "schemaVersion": 1,
-  "ota": {
-    "runtimeVersion": "native-v1",
-    "platforms": ["ios", "android"],
-    "url": "https://YOUR_FLORA_HOST/updates/app_REPLACE_WITH_REGISTERED_APP_ID"
-  },
-  "export": {
-    "bundler": "metro",
-    "entryFile": "index.js",
-    "nodeVersion": "24.19.0",
-    "packageManager": { "name": "npm", "version": "10.9.8" }
-  }
-}
-```
+Node/npm 기본값은 24.19.0/10.9.8·Metro/index.js입니다. 앱 lockfile·실제 entry에 맞추세요. pnpm workspace는 아래 지원 범위를 먼저 확인합니다.
 
 **SDK 설치만으로 OTA 엔진이 기존 바이너리에 생기지 않습니다.** bare RN 앱에는 다음 네이티브 연결을 적용하고 기존 Xcode/Gradle Release 빌드 절차로 새 바이너리를 설치합니다. iOS 빌드는 Mac·Xcode·CocoaPods, Android 빌드는 앱에 맞는 JDK·Android SDK가 필요합니다. OTA export 자체는 Xcode·스토어 서명 키가 필요하지 않습니다.
 
@@ -146,77 +129,29 @@ export async function updateAfterAppIsReady() {
 
 앱 저장소의 **검증용 브랜치**에 SDK·공개 설정·lockfile·네이티브/JS 변경을 검토해 커밋·push합니다. 개인키는 추가하지 않고 `git add .`는 쓰지 않습니다. Actions를 생략하려면 커밋 메시지에 `[skip ci]`를 넣습니다. Flora의 push webhook은 별도 경로입니다. Flora에서 **GitHub 소스 동기화 · 앱 인식**을 눌러 해당 SHA·runtime·platforms와 중립 export 설정이 인식되는지 확인합니다.
 
-### 5. PC Runner 등록하고 실행하기
+### 5. 앱 전용 PC Runner 준비하기
 
-컨트롤러는 root가 아닌 macOS/Linux 사용자로 실행합니다. Docker daemon이 이미 동작해야 합니다. [Docker 설치](https://docs.docker.com/engine/install/)·계정별 무료 사용 조건은 별도 확인하세요. PC의 공개 포트·Tunnel·GitHub 인증서·EAS 로그인은 필요 없습니다.
+root가 아닌 macOS/Linux 사용자, 실행 중인 Docker, 2GiB 이상 디스크 여유가 필요합니다. [Docker 설치와 무료 사용 조건](https://docs.docker.com/engine/install/)을 본인 계정에 맞게 확인하세요. PC 공개 포트·Tunnel·EAS 로그인은 필요 없습니다.
 
-| 앱의 의존성 준비 | 현재 지원 조건 |
+웹 **PC Runner → 현재 앱에 Runner 등록**에서 일회용 토큰과 **PC Runner 연결 정보 다운로드** (`flora.runner-binding.json`)를 받습니다. 같은 앱의 `flora.connection.json`도 준비한 뒤 Flora 저장소에서 실행합니다.
+
+```sh
+npm exec --yes --package=pnpm@11.19.0 -- pnpm flora setup runner
+```
+
+연결 파일·SDK 파일의 절대 경로와 새 private Runner 디렉터리를 입력합니다. 토큰은 숨김 입력하며 파일 0600·폴더 0700으로 저장합니다. 다른 앱/origin/Runner 토큰 조합은 작업 claim 전에 거절합니다. Docker는 확인된 로컬 Unix 소켓만 지원합니다. 원격 TCP daemon은 사용하지 않습니다.
+
+| 의존성 경로 | 지원 조건 |
 | --- | --- |
-| 아래 npm 기본 경로 | Node 24.19.0 / npm 10.9.8, 앱 root의 v3 `package-lock.json`; 고정 npm registry tarball 및 검증된 `vendor/*.tgz` |
-| pnpm workspace 경로 | Node 24.19.0 / **pnpm 11.10.0**, `dependencyPreparation: "pnpm-registry"`, 저장소 root의 lock/workspace 및 지원되는 앱 importer |
-| 기타 | 기본 offline cache 경로를 운영자가 준비해야 함. 임의 pnpm 버전·Yarn 준비가 자동으로 된다고 가정하지 않음 |
+| `npm-registry` | Node 24.19.0 / npm 10.9.8, 앱 root v3 package-lock, 검증된 registry/vendor tarball |
+| `pnpm-registry` | Node 24.19.0 / pnpm **11.10.0**, 지원되는 repository-root workspace와 앱 importer |
+| 기타 | 이 마법사의 자동 준비 범위 밖. 기존 [Runner reference](packages/ota-runner/README.md)를 확인 |
 
-Flora 저장소용 pnpm **11.19.0**과 pnpm 앱 Runner용 **11.10.0**은 서로 다릅니다. 아래 이미지는 npm 기본 경로와 지원되는 pnpm 경로용 도구를 넣습니다. 앱 source·개인키·토큰은 이미지에 넣지 않습니다.
+이미 검증한 immutable `sha256:` 이미지 ID를 입력하거나 비워 고정 Dockerfile의 공개 도구 이미지를 빌드합니다. 이미지에 앱 소스·비밀키·토큰을 넣지 않습니다. Flora 자체 pnpm 11.19.0과 앱 Runner pnpm 11.10.0은 별개입니다. Docker 도구 버전과 정확한 Runner presence를 확인한 후, 마지막 질문에서 foreground 실행을 선택합니다.
 
-```sh
-# Flora 저장소에서 실행; root 권한으로 Runner를 실행하지 않습니다.
-docker info
-docker pull node:24.19.0-bookworm-slim
-FLORA_BASE_IMAGE=$(docker image inspect node:24.19.0-bookworm-slim --format '{{index .RepoDigests 0}}')
-docker build --build-arg BASE_IMAGE="$FLORA_BASE_IMAGE" --build-arg PNPM_VERSION=11.10.0 -f packages/ota-runner/examples/Dockerfile -t flora-export:local packages/ota-runner/examples
-docker image inspect flora-export:local --format '{{.Id}}'
-docker context inspect --format '{{.Endpoints.docker.Host}}'
-```
+기본 조회는 30초, 유휴 시 최대 5분으로 늘어납니다. 연결만 확인됐다고 export·게시 성공으로 표시하지 않습니다. Ctrl-C는 이번 실행만 종료합니다. 같은 파일·디렉터리로 다시 실행하면 fingerprint·앱 scope를 확인하고 기존 토큰을 재사용합니다. 기존 파일·복구 journal·`fatal-stop`은 덮어쓰거나 삭제하지 않습니다.
 
-이미지의 실제 `sha256:64자리` ID를 보관합니다. 컨트롤러는 tag·`latest`를 거부하고 이미 로컬에 있는 고정 이미지로만 실행합니다. 기본 socket이 아닌 `DOCKER_HOST`를 사용한다면 context 출력 대신 실제 사용 중인 `unix://...` 주소를 아래에 넣습니다.
-
-앱의 **PC Runner → 현재 앱에 Runner 등록**을 누릅니다. **한 번만 표시되는 토큰**은 checkout 밖의 private `runner.json`에 저장합니다. 다른 앱에는 별도의 Runner 토큰과 경로를 사용합니다.
-
-```sh
-# 새 경로를 선택합니다. 이미 있으면 중단하고 기존 설정을 보존합니다.
-FLORA_PC_DIR="$HOME/.flora-first-pc"
-(umask 077; mkdir "$FLORA_PC_DIR" && mkdir "$FLORA_PC_DIR/scratch" "$FLORA_PC_DIR/scratch/work" "$FLORA_PC_DIR/recovery")
-```
-
-아래 JSON을 `$FLORA_PC_DIR/runner.json`에 **로컬 편집기로** 저장하고 `chmod 600 "$FLORA_PC_DIR/runner.json"`을 실행합니다. 토큰을 shell 명령·환경변수·Git·채팅에 넣지 않습니다. `origin`은 경로 없는 HTTPS origin입니다.
-
-```json
-{
-  "origin": "https://YOUR_FLORA_HOST",
-  "token": "PASTE_ONE_TIME_APP_RUNNER_TOKEN_PRIVATELY",
-  "dockerImage": "sha256:REPLACE_WITH_INSPECTED_LOCAL_IMAGE_ID",
-  "resourceProfile": "github-hosted",
-  "dependencyPreparation": "npm-registry",
-  "workDirectory": "/ABSOLUTE/.flora-first-pc/scratch/work",
-  "recoveryDirectory": "/ABSOLUTE/.flora-first-pc/recovery"
-}
-```
-
-`github-hosted`는 현재 코드의 컨테이너 리소스 프로필 이름입니다. 이 설정으로 PC에서도 실행하며 Actions를 연결하지 않습니다. npm/pnpm 준비 컨테이너가 공개 registry의 검증된 패키지만 준비하고, 실제 앱 코드·install script·export는 네트워크 없는 별도 컨테이너에서 실행합니다. Runner 토큰·GitHub 토큰·Docker socket을 export 컨테이너에 넣지 않습니다.
-
-무료 조회량을 줄이고 idle 상태도 보고하려면 foreground supervisor를 사용합니다. `$FLORA_PC_DIR/service.json`에 아래 공개 설정을 저장하고 0600으로 보호합니다. `nodePath`, `runnerMain`, `path`는 실제 절대 경로, `dockerHost`는 위에서 확인한 socket입니다. Lima를 사용하지 않으면 `limaHome`에는 `runtimeDirectory`와 같은 경로를 넣습니다.
-
-```json
-{
-  "runtimeDirectory": "/ABSOLUTE/.flora-first-pc",
-  "nodePath": "/ABSOLUTE/TO/node",
-  "runnerMain": "/ABSOLUTE/TO/flora/packages/ota-runner/dist/main.js",
-  "runnerConfigs": ["/ABSOLUTE/.flora-first-pc/runner.json"],
-  "path": "/ABSOLUTE/DOCKER/BIN:/ABSOLUTE/NODE/BIN:/usr/bin:/bin:/usr/sbin:/sbin",
-  "limaHome": "/ABSOLUTE/.flora-first-pc",
-  "dockerHost": "unix:///ACTUAL/DOCKER/SOCKET",
-  "pollIntervalMs": 30000
-}
-```
-
-```sh
-chmod 600 "$FLORA_PC_DIR/service.json"
-node scripts/local-runner/supervisor.mjs "$FLORA_PC_DIR/service.json"
-```
-
-별도 터미널을 열어 앱의 PC Runner 상태를 확인합니다. supervisor는 실제 presence를 별도로 보내며 빈 큐 확인 간격은 최대 5분까지 늘립니다. `node packages/ota-runner/dist/main.js --config ... --once`는 1회 진단용이고 idle presence를 자동 전송하지 않습니다. 앱 화면의 **온라인**은 연결 확인이며 배포 성공을 뜻하지 않습니다. Docker·디스크 2GiB 여유·오류 코드를 함께 확인하세요.
-
-종료는 Ctrl+C입니다. PC가 꺼지거나 잠들거나 터미널이 닫히면 작업을 처리하지 못합니다. 재부팅 자동 시작용 `service.mjs`는 현재 UULab 이름·경로의 macOS LaunchAgent이며 이 일반 절차는 설치하지 않습니다. 필요한 운영자는 [서비스 가이드](docs/development/local-pc-runner.ko.md)를 검토하세요. `fatal-stop`·복구 journal은 원인을 확인하기 전에 삭제하지 않습니다.
+PC가 꺼지거나 잠들거나 터미널이 닫히면 작업을 처리하지 못합니다. 일반 마법사는 자동 시작 서비스를 설치하지 않습니다. UULab 전용 LaunchAgent는 [운영 참고](docs/development/local-pc-runner.ko.md)이며 이름·경로를 검토 없이 다른 설치에 복사하지 마세요.
 
 ### 6. 커밋으로 iOS·Android OTA 게시하기
 
@@ -231,7 +166,7 @@ git commit -m "feat: verify Flora OTA [skip ci]"
 git push origin HEAD:flora-onboarding
 ```
 
-Flora의 **PC Runner**에서 해당 SHA의 iOS·Android 작업을 각각 확인합니다. 정상 흐름은 `Runner 대기 → Runner 작업 중 → OTA 게시 완료`입니다. 브랜치를 강제로 갱신하지 않습니다. GitHub의 [공식 실행 생략 규칙](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/skip-workflow-runs)을 사용하며 워크플로를 수동 실행하지 않습니다.
+마법사 **첫 OTA**에서 현재 감지 SHA·채널·runtime·선택 플랫폼을 고정합니다. 두 플랫폼 모두 실제 배포가 확인돼야 완료이며 하나만 게시되면 부분 게시입니다. **PC Runner**에서 해당 SHA의 iOS·Android 작업을 각각 확인합니다. 정상 흐름은 `Runner 대기 → Runner 작업 중 → OTA 게시 완료`입니다. 브랜치를 강제로 갱신하지 않습니다. GitHub의 [공식 실행 생략 규칙](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/skip-workflow-runs)을 사용하며 워크플로를 수동 실행하지 않습니다.
 
 ### 7. 배포와 기기 적용을 따로 확인하기
 
@@ -242,6 +177,8 @@ Flora의 **PC Runner**에서 해당 SHA의 iOS·Android 작업을 각각 확인�
 두 앱을 연결할 때에는 프로젝트 ID·서명 설정·Runner 토큰/경로·정책을 각각 만들고, 한 앱의 OTA가 다른 앱의 목록·기기에 나타나지 않는지 확인합니다. 실제 적용 검증에는 호환 바이너리가 설치된 각 플랫폼의 기기가 필요합니다.
 
 ## 새 서버를 직접 운영할 때
+
+아래는 기존 설치의 수동 구성·복구 reference입니다. 새 설치의 기본 경로는 위 `flora setup`입니다. 마법사의 원장과 수동 절차를 같은 설치에서 혼합해 재발급하지 마세요.
 
 이미 소유자 로그인이 되는 설치가 있으면 이 절차를 다시 실행하지 않습니다. 현재는 **운영자가 관리하는 수동 preview**이며 안전한 범용 setup-token CLI·인증 DB 복구 도구는 아직 없습니다. 아래 최초 등록 절차는 **새 전용 DB·새 Worker의 첫 소유자**만 대상으로 합니다. 기존 설치는 [운영·복구 가이드](docs/development/password-hosting.ko.md)를 따릅니다.
 
@@ -336,7 +273,7 @@ npm exec --yes --package=pnpm@11.19.0 -- pnpm --dir packages/cloudflare exec wra
 
 처음에는 외부 자산 변수·R2 binding 없이 기본 D1 저장소를 사용합니다. 각 파일 최대 16MiB이며 앱별/공유 저장 상한과 D1 무료 일일 quota가 있습니다. `GitHub Releases` 대용량 저장 경로는 현재 UULab 저장소에 고정된 preview이므로 임의 저장소를 지원한다고 안내하지 않습니다. 한도 오류 시 기록을 삭제하거나 자동 유료 전환하지 않습니다.
 
-이제 [2단계](#2-flora-웹-서버와-소유자-로그인)로 돌아가 GitHub를 연결합니다. 실제 Free 계정의 CPU·메모리·사용량 및 공개 DNS/TLS는 로컬 테스트와 별도로 확인해야 합니다.
+이제 [2단계](#2-설치-마법사로-서버-준비하기)로 돌아가 GitHub를 연결합니다. 실제 Free 계정의 CPU·메모리·사용량 및 공개 DNS/TLS는 로컬 테스트와 별도로 확인해야 합니다.
 
 ## 문제 해결과 검증 범위
 
@@ -353,7 +290,7 @@ npm exec --yes --package=pnpm@11.19.0 -- pnpm --dir packages/cloudflare exec wra
 | 게시됐지만 앱 변화가 없음 | 최초 SDK 바이너리 설치 여부, Release 모드, 원래 배포와 다른 새 SHA, 상세 기기 보고 |
 | 일일 quota / `fatal-stop` | 화면의 실패 코드·초기화/복구 안내. journal·기존 이력·키 삭제 금지 |
 
-이번 문서의 명령·새 HOME 설치·실제 Docker 준비 검증 결과는 [2026-10-18 기록](docs/development/first-run-verification-2026-10-18.ko.md)에 있습니다.
+마법사 검증 상태는 [설치 마법사 검증 기록](docs/development/installation-wizard-verification-2026-10-18.ko.md)을 확인하세요. 이전 명령·새 HOME 설치·실제 Docker 준비 검증 결과는 [2026-10-18 기록](docs/development/first-run-verification-2026-10-18.ko.md)에 있습니다.
 
 문서·소스를 검증하려면 Flora 루트에서 `npm exec --yes --package=pnpm@11.19.0 -- pnpm check`를 실행합니다. `verify:clean`은 추적 파일의 사본 검사이며 실제 clone 검증은 [새 환경 절차](docs/development/clean-clone-source.ko.md)로 구분합니다.
 

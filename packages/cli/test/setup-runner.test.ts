@@ -3,10 +3,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import {createServer} from "node:net";
 import {join} from "node:path";
+import {tmpdir} from "node:os";
 const modulePath="../dist/setup/runner.js";
 const runnerId="runner_11111111-1111-4111-8111-111111111111",origin="https://qa.example.com",image="sha256:"+"a".repeat(64),token=runnerId+"."+"b".repeat(43);
 async function fixture(t:test.TestContext){
- const dir=await fs.mkdtemp("/private/tmp/flora-guided-"),socket=join(dir,"d.sock"),server=createServer();await new Promise<void>(r=>server.listen(socket,r));t.after(async()=>{await new Promise<void>(r=>server.close(()=>r()));await fs.rm(dir,{recursive:true,force:true});});
+ const dir=await fs.mkdtemp(join(process.platform==="darwin"?"/private/tmp":await fs.realpath(tmpdir()),"flora-guided-")),socket=join(dir,"d.sock"),server=createServer();await new Promise<void>(r=>server.listen(socket,r));t.after(async()=>{await new Promise<void>(r=>server.close(()=>r()));await fs.rm(dir,{recursive:true,force:true});});
  const connection=join(dir,"connection.json");await fs.writeFile(connection,JSON.stringify({appId:"app_one",url:origin+"/updates/app_one",channel:"qa",runtimeVersion:"1",certificate:"public-cert",keyId:"qa"}));
  const calls:string[][]=[],messages:string[]=[],runtimeDirectory=join(dir,"runner"),binding={schemaVersion:1,origin,appId:"app_one",runnerId};
  const runtime={root:new URL("../../../",import.meta.url).pathname,nodePath:process.execPath,wranglerEntry:"/unused",dockerPath:"/usr/bin/docker",supervisorMain:new URL("../../../scripts/local-runner/supervisor.mjs",import.meta.url).pathname};

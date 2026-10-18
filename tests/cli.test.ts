@@ -157,3 +157,8 @@ test("display branding can change without changing internal command names", () =
   assert.ok(r.stdout.includes("NewName"));
   assert.ok(r.stdout.includes("platform config validate"));
 });
+test("setup dispatch honors supplied CLI output and never echoes unknown arguments",async()=>{
+ const modulePath="../packages/cli/dist/main.js",{runCli}=await import(modulePath),output:string[]=[],errors:string[]=[];
+ assert.equal(await runCli(["setup","--token","synthetic-private-value"],{stdout:(s:string)=>output.push(s),stderr:(s:string)=>errors.push(s),readFile:async()=>{throw Error("no read");}}),2);
+ assert.equal(output.length,1);assert.equal(JSON.parse(output[0]!).code,"SETUP_USAGE_ERROR");assert.ok(!output.join().includes("synthetic-private-value"));assert.deepEqual(errors,[]);
+});
