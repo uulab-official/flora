@@ -44,7 +44,7 @@ npm exec --yes --package=pnpm@11.19.0 -- pnpm flora doctor --strict --json
 
 Node 출력은 `v24.19.0`입니다. doctor의 `readiness.ready: true`와 종료 코드 0을 확인합니다. `nativeBuildVerified: false`는 정상이며 클라우드 연결·네이티브 빌드 성공을 뜻하지 않습니다. Windows에서 `npm.ps1`이 차단되면 `npm.cmd`를 쓰고 실행 정책은 낮추지 마세요. 웹·CLI 체험은 Windows에서도 가능하지만 PC export 컨트롤러는 root가 아닌 **macOS/Linux 사용자 + 동작하는 Docker**가 필요합니다. 아래 배포·Runner의 shell/heredoc 예제는 macOS/Linux용입니다.
 
-계정 없이 화면만 먼저 보려면 `node scripts/dogfood-demo.mjs --serve`를 실행하고 출력된 일회용 URL을 엽니다. 이 가상 체험은 실제 GitHub·OTA가 아니며 `blocked` 실행이 정상입니다. 원래 운영 DB 대신 별도 demo DB를 사용합니다. 종료는 Ctrl+C입니다.
+계정 없이 가상 예제를 보려면 `node scripts/dogfood-demo.mjs`로 예제를 만든 다음 `node scripts/dogfood-demo.mjs --serve`를 실행하고 출력된 일회용 URL을 엽니다. 이 가상 체험은 실제 GitHub·OTA가 아니며 `blocked` 실행이 정상입니다. 원래 운영 DB 대신 별도 demo DB를 사용합니다. 종료는 Ctrl+C입니다.
 
 ### 2. Flora 웹 서버와 소유자 로그인
 
@@ -344,6 +344,7 @@ npm exec --yes --package=pnpm@11.19.0 -- pnpm --dir packages/cloudflare exec wra
 | --- | --- |
 | `PNPM_NOT_VERIFIED` / strict doctor 실패 | 전체 고정 `npm exec ... pnpm` 접두어, Node·Git 버전. lockfile 삭제나 TLS 우회 금지 |
 | `WORKSPACE_SOURCE_INCOMPLETE` / `dist` 없음 | 기본 main을 clone했는지, install·build를 완료했는지 |
+| demo의 `PRIVATE_STORE_UNSAFE` | 소유자 전용 DB 0600·폴더 0700, 공유 쓰기·symlink 없는 경로. 임시 HOME은 realpath 사용. 기존 DB를 삭제하거나 권한을 완화하지 않음 |
 | GitHub 저장소가 없음 | App 설치 범위·조직 승인·선택한 ref/root. 설치 권한 변경 후 목록 새로 확인 |
 | `INVALID_RUNNER_CONFIG` | 이미지 실제 ID, HTTPS origin, 토큰, JSON 허용 필드, 파일 0600·상위 폴더 0700·symlink 없음 |
 | 작업이 대기하거나 Runner가 오프라인 | PC/daemon 실행, presence·Docker socket·2GiB 여유. `--once` 성공만으로 온라인을 추정하지 않음 |

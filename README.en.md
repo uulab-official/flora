@@ -44,7 +44,7 @@ npm exec --yes --package=pnpm@11.19.0 -- pnpm flora doctor --strict --json
 
 Node must report `v24.19.0`. Check for `readiness.ready: true` and exit code 0. `nativeBuildVerified: false` is expected: doctor does not certify a cloud connection or native build. On Windows, use `npm.cmd` if PowerShell blocks `npm.ps1`; do not weaken the execution policy. The local web/CLI demo works on Windows, but the PC export controller requires a **non-root macOS/Linux user and working Docker**. Deployment/Runner shell and heredoc examples below are for macOS/Linux.
 
-To inspect the UI without an account, run `node scripts/dogfood-demo.mjs --serve` and open its one-time URL. This synthetic demo does not connect real GitHub or OTA; a `blocked` run is expected. It uses a separate demo database instead of your operational database. Stop it with Ctrl+C.
+To inspect a fictional example without an account, seed it with `node scripts/dogfood-demo.mjs`, then run `node scripts/dogfood-demo.mjs --serve` and open its one-time URL. This synthetic demo does not connect real GitHub or OTA; a `blocked` run is expected. It uses a separate demo database instead of your operational database. Stop it with Ctrl+C.
 
 ### 2. Prepare the Flora server and sign in
 
@@ -344,6 +344,7 @@ Return to [step 2](#2-prepare-the-flora-server-and-sign-in) and connect GitHub. 
 | --- | --- |
 | `PNPM_NOT_VERIFIED` / strict doctor fails | Full pinned `npm exec ... pnpm` prefix and Node/Git versions; never delete the lockfile or bypass TLS |
 | `WORKSPACE_SOURCE_INCOMPLETE` / missing `dist` | Clone the default main branch, then complete install and build |
+| Demo `PRIVATE_STORE_UNSAFE` | Owner-private 0600 database/0700 directories, no shared-writable ancestry or symlinks; canonicalize temporary HOME with realpath. Never delete an existing DB or relax its permissions |
 | GitHub repository missing | App installation scope, organization approval and selected ref/root; refresh after permission changes |
 | `INVALID_RUNNER_CONFIG` | Actual image ID, HTTPS origin, token, allowed JSON fields, 0600 file/0700 parents and no symlinks |
 | Waiting jobs / offline Runner | Awake PC/daemon, presence, Docker socket and 2 GiB free space; a successful `--once` does not establish online status |
