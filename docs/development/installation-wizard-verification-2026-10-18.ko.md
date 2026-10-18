@@ -59,3 +59,19 @@ node scripts/onboarding-qa.mjs --record /ABSOLUTE/PUBLIC/receipts.json --out /AB
 ```
 
 다운로드 target은 `{appId,commitSha,channel,runtimeVersion,platforms,deployments:{ios:deploymentId,android:deploymentId}}`이며 선택한 플랫폼만 포함합니다. 공개 설정의 expected certificate/keyId를 사용하며 쿠키·토큰·개인키·비밀번호 입력 인자를 지원하지 않습니다. manifest 1MiB, 자산 각각 16MiB, 최대 65개, 플랫폼당 총 64MiB, 요청 20초, 동일 origin·redirect 거절로 제한합니다. 한도 초과는 미완료이며 자산을 생략해 통과 처리하지 않습니다. 대상을 읽기 전용으로 재확인하며 실패 후 자동 재게시하지 않습니다.
+
+
+## 후속 실제 QA 서버 준비와 등록 창 갱신
+
+연결된 Cloudflare 도구에서 대상 DNS GET이 200으로 확인돼 별도 DNS 토큰 없이 새 전용 D1·schema·immutable identity·Worker·custom domain/HTTPS·최초 등록 설정 배포를 완료했습니다. 실제 Wrangler remote SQL 파일 실행이 SELECT 행 대신 import 요약을 반환하는 차이는 고정 SELECT `--command`로 수정했고 관련 28개 검증이 통과했습니다. 기존 운영 서버에 설치 마법사를 배포한 증거는 아닙니다.
+
+새 QA 관리자 등록/로그인 완료 응답을 받았지만, 실제 QA 브라우저는 로그인으로 이동했습니다. 정확한 QA namespace의 Cloudflare 읽기 전용 SQL에서 미등록, epoch 0, 활성 세션 0, 만료되어 닫힌 generation 1을 확인했습니다(rows_written=0). verifier나 세션 값은 조회하지 않았습니다. 등록 완료로 잘못 처리하거나 창을 임의로 제거하지 않았습니다.
+
+두 새 비공개 저장소 `uulab-official/flora-qa-13836a78-a`와 `-b`에 SDK를 포함한 연결 전 RN 템플릿을 커밋했습니다. 저장소 ID는 각각 1424400453/1424400811, 첫 commit은 `19fbc38b734716459b616f6fc28325b76e1a8f00`/`ea38fa387f3c48969df3b35a1b87dbb7b39c343c`이며 Actions 실행은 각각 0입니다. PC Docker 29.9.0과 고정 npm arm64 이미지도 확인했습니다. 새 private QA scratch만 준비했으며 Runner token·프로세스·기존 launch agent는 변경하지 않았습니다.
+
+사용자가 승인한 명시적 `setup renew` 보완의 첫 targeted 검증은 CLI/provider/provision/실제 workerd 인증 64 pass / 0 fail입니다. 이는 구현 중간 단계의 결과이며 최종 전체 검사와 실제 갱신 배포는 별도 기록합니다. 관리자 등록·GitHub App 승인·PC Runner 연결·두 앱 × 두 플랫폼 자동 OTA 게시·다운로드는 여전히 완료 전입니다.
+
+
+### 명시적 갱신의 최종 로컬 검증
+
+독립 보안 검토에서 조회 중 만료, 유휴 만료 반영, 조회 중 취소 3개 P2 경계 조건을 확인했습니다. 각각 회귀 테스트 실패를 확인하고 수정했습니다. 최종 관련 테스트 35 pass, 전체 `pnpm check`는 build·typecheck와 **1,459 pass / 0 fail / 3 skip / 0 cancelled**, exit 0(테스트 538.44초)입니다. 조건부 생략은 Windows, 별도 실제 Expo 앱, 별도 PNPM Docker 이미지의 3개 환경 검사이며 통과로 세지 않습니다. 서버 인증 엔진의 실제 workerd 검사도 만료된 미등록 창의 다음 generation 등록·로그인, 이전 코드 및 등록 후 재사용 거부를 확인합니다. 실제 QA 갱신 배포·사용자 등록은 이 로컬 결과와 별도 증거입니다.

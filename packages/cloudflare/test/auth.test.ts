@@ -82,6 +82,19 @@ test("same_generation_cannot_extend_or_change_purpose", async t => {
   assert.equal((await h.call("/api/auth/recover", { email, password: password(), token: next.token })).status, 403);
 });
 
+test("expired_unclaimed_setup_can_be_renewed_without_reusing_old_code_or_reopening_after_claim", async t => {
+  const first=capability(),h=await harness(t,first.setup),renewedAt=start+600001;
+  await h.control({now:renewedAt});await h.call("/api/auth/session");
+  const next=capability(2,"enroll",renewedAt);await h.control({setup:next.setup,restart:true});
+  assert.equal((await h.call("/api/auth/enroll",{email,password:password(),token:first.token})).status,403);
+  const accepted=await enroll(h,next);
+  assert.equal((await h.call("/api/auth/login",{email,password:accepted.secret})).status,200);
+  await h.control({setup:first.setup,restart:true});
+  assert.equal((await h.call("/api/auth/enroll",{email,password:password(),token:first.token})).status,403);
+  const state=await (await h.control({sql:"SELECT epoch,setup_generation,setup_closed FROM flora_auth_meta"})).json();
+  assert.deepEqual(state,[{epoch:1,setup_generation:2,setup_closed:1}]);
+});
+
 test("expired_setup_after_kdf_cannot_commit", async t => {
   const cap = capability(), h = await harness(t, cap.setup);
   await h.control({ jumpOnReservation: cap.setup.expiresAt });

@@ -21,7 +21,7 @@ const productName = (process.env.PRODUCT_NAME || "Flora")
 const help =
   productName +
   " — " +
-  "Local App Operations Foundation\nplatform doctor [--json] [--strict]\nplatform config validate --file <json>\nplatform job simulate --file <json> [--scenario happy-path|runner-replacement|unsafe-expiry]\nflora dogfood --help\nflora setup [runner | --resume <private-state> | inspect --state <private-state> --json]\nDoctor --strict exits 1 when Node, pnpm or Git prerequisites are not verified.\nFoundation commands are local. setup can provision a new Cloudflare server and guide a PC Runner; review its explicit resource scope.\n";
+  "Local App Operations Foundation\nplatform doctor [--json] [--strict]\nplatform config validate --file <json>\nplatform job simulate --file <json> [--scenario happy-path|runner-replacement|unsafe-expiry]\nflora dogfood --help\nflora setup [runner | --resume <private-state> | renew --state <private-state> | inspect --state <private-state> --json]\nDoctor --strict exits 1 when Node, pnpm or Git prerequisites are not verified.\nFoundation commands are local. setup can provision a new Cloudflare server and guide a PC Runner; review its explicit resource scope.\n";
 export async function runCli(
   argv: readonly string[],
   io: CliIO,

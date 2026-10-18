@@ -8,7 +8,7 @@
 
 실제 운영을 시작하려면 Node 24.19.0과 고정 pnpm으로 install·build한 뒤 `npm exec --yes --package=pnpm@11.19.0 -- pnpm flora setup`을 실행합니다. `new`는 새 Cloudflare Worker/D1와 최초 관리자 등록을, `existing`은 기존 로그인과 데이터 보존을, `runner`는 앱 전용 PC 실행 환경을 안내합니다.
 
-로그인 후 `/onboarding`에서 GitHub 승인 → 프로젝트 등록 → 공개 SDK 파일 생성 → PC Runner → 모든 선택 플랫폼의 첫 OTA 게시를 확인합니다. 최초 승인 코드는 private 파일, 비밀번호는 HTTPS 화면, Runner token은 숨김 입력으로 취급합니다. 응답 유실·만료를 초기화나 재발급으로 우회하지 않습니다. [전체 따라하기](../README.md#첫-ota까지-따라하기)와 [검증 상태](development/installation-wizard-verification-2026-10-18.ko.md)를 확인하세요.
+로그인 후 `/onboarding`에서 GitHub 승인 → 프로젝트 등록 → 공개 SDK 파일 생성 → PC Runner → 모든 선택 플랫폼의 첫 OTA 게시를 확인합니다. 최초 승인 코드는 private 파일, 비밀번호는 HTTPS 화면, Runner token은 숨김 입력으로 취급합니다. 미등록 상태에서 코드만 만료됐다면 같은 원장의 `flora setup renew --state /ABSOLUTE/PRIVATE/journal.json`으로 명시적으로 갱신할 수 있습니다. 이전 코드와 발급 이력을 보존하며, 등록된 계정·원장 유실·설정 불일치·미확정 요청은 거절합니다. 응답 유실은 초기화나 자동 재발급으로 우회하지 않습니다. [전체 따라하기](../README.md#첫-ota까지-따라하기)와 [검증 상태](development/installation-wizard-verification-2026-10-18.ko.md)를 확인하세요.
 
 ## 지금 무엇을 써볼 수 있나요?
 

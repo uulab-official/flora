@@ -70,6 +70,14 @@ npm exec --yes --package=pnpm@11.19.0 -- pnpm flora setup --resume /ABSOLUTE/PRI
 
 Pending/`unknown` means a mutation result needs reconciliation. Do not create a replacement installation or token. Expiry, lost replies, changed source or provider drift stop safely; consult the [manual/recovery reference](#self-host-a-new-server). Unknown mutations are not replayed automatically. Unverified permissions, usage headroom or public DNS/TLS are incomplete setup.
 
+**If only the approval code expired before enrollment**, explicitly renew using the same journal. If you already enrolled, check `/login` first.
+
+```sh
+npm exec --yes --package=pnpm@11.19.0 -- pnpm flora setup renew --state /ABSOLUTE/PRIVATE/journal.json
+```
+
+`renew` requires matching Worker/D1/DO, deployment fingerprints and immutable identity. A fixed read-only Cloudflare SQL query must confirm an unclaimed owner, no active sessions and a closed prior window. Existing Wrangler auth stays in memory; no password verifier or session value is retrieved. Old code/configuration files and issuance history remain intact; a new 10-minute generation is written to `approval-code-g2.txt`, and so on. Old codes cannot enroll. Renewal is never automatic and is limited to six explicit renewals. Enrolled owners, missing journals/old code files, drift, and pending/unknown operations are refused. After enrollment and verified sign-in, use the same `--resume` command to close setup. This does not recover existing owner passwords or adopt existing servers.
+
 ### 3. Connect GitHub and register apps in the web wizard
 
 1. In `/onboarding`, choose **GitHub 연결·프로젝트 등록**. Leave the organization blank for a personal account and choose **GitHub에서 연결 앱 만들기**.

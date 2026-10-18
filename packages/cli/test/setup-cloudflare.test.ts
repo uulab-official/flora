@@ -17,7 +17,9 @@ async function fixture(t:test.TestContext){
   if(args.includes("deploy")){if(args.includes("--dry-run")){if(drift)extraSetting=true;return{exitCode:0,stdout:"dry run"};}worker=true;return{exitCode:0,stdout:"Current Version ID: 33333333-3333-4333-8333-333333333333\n"};}
   return{exitCode:0,stdout:"[]"};
  },fetch:async(url:string,init:RequestInit)=>{
-  const address=new URL(url);requests.push(address.pathname+address.search);assert.equal(address.origin,"https://api.cloudflare.com");assert.equal(init.method,"GET");assert.equal(init.redirect,"error");assert.equal(new Headers(init.headers).get("Authorization"),"Bearer synthetic-provider-secret");
+  const address=new URL(url);
+  if(url===plan.origin+"/api/auth/session"){assert.equal(init.method,"GET");assert.equal(init.credentials,"omit");assert.equal(new Headers(init.headers).get("Authorization"),null);assert.equal(new Headers(init.headers).get("Cookie"),null);return new Response(null,{status:401});}
+  requests.push(address.pathname+address.search);assert.equal(address.origin,"https://api.cloudflare.com");assert.equal(init.method,"GET");assert.equal(init.redirect,"error");assert.equal(new Headers(init.headers).get("Authorization"),"Bearer synthetic-provider-secret");
   let result:unknown=null;let status=200;let success=true;let errors:unknown[]=[];
   if(address.pathname.endsWith("/accounts/"+plan.accountId))result={id:wrongAccount?"c".repeat(32):plan.accountId};
   else if(address.pathname.endsWith("/zones/"+plan.zoneId))result={id:plan.zoneId,name:"example.com",account:{id:plan.accountId},status:"active"};
@@ -152,4 +154,58 @@ test("dot_dot_named_child_is_still_inside_checkout",async t=>{
  const f=await fixture(t),api=await import(path),directory=join(f.dir,"..private");await fs.mkdir(directory,{mode:0o700});let tools=0;
  const provider=api.createWranglerProvider({...f.runtime,root:f.dir},directory,{run:async()=>{tools++;throw Error("must reject before credential capture");},fetch:async()=>assert.fail("no API")});
  await assert.rejects(provider.inspect(plan,new AbortController().signal));assert.equal(tools,0);
+});
+
+test("owner_renewal_probe_reads_only_public_metadata_from_the_bound_namespace",async t=>{
+ const f=await fixture(t),api=await import(path);let probes=0;
+ const provider=api.createWranglerProvider(f.runtime,f.dir,{...f.deps,fetch:async(url:string,init:RequestInit)=>{
+  if(init.method!=="POST")return f.deps.fetch(url,init);
+  probes++;assert.equal(url,`https://api.cloudflare.com/client/v4/accounts/${plan.accountId}/workers/durable_objects/namespaces/${"d".repeat(32)}/query/v2`);
+  const body=JSON.parse(String(init.body));assert.equal(body.durable_object_name,"flora-owner-v1");assert.equal(body.jurisdiction,"none");assert.equal(body.queries.length,1);
+  assert.equal(body.queries[0].sql,"SELECT owner_id,owner_email,origin,db_identity,verifier IS NOT NULL AS enrolled,epoch,setup_generation,setup_closed,(SELECT COUNT(*) FROM flora_auth_sessions WHERE expires_at>?) AS active_sessions FROM flora_auth_meta WHERE id=1;");
+  assert.equal(body.queries[0].params.length,1);assert.ok(Number.isSafeInteger(body.queries[0].params[0]));
+  return Response.json({success:true,result:{results:[{columns:["owner_id","owner_email","origin","db_identity","enrolled","epoch","setup_generation","setup_closed","active_sessions"],rows:[[plan.ownerId,plan.ownerEmail,plan.origin,plan.dbIdentity,0,0,1,1,0]],meta:{rows_read:2,rows_written:0}}]}});
+ }});
+ await provider.createDatabase(plan,new AbortController().signal);f.liveWorker();const expected=await provider.inspect(plan,new AbortController().signal);
+ assert.deepEqual(await provider.readOwnerState(plan,expected,new AbortController().signal),{ownerId:plan.ownerId,ownerEmail:plan.ownerEmail,origin:plan.origin,dbIdentity:plan.dbIdentity,enrolled:false,epoch:0,setupGeneration:1,setupClosed:true,activeSessions:0});assert.equal(probes,1);
+ await assert.rejects(provider.readOwnerState(plan,{...expected,namespaceId:"e".repeat(32)},new AbortController().signal),/SETUP_PROVIDER_DRIFT/);assert.equal(probes,1);
+});
+
+test("renewal_deploy_checks_owner_again_after_build_before_any_remote_write",async t=>{
+ const f=await fixture(t),api=await import(path);
+ const provider=api.createWranglerProvider(f.runtime,f.dir,{...f.deps,fetch:async(url:string,init:RequestInit)=>{
+  if(init.method!=="POST")return f.deps.fetch(url,init);
+  return Response.json({success:true,result:{results:[{columns:["owner_id","owner_email","origin","db_identity","enrolled","epoch","setup_generation","setup_closed","active_sessions"],rows:[[plan.ownerId,plan.ownerEmail,plan.origin,plan.dbIdentity,1,1,1,1,1]],meta:{rows_read:2,rows_written:0}}]}});
+ }});
+ await provider.createDatabase(plan,new AbortController().signal);f.liveWorker();const expected=await provider.inspect(plan,new AbortController().signal),config=api.createSetupConfig(plan,databaseId,f.runtime.root) as Record<string,any>;
+ config.vars.FLORA_SETUP={digest:"a".repeat(64),generation:2,purpose:"enroll",issuedAt:Date.now(),expiresAt:Date.now()+600000};config.vars.FLORA_SETUP.expiresAt=config.vars.FLORA_SETUP.issuedAt+600000;
+ const file=join(f.dir,"renew.json");await fs.writeFile(file,JSON.stringify(config),{mode:0o600});
+ await assert.rejects(provider.deploy(plan,file,expected,new AbortController().signal),/SETUP_RENEW_OWNER_NOT_UNCLAIMED/);
+ assert.ok(f.calls.some(c=>c.args.includes("--dry-run")));assert.equal(f.calls.filter(c=>c.args.includes("deploy")&&!c.args.includes("--dry-run")).length,0);
+});
+
+test("renewal_window_expiring_during_owner_probe_never_reaches_deploy",async t=>{
+ const f=await fixture(t),api=await import(path);const original=Date.now;let now=1800000000000;Date.now=()=>now;t.after(()=>{Date.now=original;});
+ const provider=api.createWranglerProvider(f.runtime,f.dir,{...f.deps,fetch:async(url:string,init:RequestInit)=>{
+  if(init.method!=="POST")return f.deps.fetch(url,init);now=1800000600000;
+  return Response.json({success:true,result:{results:[{columns:["owner_id","owner_email","origin","db_identity","enrolled","epoch","setup_generation","setup_closed","active_sessions"],rows:[[plan.ownerId,plan.ownerEmail,plan.origin,plan.dbIdentity,0,0,1,1,0]],meta:{rows_read:2,rows_written:0}}]}});
+ }});
+ await provider.createDatabase(plan,new AbortController().signal);f.liveWorker();const expected=await provider.inspect(plan,new AbortController().signal),config=api.createSetupConfig(plan,databaseId,f.runtime.root) as Record<string,any>;
+ config.vars.FLORA_SETUP={digest:"a".repeat(64),generation:2,purpose:"enroll",issuedAt:1800000000000,expiresAt:1800000600000};
+ const file=join(f.dir,"renew-expiring.json");await fs.writeFile(file,JSON.stringify(config),{mode:0o600});
+ await assert.rejects(provider.deploy(plan,file,expected,new AbortController().signal),/SETUP_RENEW_UNAVAILABLE/);
+ assert.equal(f.calls.filter(c=>c.args.includes("deploy")&&!c.args.includes("--dry-run")).length,0);
+});
+
+test("owner_probe_observes_idle_expiry_through_a_credential_free_session_get",async t=>{
+ const f=await fixture(t),api=await import(path);let synchronized=false;
+ const provider=api.createWranglerProvider(f.runtime,f.dir,{...f.deps,fetch:async(url:string,init:RequestInit)=>{
+  if(url===plan.origin+"/api/auth/session"){
+   assert.equal(init.method,"GET");assert.equal(init.credentials,"omit");assert.equal(init.redirect,"error");assert.equal(new Headers(init.headers).get("Authorization"),null);assert.equal(new Headers(init.headers).get("Cookie"),null);synchronized=true;return new Response(null,{status:401});
+  }
+  if(init.method!=="POST")return f.deps.fetch(url,init);
+  return Response.json({success:true,result:{results:[{columns:["owner_id","owner_email","origin","db_identity","enrolled","epoch","setup_generation","setup_closed","active_sessions"],rows:[[plan.ownerId,plan.ownerEmail,plan.origin,plan.dbIdentity,0,0,1,synchronized?1:0,0]],meta:{rows_read:2,rows_written:0}}]}});
+ }});
+ await provider.createDatabase(plan,new AbortController().signal);f.liveWorker();const expected=await provider.inspect(plan,new AbortController().signal);
+ assert.equal((await provider.readOwnerState(plan,expected,new AbortController().signal)).setupClosed,true);
 });

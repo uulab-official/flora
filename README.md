@@ -70,6 +70,14 @@ npm exec --yes --package=pnpm@11.19.0 -- pnpm flora setup --resume /ABSOLUTE/PRI
 
 `unknown`/pending은 요청 결과를 확인하지 못했다는 뜻입니다. 새 설치·토큰을 다시 만들지 않습니다. 만료·응답 유실·소스 변경·provider 설정 변경은 안전하게 멈추며 [수동 구성·복구 참고](#새-서버를-직접-운영할-때)로 확인합니다. 현재 원장은 불명확한 변경을 자동 재실행하지 않습니다. 읽기 권한·무료 여유·DNS/TLS를 확인할 수 없으면 설치 완료가 아닙니다.
 
+**등록 전에 코드만 만료됐다면**, 같은 원장으로 명시적으로 갱신할 수 있습니다. 먼저 이미 등록했다면 `/login`을 확인하세요.
+
+```sh
+npm exec --yes --package=pnpm@11.19.0 -- pnpm flora setup renew --state /ABSOLUTE/PRIVATE/journal.json
+```
+
+`renew`는 이 마법사가 만든 서버의 Worker·D1·DO·배포 fingerprint와 immutable identity가 원장과 같고, Cloudflare의 읽기 전용 SQL 조회로 **미등록·활성 세션 없음·이전 창 닫힘**을 확인할 때만 새 10분 코드를 발급합니다. 기존 Wrangler 인증을 메모리에서 고정된 상태 조회에만 사용하며 비밀번호·verifier·세션 값을 조회하지 않습니다. 이전 코드·설정 파일·발급 이력은 보존하고 새 파일 `approval-code-g2.txt` 등으로 세대를 올립니다. 이전 코드는 사용할 수 없습니다. 갱신은 자동 실행되지 않으며 최대 6회입니다. 등록된 계정, 원장/이전 코드 유실, 설정 불일치, pending/unknown에서는 거절합니다. 새 코드도 만료되면 같은 명령을 명시적으로 실행하고, 등록 후에는 같은 `--resume`으로 등록 창을 닫으세요. 비밀번호 복구·기존 운영 서버 인수 기능이 아닙니다.
+
 ### 3. 웹 마법사에서 GitHub와 앱 연결하기
 
 1. `/onboarding`의 **GitHub 연결·프로젝트 등록**을 엽니다. 개인 계정이면 조직 이름을 비우고 **GitHub에서 연결 앱 만들기**를 누릅니다.

@@ -1,7 +1,7 @@
 import {createHash,randomUUID} from "node:crypto";
 import {join,isAbsolute,relative,sep} from "node:path";
 import {canonicalJson} from "@app-ops/config";
-import {parseJournal,requireSetup,strictObject,type ResourcePlan,type ProviderSnapshot} from "./contracts.js";
+import {parseJournal,parseSetupIssuance,requireSetup,strictObject,type ResourcePlan,type ProviderSnapshot} from "./contracts.js";
 import {readPrivateFile,writePrivateFile,verifyPrivateDirectory} from "./private-files.js";
 import {runBoundedTool,type SetupRuntime} from "./runtime.js";
 
@@ -13,7 +13,9 @@ export interface SetupProvider {
  insertIdentity(plan:ResourcePlan,databaseId:string,signal:AbortSignal):Promise<void>;
  deploy(plan:ResourcePlan,configPath:string,expected:ProviderSnapshot|null,signal:AbortSignal):Promise<ProviderSnapshot>;
  probeHTTPS(plan:ResourcePlan,signal:AbortSignal):Promise<void>;
+ readOwnerState?(plan:ResourcePlan,expected:ProviderSnapshot,signal:AbortSignal):Promise<SetupOwnerState>;
 }
+export interface SetupOwnerState {ownerId:string;ownerEmail:string;origin:string;dbIdentity:string;enrolled:boolean;epoch:number;setupGeneration:number;setupClosed:boolean;activeSessions:number}
 interface DNSScope {zoneId:string;hostname:string}
 interface ProviderDeps {run:typeof runBoundedTool;fetch:(url:string,init:RequestInit)=>Promise<Response>;readDNSCredential?:(scope:DNSScope,signal:AbortSignal)=>Promise<string>}
 const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
@@ -52,7 +54,7 @@ export function createSetupConfig(plan:ResourcePlan,databaseId:string,root:strin
   vars:{FLORA_ORIGIN:plan.origin,FLORA_OWNER_ID:plan.ownerId,FLORA_OWNER_EMAIL:plan.ownerEmail,FLORA_DB_IDENTITY:plan.dbIdentity}};
 }
 
-/** Credentials stay in this closure. Only fixed GETs to api.cloudflare.com use them. */
+/** Credentials stay here: fixed GETs and the explicit renewal's fixed read-only SQL probe. */
 export function createWranglerProvider(runtime:SetupRuntime,directory:string,injected:Partial<ProviderDeps>={}):SetupProvider{
  const deps:ProviderDeps={run:injected.run??runBoundedTool,fetch:injected.fetch??((url,init)=>fetch(url,init)),...(injected.readDNSCredential?{readDNSCredential:injected.readDNSCredential}:{})};
  let credential:{value:string;at:number}|null=null;
@@ -139,6 +141,27 @@ export function createWranglerProvider(runtime:SetupRuntime,directory:string,inj
   const result=array(json(output.stdout),1);requireSetup(result.length===1,"SETUP_PROVIDER_RESPONSE_INVALID");const rows=array(record(result[0]).results,1);
   if(!rows.length)return null;const row=record(rows[0]);requireSetup(typeof row.owner_id==="string"&&typeof row.origin==="string"&&typeof row.db_identity==="string","SETUP_PROVIDER_RESPONSE_INVALID");return {ownerId:row.owner_id,origin:row.origin,dbIdentity:row.db_identity};
  }
+ async function readOwnerState(p:ResourcePlan,expected:ProviderSnapshot,signal:AbortSignal):Promise<SetupOwnerState>{
+  const before=await inspectRaw(p,signal);requireSetup(canonicalJson(before.snapshot)===canonicalJson(expected)&&typeof expected.namespaceId==="string"&&/^(?:[a-f0-9]{32}|[a-f0-9-]{36})$/.test(expected.namespaceId),"SETUP_PROVIDER_DRIFT");
+  // Let the existing auth authority close idle expired windows before reading SQL metadata.
+  // No Cloudflare credential or owner cookie is ever sent to the application origin.
+  try{const response=await deps.fetch(p.origin+"/api/auth/session",{method:"GET",credentials:"omit",redirect:"error",signal:AbortSignal.any([signal,AbortSignal.timeout(15000)])});const valid=response.status===401&&!response.redirected;await response.body?.cancel();requireSetup(valid,"SETUP_RENEW_PROBE_UNAVAILABLE");}catch{return error(signal.aborted?"SETUP_CANCELLED":"SETUP_RENEW_PROBE_UNAVAILABLE");}
+  const sql="SELECT owner_id,owner_email,origin,db_identity,verifier IS NOT NULL AS enrolled,epoch,setup_generation,setup_closed,(SELECT COUNT(*) FROM flora_auth_sessions WHERE expires_at>?) AS active_sessions FROM flora_auth_meta WHERE id=1;";
+  const token=await credentialValue(signal);let raw:Record<string,unknown>;
+  try{
+   const response=await deps.fetch(`https://api.cloudflare.com/client/v4/accounts/${p.accountId}/workers/durable_objects/namespaces/${expected.namespaceId}/query/v2`,{method:"POST",headers:{Authorization:"Bearer "+token,Accept:"application/json","Content-Type":"application/json"},body:JSON.stringify({durable_object_name:"flora-owner-v1",jurisdiction:"none",queries:[{sql,params:[Date.now()]}]}),redirect:"error",credentials:"omit",signal:AbortSignal.any([signal,AbortSignal.timeout(15000)])});
+   requireSetup(response.ok&&!response.redirected&&response.body,"SETUP_RENEW_PROBE_UNAVAILABLE");
+   const reader=response.body.getReader(),chunks:Uint8Array[]=[];let length=0;
+   try{while(true){const item=await reader.read();if(item.done)break;length+=item.value.byteLength;requireSetup(length<=16384,"SETUP_PROVIDER_RESPONSE_INVALID");chunks.push(item.value);}}finally{await reader.cancel();}
+   const body=record(json(Buffer.concat(chunks).toString("utf8")));requireSetup(body.success===true,"SETUP_RENEW_PROBE_UNAVAILABLE");raw=record(body.result);
+  }catch{return error(signal.aborted?"SETUP_CANCELLED":"SETUP_RENEW_PROBE_UNAVAILABLE");}
+  requireSetup(!Object.hasOwn(raw,"error"),"SETUP_RENEW_PROBE_UNAVAILABLE");const results=array(raw.results,1);requireSetup(results.length===1,"SETUP_PROVIDER_RESPONSE_INVALID");const result=record(results[0]);
+  const columns=["owner_id","owner_email","origin","db_identity","enrolled","epoch","setup_generation","setup_closed","active_sessions"];
+  requireSetup(canonicalJson(result.columns)===canonicalJson(columns)&&record(result.meta).rows_written===0,"SETUP_PROVIDER_RESPONSE_INVALID");const rows=array(result.rows,1);requireSetup(rows.length===1,"SETUP_PROVIDER_RESPONSE_INVALID");const row=array(rows[0],9);requireSetup(row.length===9,"SETUP_PROVIDER_RESPONSE_INVALID");
+  requireSetup(row.slice(0,4).every(v=>typeof v==="string")&&[0,1].includes(row[4] as number)&&[0,1].includes(row[7] as number)&&[row[5],row[6],row[8]].every(v=>Number.isSafeInteger(v)&&(v as number)>=0),"SETUP_PROVIDER_RESPONSE_INVALID");
+  requireSetup(canonicalJson((await inspectRaw(p,signal)).snapshot)===canonicalJson(expected),"SETUP_PROVIDER_DRIFT");
+  return {ownerId:row[0] as string,ownerEmail:row[1] as string,origin:row[2] as string,dbIdentity:row[3] as string,enrolled:row[4]===1,epoch:row[5] as number,setupGeneration:row[6] as number,setupClosed:row[7]===1,activeSessions:row[8] as number};
+ }
  return {
   async inspect(p,signal){return (await inspectRaw(p,signal)).snapshot;},
   async createDatabase(p,signal){
@@ -149,6 +172,7 @@ export function createWranglerProvider(runtime:SetupRuntime,directory:string,inj
   },
   async migrate(p,id,signal){await requireDatabase(p,id,signal);const path=await config(p,id,signal);await run(["d1","migrations","list","FLORA_DB","--remote","--config",path],signal);await run(["d1","migrations","apply","FLORA_DB","--remote","--config",path],signal);},
   readIdentity:identity,
+  readOwnerState,
   async insertIdentity(p,id,signal){
    const found=await identity(p,id,signal);requireSetup(found===null,"SETUP_PROVIDER_IDENTITY_EXISTS");const path=await config(p,id,signal),sqlPath=join(directory,"identity-insert-"+randomUUID()+".sql"),literal=(s:string)=>"'"+s.replaceAll("'","''")+"'";
    await writePrivateFile(sqlPath,Buffer.from(`INSERT INTO flora_deployment(singleton,owner_id,origin,db_identity) VALUES(1,${literal(p.ownerId)},${literal(p.origin)},${literal(p.dbIdentity)});\n`));
@@ -158,13 +182,18 @@ export function createWranglerProvider(runtime:SetupRuntime,directory:string,inj
   async deploy(p,path,expected,signal){
    planValue(p);const raw=record(json((await readPrivateFile(path)).toString("utf8"))),databases=array(raw.d1_databases,1),db=record(databases[0]);requireSetup(typeof db.database_id==="string","SETUP_CONFIG_INVALID");
    const wanted=createSetupConfig(p,db.database_id,runtime.root),actualVars=record(raw.vars),wantedVars=record(wanted.vars);const setup=actualVars.FLORA_SETUP;
-   if(setup!==undefined){const approved=parseJournal({schemaVersion:1,plan:p,stage:"setup-issued",receipts:[],setup}).setup;requireSetup(approved,"SETUP_CONFIG_INVALID");wantedVars.FLORA_SETUP=approved;}
+   if(setup!==undefined)wantedVars.FLORA_SETUP=parseSetupIssuance(setup);
    requireSetup(canonicalJson(raw)===canonicalJson(wanted),"SETUP_CONFIG_INVALID");
    // Build and dry-run before the final drift check; these may take time.
    await deps.run(runtime.nodePath,[join(runtime.root,"scripts/build-cloudflare.mjs"),"--deployment-config",path],{cwd:runtime.root,timeoutMs:120000,maxBytes:65536,signal});
    await run(["deploy","--dry-run","--config",path],signal);
    const before=await inspectRaw(p,signal);requireSetup(before.snapshot.databaseId===db.database_id,"SETUP_PROVIDER_DATABASE_MISMATCH");
    if(expected)requireSetup(canonicalJson(before.snapshot)===canonicalJson(expected),"SETUP_PROVIDER_DRIFT");else requireSetup(before.snapshot.deploymentId===null,"SETUP_PROVIDER_RESOURCE_EXISTS");
+   if(setup!==undefined&&parseSetupIssuance(setup).generation>1){
+    const window=parseSetupIssuance(setup);requireSetup(expected&&Date.now()>=window.issuedAt&&Date.now()<window.expiresAt,"SETUP_RENEW_UNAVAILABLE");const state=await readOwnerState(p,expected,signal);
+    requireSetup(state.ownerId===p.ownerId&&state.ownerEmail===p.ownerEmail&&state.origin===p.origin&&state.dbIdentity===p.dbIdentity&&!state.enrolled&&state.epoch===0&&state.activeSessions===0&&state.setupGeneration===window.generation-1&&state.setupClosed,"SETUP_RENEW_OWNER_NOT_UNCLAIMED");
+    requireSetup(Date.now()>=window.issuedAt&&Date.now()<window.expiresAt,"SETUP_RENEW_UNAVAILABLE");
+   }
    const output=await run(["deploy","--config",path],signal),versionId=deploymentVersion(output.stdout),after=await inspectRaw(p,signal);
    requireSetup(after.versionId===versionId&&after.snapshot.databaseId===db.database_id&&after.snapshot.namespaceId!==null&&after.hostnameBound,"SETUP_PROVIDER_DEPLOY_UNKNOWN");return after.snapshot;
   },

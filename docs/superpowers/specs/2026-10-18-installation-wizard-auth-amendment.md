@@ -23,3 +23,12 @@
 - 이 토큰은 해당 provider 호출 수명 동안 메모리에만 보관하고, 같은 zone의 고정 `/zones/{zoneId}/dns_records?name={hostname}&per_page=100&page=1` GET에만 사용한다. 다른 zone·계정·Worker·D1·mutation에는 기존 인증을 사용한다.
 - 토큰을 파일·원장·로그·argv·환경변수·Flora·브라우저로 전달하지 않는다. 공개 원장 재개 시 다시 필요한 경우 운영자가 CLI에 입력한다. 토큰 생성 화면의 비밀값은 운영자가 직접 CLI에 붙여넣는다.
 - 조회 실패 시 hostname 충돌 검증을 생략하지 않는다. pending mutation은 unknown으로 보존하며 자동 재전송하지 않는다. Ctrl+C/EOF는 종료 코드 130으로 유지한다.
+
+
+## 만료된 미등록 창의 명시적 갱신 — 2026-10-18 승인
+
+사용자가 `flora setup renew --state`의 짧은 설계를 승인했다. 최초 발급이 한 번이라는 규칙은 유지하며, 자동 재발급 금지의 예외로 **운영자가 명시적으로 갱신을 실행하는 경우만** 추가한다. 최초 generation 1과 이전 코드·설정·발급 이력을 보존하고 다음 generation의 10분 `enroll`만 허용한다. 32개 receipt/16KiB 원장 경계를 유지하기 위해 최대 6회 갱신한다. 기존 schemaVersion 1 원장도 읽을 수 있다.
+
+같은 설치의 source·Worker/D1/DO·배포 fingerprint·immutable identity를 검증하고, 고정 Cloudflare DO SQL 조회로 owner 미등록, epoch 0, 활성 세션 0, 이전 generation 일치와 닫힌 창을 확인한다. 기존 GET 제한의 유일한 추가 예외는 검증된 namespace의 `/query/v2`에 보내는 **하드코딩된 읽기 전용 SELECT POST**다. 공개 identity, `verifier IS NOT NULL` 불리언, epoch/generation/closed, 활성 세션 개수만 읽고 verifier·세션 값·코드 원문은 읽거나 출력하지 않는다. 새 scope/인증을 자동 요청하지 않는다. SQL 조회 전에는 해당 설치의 `/api/auth/session`에 인증값·쿠키 없는 GET(401 예상)을 보내 기존 인증 엔진이 유휴 만료를 반영하도록 한다. 빌드·dry-run 뒤 원격 배포 직전에 같은 검증과 만료 시각 확인을 반복한다.
+
+갱신에도 private 원장의 pending을 먼저 기록한다. 응답 유실/미확정 요청은 자동 재발급·재전송하지 않는다. 원장·이전 코드 유실, 이미 등록된 owner, 상태·설정 불일치, 열린 이전 창은 거절한다. 비밀번호 복구, 기존 서버 인수, 공개 발급 API, CLI 비밀번호 입력, 정책 완화는 추가하지 않는다. 등록 후 기존 resume 경로가 최신 갱신 배포 fingerprint를 기준으로 최초 등록 창만 제거한다.

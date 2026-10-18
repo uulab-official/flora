@@ -24,8 +24,8 @@ async function save(path:string,current:SetupJournal,next:SetupJournal):Promise<
 }
 function database(j:SetupJournal):string{const value=j.receipts.find(r=>r.action==="create-db"&&r.state==="confirmed")?.resourceId;requireSetup(value,"SETUP_DATABASE_RECEIPT_REQUIRED");return value;}
 function expectedSnapshot(j:SetupJournal):ProviderSnapshot|null{
- const actions=["initial-deploy","setup-deploy","setup-remove"],last=j.receipts.findLast(r=>actions.includes(r.action)&&r.state==="confirmed");if(!last)return null;
- const route=j.receipts.find(r=>r.action===last.action+"-route"&&r.state==="confirmed");requireSetup(last.resourceId&&last.observedFingerprint&&route?.resourceId&&route.observedFingerprint,"SETUP_DEPLOYMENT_RECEIPT_REQUIRED");
+ const actions=["initial-deploy","setup-deploy","setup-remove"],last=j.receipts.findLast(r=>(actions.includes(r.action)||/^setup-renew-[2-7]-deploy$/.test(r.action))&&r.state==="confirmed");if(!last)return null;
+ const route=j.receipts.findLast(r=>r.action===last.action+"-route"&&r.state==="confirmed");requireSetup(last.resourceId&&last.observedFingerprint&&route?.resourceId&&route.observedFingerprint,"SETUP_DEPLOYMENT_RECEIPT_REQUIRED");
  return {accountId:j.plan.accountId,workerName:j.plan.workerName,databaseId:database(j),namespaceId:route.resourceId,deploymentId:last.resourceId,configFingerprint:last.observedFingerprint,routeFingerprint:route.observedFingerprint};
 }
 function deploymentReceipts(action:string,snapshot:ProviderSnapshot,p:ResourcePlan,id:string):ActionReceipt[]{
@@ -33,8 +33,9 @@ function deploymentReceipts(action:string,snapshot:ProviderSnapshot,p:ResourcePl
  return [receipt(action,"confirmed",snapshot.deploymentId,snapshot.configFingerprint),receipt(action+"-route","confirmed",snapshot.namespaceId,snapshot.routeFingerprint)];
 }
 export function renderPrivateConfig(plan:ResourcePlan,databaseId:string,sourceRoot:string):Record<string,unknown>{return createSetupConfig(plan,databaseId,sourceRoot);}
+function approvalPath(path:string,generation:number):string{return join(dirname(path),generation===1?"approval-code.txt":`approval-code-g${generation}.txt`);}
 async function configFile(path:string,j:SetupJournal,setup=false):Promise<string>{
- const file=join(dirname(path),setup?"setup-config.json":"config-"+randomUUID()+".json"),config=renderPrivateConfig(j.plan,database(j),root);
+ const file=join(dirname(path),setup?(j.setup!.generation===1?"setup-config.json":`setup-config-g${j.setup!.generation}.json`):"config-"+randomUUID()+".json"),config=renderPrivateConfig(j.plan,database(j),root);
  if(setup){requireSetup(j.setup,"SETUP_ISSUANCE_REQUIRED");(config.vars as Record<string,unknown>).FLORA_SETUP=j.setup;}
  if(setup&&await exists(file))return file;
  await writePrivateFile(file,Buffer.from(JSON.stringify(config,null,2)+"\n"));return file;
@@ -54,7 +55,17 @@ async function issueUnlocked(path:string,now:number):Promise<{approvalFile:strin
 export async function issueFirstSetup(path:string,now:number):Promise<{approvalFile:string;configPath:string}>{return withSetupLock(dirname(path),()=>issueUnlocked(path,now));}
 export async function inspectSetup(path:string):Promise<SetupJournal>{return readJournal(path);}
 async function continueInstallation(path:string,provider:SetupProvider,io:SetupIO,signal:AbortSignal):Promise<SetupResult>{
- return withSetupLock(dirname(path),async()=>{
+ return withSetupLock(dirname(path),()=>continueUnlocked(path,provider,io,signal));
+}
+async function assertUnclaimed(j:SetupJournal,provider:SetupProvider,expected:ProviderSnapshot,signal:AbortSignal,generation:number){
+ requireSetup(canonicalJson(await provider.inspect(j.plan,signal))===canonicalJson(expected),"SETUP_PROVIDER_DRIFT");
+ const identity=await provider.readIdentity(j.plan,database(j),signal);
+ requireSetup(identity?.ownerId===j.plan.ownerId&&identity.origin===j.plan.origin&&identity.dbIdentity===j.plan.dbIdentity,"SETUP_PROVIDER_IDENTITY_MISMATCH");
+ requireSetup(provider.readOwnerState,"SETUP_RENEW_PROBE_REQUIRED");
+ const state=await provider.readOwnerState(j.plan,expected,signal);
+ requireSetup(state.ownerId===j.plan.ownerId&&state.ownerEmail===j.plan.ownerEmail&&state.origin===j.plan.origin&&state.dbIdentity===j.plan.dbIdentity&&!state.enrolled&&state.epoch===0&&state.activeSessions===0&&state.setupGeneration===generation&&state.setupClosed,"SETUP_RENEW_OWNER_NOT_UNCLAIMED");
+}
+async function continueUnlocked(path:string,provider:SetupProvider,io:SetupIO,signal:AbortSignal):Promise<SetupResult>{
   let j=await readJournal(path);
   if(j.receipts.some(r=>r.state!=="confirmed"))return {state:"unknown",code:"SETUP_PENDING_REQUIRES_RECONCILIATION"};
   try{
@@ -83,13 +94,14 @@ async function continueInstallation(path:string,provider:SetupProvider,io:SetupI
     await provider.probeHTTPS(j.plan,signal);j=await save(path,j,{...j,stage:"https-ready",receipts:[...j.receipts,receipt("https-ready","confirmed")]});
    }
    if(j.stage==="https-ready"){await issueUnlocked(path,Date.now());j=await readJournal(path);}
-   if(j.stage==="setup-issued"){
+   if(j.stage==="setup-issued"||j.stage==="setup-renew-issued"){
     requireSetup(j.setup&&Date.now()<j.setup.expiresAt,"SETUP_WINDOW_EXPIRED");await assertSource(j);
-    const expected=expectedSnapshot(j);
-    await action("setup-deploy",async()=>provider.deploy(j.plan,await configFile(path,j,true),expected,signal),(snapshot,current)=>({...current,stage:"setup-deployed",receipts:[...confirmed(current,"setup-deploy"),...deploymentReceipts("setup-deploy",snapshot,current.plan,database(current))]}));
+    const expected=expectedSnapshot(j),name=j.setup.generation===1?"setup-deploy":`setup-renew-${j.setup.generation}-deploy`;
+    if(j.setup.generation>1){requireSetup(expected,"SETUP_DEPLOYMENT_RECEIPT_REQUIRED");await assertUnclaimed(j,provider,expected,signal,j.setup.generation-1);}
+    await action(name,async()=>provider.deploy(j.plan,await configFile(path,j,true),expected,signal),(snapshot,current)=>({...current,stage:"setup-deployed",receipts:[...confirmed(current,name),...deploymentReceipts(name,snapshot,current.plan,database(current))]}));
    }
    if(j.stage==="setup-deployed"){
-    io.notice(`관리자 등록: ${j.plan.origin}/setup\n승인 코드는 PC의 private 파일에서 확인하세요: ${join(dirname(path),"approval-code.txt")}\n비밀번호는 HTTPS 화면에만 입력하세요. 이미 등록했다면 새 비밀번호로 로그인부터 확인하세요.`);
+    io.notice(`관리자 등록: ${j.plan.origin}/setup\n승인 코드는 PC의 private 파일에서 확인하세요: ${approvalPath(path,j.setup!.generation)}\n비밀번호는 HTTPS 화면에만 입력하세요. 이미 등록했다면 새 비밀번호로 로그인부터 확인하세요.`);
     if(!await io.confirm("위 사이트에서 관리자 등록 후 로그인을 확인했습니까? 확인하면 최초 승인 창만 닫습니다"))return {state:"needs-operator",code:"SETUP_OWNER_CONFIRMATION_REQUIRED"};
     j=await save(path,j,{...j,stage:"operator-confirmed",receipts:[...j.receipts,receipt("operator-confirmed","confirmed")]});
    }
@@ -107,6 +119,36 @@ async function continueInstallation(path:string,provider:SetupProvider,io:SetupI
    }
    io.notice(unknown?"요청 결과 확인이 필요합니다. 같은 변경 요청을 재전송하지 않았습니다. 설치 원장과 provider 자원을 확인하세요.":"준비를 확인하지 못했습니다. Cloudflare 로그인·조회 권한·무료 사용량·DNS/TLS와 고정 소스를 확인한 뒤 같은 원장으로 재개하세요.");
    return {state:cancelled?"cancelled":unknown?"unknown":"needs-operator",code:cancelled?"SETUP_CANCELLED":unknown?"SETUP_OPERATION_UNCONFIRMED":"SETUP_PREREQUISITE_UNVERIFIED"};
+  }
+}
+/** Explicit operator action only. Never called automatically by resume. */
+export async function renewSetup(path:string,provider:SetupProvider,io:SetupIO,signal:AbortSignal,now?:number):Promise<SetupResult>{
+ return withSetupLock(dirname(path),async()=>{
+  let j=await readJournal(path);
+  if(j.receipts.some(r=>r.state!=="confirmed"))return {state:"unknown",code:"SETUP_PENDING_REQUIRES_RECONCILIATION"};
+  try{
+   signal.throwIfAborted();await assertSource(j);
+   const checkedAt=now??Date.now();requireSetup(j.stage==="setup-deployed"&&j.setup&&Number.isSafeInteger(checkedAt)&&checkedAt>=j.setup.expiresAt&&j.setup.generation<7,"SETUP_RENEW_UNAVAILABLE");
+   const expected=expectedSnapshot(j);requireSetup(expected,"SETUP_DEPLOYMENT_RECEIPT_REQUIRED");await assertUnclaimed(j,provider,expected,signal,j.setup.generation);
+   // Verify retained private files without printing or rewriting any prior code.
+   for(const issuance of [...(j.setupHistory??[]),j.setup]){
+    const bytes=await readPrivateFile(approvalPath(path,issuance.generation));let decoded:Buffer|undefined;
+    try{const value=bytes.toString("utf8").trim();requireSetup(/^[A-Za-z0-9_-]{43}$/.test(value),"SETUP_RENEW_HISTORY_UNVERIFIED");decoded=Buffer.from(value,"base64url");requireSetup(decoded.length===32&&decoded.toString("base64url")===value&&digest(decoded)===issuance.digest,"SETUP_RENEW_HISTORY_UNVERIFIED");}finally{bytes.fill(0);decoded?.fill(0);}
+   }
+   const generation=j.setup.generation+1,name=`setup-renew-${generation}-issue`,previous=j.setup;
+   signal.throwIfAborted();
+   j=await save(path,j,{...j,receipts:[...j.receipts,receipt(name,"pending")]});
+   signal.throwIfAborted();
+   const bytes=randomBytes(32),issuedAt=now??Date.now();
+   try{
+    await writePrivateFile(approvalPath(path,generation),Buffer.from(bytes.toString("base64url")+"\n"));
+    j=await save(path,j,{...j,stage:"setup-renew-issued",setupHistory:[...(j.setupHistory??[]),previous],setup:{digest:digest(bytes),issuedAt,expiresAt:issuedAt+600000,generation,purpose:"enroll"},receipts:j.receipts.map(r=>r.action===name?receipt(name,"confirmed"):r)});
+   }finally{bytes.fill(0);}
+   return continueUnlocked(path,provider,io,signal);
+  }catch(e){
+   const current=await readJournal(path),unknown=current.receipts.some(r=>r.state!=="confirmed"),cancelled=signal.aborted||(e instanceof Error&&e.message==="SETUP_CANCELLED");
+   io.notice(unknown?"등록 창 갱신 결과를 확인해야 합니다. 원장과 이전 코드를 보존했으며 요청을 재전송하지 않습니다.":"등록 창을 갱신하지 않았습니다. 만료·미등록 상태와 설치 원장·서버 일치를 확인하세요.");
+   return {state:cancelled?"cancelled":unknown?"unknown":"needs-operator",code:cancelled?"SETUP_CANCELLED":unknown?"SETUP_OPERATION_UNCONFIRMED":"SETUP_RENEW_REFUSED"};
   }
  });
 }
@@ -130,7 +172,7 @@ function interactiveProvider(runtime:SetupRuntime,directory:string,io:SetupIO):S
   return io.readSecret("별도 DNS 읽기 전용 토큰: ",signal);
  }});
 }
-export function createProvisionHandlers():Pick<SetupCommandDeps,"newInstall"|"existing"|"resume"|"inspect">{
+export function createProvisionHandlers():Pick<SetupCommandDeps,"newInstall"|"existing"|"resume"|"inspect"|"renew">{
  return {
   existing:connectExisting,
   async newInstall(io,signal){
@@ -142,6 +184,7 @@ export function createProvisionHandlers():Pick<SetupCommandDeps,"newInstall"|"ex
    return provisionNew(plan,join(directory,"journal.json"),interactiveProvider(runtime,directory,io),io,signal);
   },
   async resume(path,io,signal){const runtime=await resolveSetupRuntime(root);return resumeProvision(path,interactiveProvider(runtime,dirname(path),io),io,signal);},
+  async renew(path,io,signal){const runtime=await resolveSetupRuntime(root);return renewSetup(path,interactiveProvider(runtime,dirname(path),io),io,signal);},
   async inspect(path){const j=await inspectSetup(path);return {state:"needs-operator",code:"SETUP_LOCAL_INSPECTION",details:{installationId:j.plan.installationId,stage:j.stage,origin:j.plan.origin,workerName:j.plan.workerName,databaseId:j.receipts.find(r=>r.action==="create-db"&&r.state==="confirmed")?.resourceId??null,pendingActions:j.receipts.filter(r=>r.state!=="confirmed").map(r=>r.action)}};},
  };
 }

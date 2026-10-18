@@ -11,7 +11,7 @@ async function fixture(t:test.TestContext){
  const file=join(dir,"new-install","journal.json"),calls:string[]=[],messages:string[]=[],configs:Record<string,any>[]=[];let created=false,deployed=0,identity=false,failHTTPS=false;
  async function pending(action:string){const state=JSON.parse(await fs.readFile(file,"utf8"));assert.ok(state.receipts.some((r:{action:string;state:string})=>r.action===action&&r.state==="pending"),action+" needs durable intent first");calls.push(action);}
  const snapshot=()=>({accountId:plan.accountId,workerName:plan.workerName,databaseId:created?dbId:null,namespaceId:deployed?"d".repeat(32):null,deploymentId:deployed?"44444444-4444-4444-8444-444444444444":null,configFingerprint:deployed?String(deployed).repeat(64):null,routeFingerprint:"e".repeat(64)});
- const provider={inspect:async()=>snapshot(),createDatabase:async()=>{await pending("create-db");created=true;return {databaseId:dbId,databaseName:plan.databaseName};},migrate:async()=>{await pending("migrate");},readIdentity:async()=>identity?{ownerId:plan.ownerId,origin:plan.origin,dbIdentity:plan.dbIdentity}:null,insertIdentity:async()=>{await pending("identity");identity=true;},deploy:async(_p:unknown,path:string)=>{const config=JSON.parse(await fs.readFile(path,"utf8"));await pending(!deployed?"initial-deploy":config.vars.FLORA_SETUP?"setup-deploy":"setup-remove");configs.push(config);deployed++;return snapshot();},probeHTTPS:async()=>{calls.push("https");if(failHTTPS)throw Error("synthetic-private-error");}};
+ const provider={inspect:async()=>snapshot(),createDatabase:async()=>{await pending("create-db");created=true;return {databaseId:dbId,databaseName:plan.databaseName};},migrate:async()=>{await pending("migrate");},readIdentity:async()=>identity?{ownerId:plan.ownerId,origin:plan.origin,dbIdentity:plan.dbIdentity}:null,insertIdentity:async()=>{await pending("identity");identity=true;},readOwnerState:async()=>({ownerId:plan.ownerId,ownerEmail:plan.ownerEmail,origin:plan.origin,dbIdentity:plan.dbIdentity,enrolled:false,epoch:0,setupGeneration:configs.at(-1)?.vars.FLORA_SETUP.generation??0,setupClosed:true,activeSessions:0}),deploy:async(_p:unknown,path:string)=>{const config=JSON.parse(await fs.readFile(path,"utf8")),generation=config.vars.FLORA_SETUP?.generation;await pending(!deployed?"initial-deploy":generation>1?`setup-renew-${generation}-deploy`:generation?"setup-deploy":"setup-remove");configs.push(config);deployed++;return snapshot();},probeHTTPS:async()=>{calls.push("https");if(failHTTPS)throw Error("synthetic-private-error");}};
  const confirmations=[true,false],io={choose:async()=>"new",readPublic:async()=>plan.origin,readSecret:async()=>assert.fail("password must not be read in CLI"),confirm:async()=>confirmations.shift()??false,notice:(s:string)=>messages.push(s),report:(r:unknown)=>messages.push(JSON.stringify(r))};
  return {dir,file,provider,io,calls,messages,configs,confirmations,failHTTPS:()=>{failHTTPS=true;}};
 }
@@ -89,4 +89,52 @@ test("all_pending_issuance_states_and_source_drift_fail_without_reissue",async t
  }
  const f=await fixture(t);await api.provisionNew(plan,f.file,f.provider,f.io,new AbortController().signal);const state=JSON.parse(await fs.readFile(f.file,"utf8"));state.receipts.find((r:{action:string})=>r.action==="install-source").observedFingerprint="0".repeat(64);await fs.writeFile(f.file,JSON.stringify(state),{mode:0o600});const count=f.calls.length;
  assert.equal((await api.resumeProvision(f.file,f.provider,f.io,new AbortController().signal)).state,"needs-operator");assert.equal(f.calls.length,count);
+});
+
+test("explicit_renewal_preserves_old_code_history_and_uses_a_new_generation",async t=>{
+ const f=await fixture(t),api=await import(modulePath);await api.provisionNew(plan,f.file,f.provider,f.io,new AbortController().signal);
+ const old=JSON.parse(await fs.readFile(f.file,"utf8")),oldCode=await fs.readFile(join(f.dir,"new-install","approval-code.txt")),oldConfig=await fs.readFile(join(f.dir,"new-install","setup-config.json"));
+ const result=await api.renewSetup(f.file,f.provider,f.io,new AbortController().signal,old.setup.expiresAt+1);
+ assert.equal(result.state,"needs-operator");assert.equal(result.code,"SETUP_OWNER_CONFIRMATION_REQUIRED");
+ const current=JSON.parse(await fs.readFile(f.file,"utf8")),token=(await fs.readFile(join(f.dir,"new-install","approval-code-g2.txt"),"utf8")).trim();
+ assert.equal(current.stage,"setup-deployed");assert.equal(current.setup.generation,2);assert.equal(current.setup.purpose,"enroll");assert.equal(current.setup.expiresAt-current.setup.issuedAt,600000);
+ assert.deepEqual(current.setupHistory,[old.setup]);assert.equal(current.setup.digest,createHash("sha256").update(Buffer.from(token,"base64url")).digest("hex"));
+ assert.notEqual(token,oldCode.toString().trim());assert.deepEqual(await fs.readFile(join(f.dir,"new-install","approval-code.txt")),oldCode);assert.deepEqual(await fs.readFile(join(f.dir,"new-install","setup-config.json")),oldConfig);
+ assert.deepEqual(current.receipts.slice(0,old.receipts.length),old.receipts);assert.ok(!f.messages.join("\n").includes(token));
+ assert.equal((await api.renewSetup(f.file,f.provider,f.io,new AbortController().signal,current.setup.expiresAt+1)).state,"needs-operator");
+ const third=JSON.parse(await fs.readFile(f.file,"utf8"));assert.equal(third.setup.generation,3);assert.deepEqual(third.setupHistory,[old.setup,current.setup]);assert.deepEqual(third.receipts.slice(0,current.receipts.length),current.receipts);
+ assert.equal((await fs.readFile(join(f.dir,"new-install","approval-code-g2.txt"),"utf8")).trim(),token);
+ f.confirmations.push(true);assert.equal((await api.resumeProvision(f.file,f.provider,f.io,new AbortController().signal)).state,"ready");
+ assert.ok(!f.configs.at(-1)!.vars.FLORA_SETUP);assert.equal(JSON.parse(await fs.readFile(f.file,"utf8")).setupHistory.length,2);
+});
+
+test("renewal_rejects_live_windows_enrolled_owners_drift_or_identity_mismatch_without_new_files",async t=>{
+ const f=await fixture(t),api=await import(modulePath);await api.provisionNew(plan,f.file,f.provider,f.io,new AbortController().signal);
+ const before=await fs.readFile(f.file),j=JSON.parse(before.toString()),files=await fs.readdir(join(f.dir,"new-install"));
+ assert.equal((await api.renewSetup(f.file,f.provider,f.io,new AbortController().signal,j.setup.issuedAt)).state,"needs-operator");
+ const state=await f.provider.readOwnerState();
+ const cases=[{...f.provider,readOwnerState:async()=>({...state,enrolled:true,epoch:1})},{...f.provider,readOwnerState:async()=>({...state,activeSessions:1})},{...f.provider,readOwnerState:async()=>({...state,ownerId:"different-owner"})},{...f.provider,readOwnerState:async()=>({...state,setupGeneration:2})},{...f.provider,inspect:async()=>({...await f.provider.inspect(),configFingerprint:"0".repeat(64)})},{...f.provider,readIdentity:async()=>({ownerId:"different-owner",origin:plan.origin,dbIdentity:plan.dbIdentity})}];
+ for(const provider of cases){assert.equal((await api.renewSetup(f.file,provider,f.io,new AbortController().signal,j.setup.expiresAt+1)).state,"needs-operator");assert.deepEqual(await fs.readFile(f.file),before);assert.deepEqual(await fs.readdir(join(f.dir,"new-install")),files);}
+ const cancelled=await api.renewSetup(f.file,{...f.provider,readOwnerState:async()=>{throw Error("SETUP_CANCELLED");}},f.io,new AbortController().signal,j.setup.expiresAt+1);assert.equal(cancelled.state,"cancelled");assert.equal(cancelled.code,"SETUP_CANCELLED");assert.deepEqual(await fs.readFile(f.file),before);
+ const original=await fs.readFile(join(f.dir,"new-install","approval-code.txt"));await fs.writeFile(join(f.dir,"new-install","approval-code.txt"),"unverified-old-code\n");
+ assert.equal((await api.renewSetup(f.file,f.provider,f.io,new AbortController().signal,j.setup.expiresAt+1)).state,"needs-operator");assert.deepEqual(await fs.readFile(f.file),before);await fs.writeFile(join(f.dir,"new-install","approval-code.txt"),original);
+});
+
+test("lost_renewal_deploy_reply_stays_unknown_and_never_reissues_or_reposts",async t=>{
+ const f=await fixture(t),api=await import(modulePath);await api.provisionNew(plan,f.file,f.provider,f.io,new AbortController().signal);
+ const old=JSON.parse(await fs.readFile(f.file,"utf8"));let posts=0;
+ const provider={...f.provider,deploy:async()=>{posts++;throw Error("synthetic-private-failure");}};
+ assert.equal((await api.renewSetup(f.file,provider,f.io,new AbortController().signal,old.setup.expiresAt+1)).state,"unknown");
+ const before=await fs.readFile(f.file),code=await fs.readFile(join(f.dir,"new-install","approval-code-g2.txt"));
+ assert.equal((await api.resumeProvision(f.file,provider,f.io,new AbortController().signal)).state,"unknown");
+ assert.equal((await api.renewSetup(f.file,provider,f.io,new AbortController().signal,old.setup.expiresAt+600001)).state,"unknown");
+ assert.equal(posts,1);assert.deepEqual(await fs.readFile(f.file),before);assert.deepEqual(await fs.readFile(join(f.dir,"new-install","approval-code-g2.txt")),code);
+});
+
+test("renewal_cancelled_during_read_only_preflight_never_mints_a_new_code",async t=>{
+ const f=await fixture(t),api=await import(modulePath);await api.provisionNew(plan,f.file,f.provider,f.io,new AbortController().signal);
+ const before=await fs.readFile(f.file),j=JSON.parse(before.toString()),files=await fs.readdir(join(f.dir,"new-install")),controller=new AbortController();
+ const provider={...f.provider,readOwnerState:async()=>{const value=await f.provider.readOwnerState();controller.abort();return value;}};
+ assert.equal((await api.renewSetup(f.file,provider,f.io,controller.signal,j.setup.expiresAt+1)).state,"cancelled");
+ assert.deepEqual(await fs.readFile(f.file),before);assert.deepEqual(await fs.readdir(join(f.dir,"new-install")),files);
 });
