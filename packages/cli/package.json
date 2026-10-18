@@ -18,6 +18,7 @@
     "@app-ops/db": "workspace:*",
     "@app-ops/dogfood": "workspace:*",
     "@app-ops/dashboard": "workspace:*",
-    "@app-ops/runner-protocol": "workspace:*"
+    "@app-ops/runner-protocol": "workspace:*",
+    "@flora/runner": "workspace:*"
   }
 }

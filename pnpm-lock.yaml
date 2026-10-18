@@ -62,6 +62,9 @@ importers:
       '@app-ops/runner-protocol':
         specifier: workspace:*
         version: link:../runner-protocol
+      '@flora/runner':
+        specifier: workspace:*
+        version: link:../ota-runner
 
   packages/cloudflare:
     dependencies:
