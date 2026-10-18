@@ -14,7 +14,7 @@
 - 오래된 배포의 point 조회는 24개 최신 배포가 더 생겨도 4 queries / 7 rows read / 0 writes로 동일. SDK 집계나 과거 이력을 쓰지 않음.
 - 별도 공개 다운로드 QA 도구는 raw manifest RSA-SHA256/expected key ID와 모든 자산 SHA-256을 검증. unsigned·다른 앱/키·손상·과대 응답을 거절하며 코드를 실행하거나 기기 적용 완료로 표시하지 않음.
 
-## 새 clone와 원격 검증
+## 초기 새 clone와 원격 검증
 
 검증한 코드 revision은 `1c1542e76bea4de1aff6bad74f9427a67fb2e41d`입니다. `codex/installation-wizard-design-20261018`의 독립 로컬 후보를 실제 `git clone --no-local`로 받았습니다. 원격 main URL의 해당 기능 배포를 검증한 것으로 표시하지 않습니다.
 
@@ -36,6 +36,14 @@
 고정 GET 사전 검사에서는 account·zone·D1·Worker domain·route가 200이고 DNS 레코드만 403이었습니다. 새 자원 생성 요청 전에 멈췄습니다. 사용자가 승인한 [별도 DNS 읽기 인증 보완](../superpowers/specs/2026-10-18-installation-wizard-auth-amendment.md)에 따라 비표시 입력·같은 zone 고정 DNS GET만 사용·메모리 전용·오류/취소 보존을 추가했습니다. 실제 토큰은 운영자가 생성 화면에서 CLI에 직접 붙여넣어야 합니다. 기존 Wrangler 인증이나 scope를 교체하지 않았습니다. 기존 Flora GitHub App 키를 새 QA 서버로 복사하거나 기존 앱으로 대신 완료 처리하지 않습니다. 새 Worker/D1/hostname 실제 생성·DNS/TLS, 새 소유자 HTTPS 등록, 실제 signed webhook → PC Docker export → 4개 원격 게시·다운로드·화면 확인은 아직 미완료입니다.
 
 실제 PC Docker에서는 별도 공개 PNPM fixture로 온라인 cache 준비 → 오프라인 설치, metadata 누락 시 거절, lifecycle 미실행, host cache hash 불변 검사가 1 pass / 0 fail / 0 skip으로 통과했습니다. 기존 Lima가 공유하는 scratch 아래 새 QA 임시 폴더만 사용했습니다. 최초 실행은 VM에 공유되지 않은 macOS 임시 경로 때문에 `EXECUTION_FAILED`였으며, 기존 VM 설정을 바꾸지 않고 공유된 QA 경로와 arm64 이미지로 재검증했습니다. 이 결과는 실제 Docker 정책 검증이며 원격 앱 OTA export나 기기 적용 증거가 아닙니다.
+
+## DNS 인증 보완 후 로컬 검증
+
+코드 commit `7ac2055b50262ed7b892aeeaaf57942df78c4c20`의 전체 `pnpm check`는 build·typecheck와 **1,448 pass / 0 fail / 3 skip / 0 cancelled**, exit 0으로 완료했습니다(1,154.62초). 생략은 Windows 1건, 명시적인 Expo 앱 환경 1건, 명시적인 PNPM Docker 이미지 환경 1건입니다. Docker 검사는 위의 실제 daemon 별도 실행으로 확인했습니다. 사용자 승인으로 인증 구현이 바뀌던 중간 후보의 전체 검사는 그 실행 소유의 11개 프로세스만 중지했고 통과로 보고하지 않았습니다.
+
+이 commit을 다시 실제 `git clone --no-local`로 받아 새 canonical HOME·npm cache·pnpm store·XDG·개별 빈 npm user/global 설정으로 확인했습니다. frozen install은 257 packages / reused 0이고 build·typecheck·provider/provision/command/실제 PTY 테스트 **27 pass / 0 fail / 0 skip**이 모두 exit 0입니다. 이 두 번째 clone에서는 전체 suite를 반복하지 않았으며 전체 suite 결과는 위 독립 구현 폴더의 실행 결과입니다. clone Git status는 clean입니다.
+
+공식 Community CLI로 만든 새 RN 0.86.3 앱 FloraOnboardingA/B는 별도 lockfile·node_modules에서 각각 `npm ci --ignore-scripts`(867 packages), TypeScript 검사, SDK 0.3.2 모듈 로딩이 통과했습니다. vendor SDK는 위 pack SHA-256과 일치합니다. 이 결과는 설치 준비이며 서버 SDK 설정·GitHub 연결·native build·원격 OTA 증거가 아닙니다. 원본 작업 폴더 559개 파일 hash·HEAD·index·staging·전체 untracked 상태는 baseline과 일치합니다. 원격 main push·운영 배포·EAS·Actions 실행은 하지 않았습니다.
 
 새 바이너리를 설치·실행하지 않은 경우 다운로드 검증을 OTA 적용·재시작이나 실제 사용자 채택률로 해석하지 않습니다. EAS·GitHub Actions workflow는 이 구현에서 추가하거나 실행하지 않습니다. QA 리소스를 자동 삭제하거나 기존 데이터를 초기화하지 않습니다.
 
