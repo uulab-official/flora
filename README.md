@@ -353,6 +353,8 @@ npm exec --yes --package=pnpm@11.19.0 -- pnpm --dir packages/cloudflare exec wra
 | 게시됐지만 앱 변화가 없음 | 최초 SDK 바이너리 설치 여부, Release 모드, 원래 배포와 다른 새 SHA, 상세 기기 보고 |
 | 일일 quota / `fatal-stop` | 화면의 실패 코드·초기화/복구 안내. journal·기존 이력·키 삭제 금지 |
 
+이번 문서의 명령·새 HOME 설치·실제 Docker 준비 검증 결과는 [2026-10-18 기록](docs/development/first-run-verification-2026-10-18.ko.md)에 있습니다.
+
 문서·소스를 검증하려면 Flora 루트에서 `npm exec --yes --package=pnpm@11.19.0 -- pnpm check`를 실행합니다. `verify:clean`은 추적 파일의 사본 검사이며 실제 clone 검증은 [새 환경 절차](docs/development/clean-clone-source.ko.md)로 구분합니다.
 
 이 README의 계정 인증·설치 승인·공개 배포·최초 네이티브 바이너리 설치는 운영자가 수행하는 단계입니다. 로컬 fixture 성공만으로 이 실제 단계들을 완료했다고 보고하지 않습니다. 기존 UULab 앱 6개 Simulator/Emulator 조합의 과거 OTA·네트워크 복구 증거는 [2026-10-17 기록](docs/development/github-release-ota-network-2026-10-17.ko.md)에 있으며 물리 기기나 현재 서비스 건강을 보장하지 않습니다.

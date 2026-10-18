@@ -353,6 +353,8 @@ Return to [step 2](#2-prepare-the-flora-server-and-sign-in) and connect GitHub. 
 | Published but app unchanged | Initial SDK binary is installed, Release mode, new SHA differs from the prior deployment, and detailed device reports |
 | Daily quota / `fatal-stop` | UI error code and reset/recovery guidance; preserve journals, history and keys |
 
+The command checks, fresh-HOME installation and real Docker preparation results are in the [2026-10-18 verification record (Korean)](docs/development/first-run-verification-2026-10-18.ko.md).
+
 To verify source and documentation, run `npm exec --yes --package=pnpm@11.19.0 -- pnpm check` at the Flora root. `verify:clean` checks a copy of tracked files; distinguish it from the [actual fresh-clone procedure (Korean)](docs/development/clean-clone-source.ko.md).
 
 Account authentication, installation approval, public deployment and installing the first native binary in this README are operator steps. A local fixture pass does not establish those real steps were completed. Historical OTA/network-recovery evidence for UULab's six Simulator/Emulator app/platform combinations is in the [2026-10-17 record (Korean)](docs/development/github-release-ota-network-2026-10-17.ko.md). It is not physical-device evidence or a guarantee of current service health.
