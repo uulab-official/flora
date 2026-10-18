@@ -14,7 +14,8 @@ export interface SetupProvider {
  deploy(plan:ResourcePlan,configPath:string,expected:ProviderSnapshot|null,signal:AbortSignal):Promise<ProviderSnapshot>;
  probeHTTPS(plan:ResourcePlan,signal:AbortSignal):Promise<void>;
 }
-interface ProviderDeps {run:typeof runBoundedTool;fetch:(url:string,init:RequestInit)=>Promise<Response>}
+interface DNSScope {zoneId:string;hostname:string}
+interface ProviderDeps {run:typeof runBoundedTool;fetch:(url:string,init:RequestInit)=>Promise<Response>;readDNSCredential?:(scope:DNSScope,signal:AbortSignal)=>Promise<string>}
 const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const hash=(v:unknown)=>createHash("sha256").update(canonicalJson(v)).digest("hex");
 const error=(code:string):never=>{throw new Error(code);};
@@ -53,8 +54,9 @@ export function createSetupConfig(plan:ResourcePlan,databaseId:string,root:strin
 
 /** Credentials stay in this closure. Only fixed GETs to api.cloudflare.com use them. */
 export function createWranglerProvider(runtime:SetupRuntime,directory:string,injected:Partial<ProviderDeps>={}):SetupProvider{
- const deps:ProviderDeps={run:injected.run??runBoundedTool,fetch:injected.fetch??((url,init)=>fetch(url,init))};
+ const deps:ProviderDeps={run:injected.run??runBoundedTool,fetch:injected.fetch??((url,init)=>fetch(url,init)),...(injected.readDNSCredential?{readDNSCredential:injected.readDNSCredential}:{})};
  let credential:{value:string;at:number}|null=null;
+ let dnsCredential:{value:string;zoneId:string}|null=null,dnsPrompted=false;
  async function checkedDirectory(){await verifyPrivateDirectory(directory);const rel=relative(runtime.root,directory);requireSetup(rel===".."||rel.startsWith(".."+sep)||isAbsolute(rel),"SETUP_PRIVATE_DIRECTORY_OUTSIDE_CHECKOUT_REQUIRED");}
  async function run(args:readonly string[],signal:AbortSignal,maxBytes=65536){
   await checkedDirectory();return deps.run(runtime.nodePath,[runtime.wranglerEntry,...args],{cwd:directory,timeoutMs:120000,maxBytes,signal});
@@ -65,14 +67,27 @@ export function createWranglerProvider(runtime:SetupRuntime,directory:string,inj
   try{const v=strictObject(json(output.stdout),["type","token"]);requireSetup((v.type==="oauth"||v.type==="api_token")&&typeof v.token==="string"&&/^[A-Za-z0-9._-]{16,2048}$/.test(v.token),"SETUP_PROVIDER_AUTH_REQUIRED");credential={value:v.token,at:Date.now()};return v.token;}
   catch{return error("SETUP_PROVIDER_AUTH_REQUIRED");}
  }
- async function get(path:string,signal:AbortSignal,missing=false):Promise<unknown>{
+ async function get(path:string,signal:AbortSignal,missing=false,dnsScope?:DNSScope):Promise<unknown>{
   // Call sites generate every path after strict ResourcePlan validation.
   requireSetup(/^\/(?:accounts\/[a-f0-9]{32}(?:\/|$)|zones\/[a-f0-9]{32}(?:\/|$))/.test(path)&&!/[\r\n#]/.test(path),"SETUP_PROVIDER_PATH_INVALID");
-  const token=await credentialValue(signal),timeout=AbortSignal.timeout(15000),combined=AbortSignal.any([signal,timeout]);
+  if(dnsScope)requireSetup(path===`/zones/${dnsScope.zoneId}/dns_records?name=${dnsScope.hostname}&per_page=100&page=1`,"SETUP_PROVIDER_PATH_INVALID");
+  let useDNS=!!dnsScope&&dnsCredential?.zoneId===dnsScope.zoneId;
+  const token=useDNS?dnsCredential!.value:await credentialValue(signal);
   try{
-   const response=await deps.fetch("https://api.cloudflare.com/client/v4"+path,{method:"GET",headers:{Authorization:"Bearer "+token,Accept:"application/json"},redirect:"error",credentials:"omit",signal:combined});
+   const request=(value:string)=>deps.fetch("https://api.cloudflare.com/client/v4"+path,{method:"GET",headers:{Authorization:"Bearer "+value,Accept:"application/json"},redirect:"error",credentials:"omit",signal:AbortSignal.any([signal,AbortSignal.timeout(15000)])});
+   let response=await request(token);
+   if(response.status===403&&dnsScope&&!useDNS&&!dnsPrompted&&deps.readDNSCredential){
+    await response.body?.cancel();dnsPrompted=true;signal.throwIfAborted();
+    let value:string;try{value=await deps.readDNSCredential(dnsScope,signal);}catch(e){return error(signal.aborted||(e instanceof Error&&e.message==="SETUP_CANCELLED")?"SETUP_CANCELLED":"SETUP_PROVIDER_DNS_READ_REQUIRED");}
+    signal.throwIfAborted();requireSetup(typeof value==="string"&&/^[A-Za-z0-9._-]{16,2048}$/.test(value),"SETUP_PROVIDER_DNS_READ_REQUIRED");
+    dnsCredential={value,zoneId:dnsScope.zoneId};useDNS=true;response=await request(value);
+   }
    requireSetup(!response.redirected,"SETUP_PROVIDER_RESPONSE_INVALID");
-   if(response.status===401||response.status===403)return error("SETUP_PROVIDER_ACCESS_DENIED");
+   if(response.status===401||response.status===403){
+    await response.body?.cancel();
+    if(dnsScope)dnsCredential=null;
+    return error((dnsScope&&response.status===403)||(useDNS&&response.status===401)?"SETUP_PROVIDER_DNS_READ_REQUIRED":"SETUP_PROVIDER_ACCESS_DENIED");
+   }
    if(response.status===429)return error("SETUP_PROVIDER_QUOTA_OR_RATE_LIMIT");
    requireSetup(response.body,"SETUP_PROVIDER_RESPONSE_INVALID");
    const reader=response.body.getReader(),chunks:Uint8Array[]=[];let length=0;
@@ -83,7 +98,7 @@ export function createWranglerProvider(runtime:SetupRuntime,directory:string,inj
    requireSetup(response.ok&&body.success===true,"SETUP_PROVIDER_UNAVAILABLE");
    if(body.result_info){const info=record(body.result_info);requireSetup(info.total_pages===undefined||Number(info.total_pages)<=1,"SETUP_PROVIDER_RESULT_TRUNCATED");}
    return body.result;
-  }catch(e){const code=e instanceof Error?e.message:"";if(/^SETUP_PROVIDER_[A-Z_]+$/.test(code))throw e;return error(signal.aborted?"SETUP_CANCELLED":"SETUP_PROVIDER_UNAVAILABLE");}
+  }catch(e){const code=e instanceof Error?e.message:"";if(/^SETUP_PROVIDER_[A-Z_]+$/.test(code)||code==="SETUP_CANCELLED")throw e;return error(signal.aborted?"SETUP_CANCELLED":"SETUP_PROVIDER_UNAVAILABLE");}
  }
  async function inspectRaw(input:ResourcePlan,signal:AbortSignal){
   const p=planValue(input),base="/accounts/"+p.accountId,script=base+"/workers/scripts/"+p.workerName;
@@ -100,7 +115,7 @@ export function createWranglerProvider(runtime:SetupRuntime,directory:string,inj
    return r.script===p.workerName||new RegExp("^"+pattern.split("*").map(s=>s.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")).join(".*")+"$").test(p.hostname);
   });
   requireSetup(related.every(r=>r.script===p.workerName),"SETUP_PROVIDER_HOSTNAME_IN_USE");
-  const dns=array(await get("/zones/"+p.zoneId+"/dns_records?name="+p.hostname+"&per_page=100&page=1",signal));
+  const dns=array(await get("/zones/"+p.zoneId+"/dns_records?name="+p.hostname+"&per_page=100&page=1",signal,false,{zoneId:p.zoneId,hostname:p.hostname}));
   const rawSettings=await get(script+"/settings",signal,true);
   if(rawSettings===null){requireSetup(domains.length===0&&related.length===0&&dns.length===0,"SETUP_PROVIDER_HOSTNAME_IN_USE");return {snapshot:{accountId:p.accountId,workerName:p.workerName,databaseId,namespaceId:null,deploymentId:null,configFingerprint:null,routeFingerprint:hash({domains,related,dns})} satisfies ProviderSnapshot,versionId:null,settings:null,hostnameBound:false};}
   const settings=record(rawSettings),bindings=array(settings.bindings,100).map(record);

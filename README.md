@@ -282,6 +282,7 @@ npm exec --yes --package=pnpm@11.19.0 -- pnpm --dir packages/cloudflare exec wra
 | `PNPM_NOT_VERIFIED` / strict doctor 실패 | 전체 고정 `npm exec ... pnpm` 접두어, Node·Git 버전. lockfile 삭제나 TLS 우회 금지 |
 | `WORKSPACE_SOURCE_INCOMPLETE` / `dist` 없음 | 기본 main을 clone했는지, install·build를 완료했는지 |
 | demo의 `PRIVATE_STORE_UNSAFE` | 소유자 전용 DB 0600·폴더 0700, 공유 쓰기·symlink 없는 경로. 임시 HOME은 realpath 사용. 기존 DB를 삭제하거나 권한을 완화하지 않음 |
+| 설치의 `SETUP_PROVIDER_DNS_READ_REQUIRED` | 대상 zone의 DNS 읽기 전용 토큰을 CLI 비표시 입력에만 제공. 현재 고정 Wrangler OAuth에는 이 scope가 없음. 토큰은 메모리의 해당 zone DNS GET에만 사용되며 빈 입력은 중단. 같은 private 원장으로 재개 |
 | GitHub 저장소가 없음 | App 설치 범위·조직 승인·선택한 ref/root. 설치 권한 변경 후 목록 새로 확인 |
 | `INVALID_RUNNER_CONFIG` | 이미지 실제 ID, HTTPS origin, 토큰, JSON 허용 필드, 파일 0600·상위 폴더 0700·symlink 없음 |
 | 작업이 대기하거나 Runner가 오프라인 | PC/daemon 실행, presence·Docker socket·2GiB 여유. `--once` 성공만으로 온라인을 추정하지 않음 |

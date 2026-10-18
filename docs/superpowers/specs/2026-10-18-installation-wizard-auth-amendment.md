@@ -13,3 +13,13 @@
 추가 구현 결정: provider factory는 checkout 밖 private directory를 명시적으로 받는다. 새 Worker 설정의 shell build hook 대신 고정 Node build 및 dry-run을 실행하고, 그 직후 설정 drift를 다시 읽어 확인한다. 원 설계의 기존 데이터/키/이력 보존·최초 1회 발급·응답 유실 시 비재전송 규칙은 유지한다.
 
 근거: [공식 auth token 명령](https://developers.cloudflare.com/workers/wrangler/commands/general/#auth-token), 프로젝트에 설치된 4.148.0 command metadata 및 logger의 `WRANGLER_WRITE_LOGS` 처리.
+
+## 별도 DNS 읽기 인증 보완 — 2026-10-18 승인
+
+실제 계정 사전 검사에서 account·zone·D1·Worker domain·route 조회는 200이지만 DNS 레코드 GET만 403이었다. 고정 Wrangler의 OAuth scope 목록에는 DNS 레코드 읽기가 없으므로 같은 로그인 반복으로 해결한다고 안내하지 않는다. 사용자는 **별도 DNS 읽기 인증 설계**를 승인했다.
+
+- 기존 Wrangler 인증·scope·설정은 유지한다. 별도 토큰은 운영자가 대상 zone의 DNS 읽기만 허용해 준비한다. QA에서는 `uulab.co.kr` 한 zone과 단기 만료로 제한한다.
+- DNS GET 403일 때만 CLI의 기존 비표시 `readSecret`으로 한 번 입력받는다. 빈 값·잘못된 형식·거절·취소는 중단하며 자동 재입력을 반복하지 않는다.
+- 이 토큰은 해당 provider 호출 수명 동안 메모리에만 보관하고, 같은 zone의 고정 `/zones/{zoneId}/dns_records?name={hostname}&per_page=100&page=1` GET에만 사용한다. 다른 zone·계정·Worker·D1·mutation에는 기존 인증을 사용한다.
+- 토큰을 파일·원장·로그·argv·환경변수·Flora·브라우저로 전달하지 않는다. 공개 원장 재개 시 다시 필요한 경우 운영자가 CLI에 입력한다. 토큰 생성 화면의 비밀값은 운영자가 직접 CLI에 붙여넣는다.
+- 조회 실패 시 hostname 충돌 검증을 생략하지 않는다. pending mutation은 unknown으로 보존하며 자동 재전송하지 않는다. Ctrl+C/EOF는 종료 코드 130으로 유지한다.

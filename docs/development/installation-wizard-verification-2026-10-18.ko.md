@@ -31,7 +31,11 @@
 
 별도 전체 코드 검토에서 P1 1건·P2 4건을 확인해 모두 수정했습니다. 부모 디렉터리 fsync, 정확한 checkout 경계, 성공한 재시도 표시, 최근 20개 밖 known job point 조회, 현재 origin SDK 검증을 회귀 테스트로 확인했습니다. 조회 실패는 자동 반복하지 않고 수동 확인으로 이어갑니다. 보류한 Minor 지적은 없습니다.
 
-현재 `gh auth status`는 기존 bonjin-app 인증이 유효하지 않다고 보고했고, 공식 고정 Wrangler `auth token --json`도 인증 단계에서 `SETUP_TOOL_FAILED`로 종료됐습니다. Mac 잠금으로 브라우저 제어가 차단되어 본인 인증을 이어가지 못했습니다. 인증값·권한을 새로 만들거나 우회하지 않았고 원격 변경 요청은 0건입니다. 새 QA GitHub 저장소 생성·설치는 실제 본인 인증과 권한 확인이 필요합니다. 기존 Flora GitHub App 키를 새 QA 서버로 복사하거나 기존 앱으로 대신 완료 처리하지 않습니다. 새 Worker/D1/hostname 무료 여유·DNS/TLS, 새 소유자 HTTPS 등록, 실제 signed webhook → PC Docker export → 4개 원격 게시·다운로드·화면 확인은 아직 미완료입니다.
+첫 검증 시에는 Mac 잠금·GitHub 인증·Wrangler 인증이 차단됐으나, 후속 읽기 전용 확인에서는 Mac 잠금 해제, `bonjin-app` GitHub 인증, 공식 Wrangler 계정 조회가 정상으로 확인됐습니다. Cloudflare 화면의 현재 Workers 플랜은 Free였고 D1은 5/10 DB, 78.75k/5M 일일 읽기, 18/100k 쓰기, 371.61MB/5GB로 관찰됐습니다. 이 값은 해당 확인 시점의 계정 전체 사용량이며 예약된 여유나 영구 보장은 아닙니다. 구독 API 403은 무료/유료 판별 증거로 사용하지 않았습니다.
+
+고정 GET 사전 검사에서는 account·zone·D1·Worker domain·route가 200이고 DNS 레코드만 403이었습니다. 새 자원 생성 요청 전에 멈췄습니다. 사용자가 승인한 [별도 DNS 읽기 인증 보완](../superpowers/specs/2026-10-18-installation-wizard-auth-amendment.md)에 따라 비표시 입력·같은 zone 고정 DNS GET만 사용·메모리 전용·오류/취소 보존을 추가했습니다. 실제 토큰은 운영자가 생성 화면에서 CLI에 직접 붙여넣어야 합니다. 기존 Wrangler 인증이나 scope를 교체하지 않았습니다. 기존 Flora GitHub App 키를 새 QA 서버로 복사하거나 기존 앱으로 대신 완료 처리하지 않습니다. 새 Worker/D1/hostname 실제 생성·DNS/TLS, 새 소유자 HTTPS 등록, 실제 signed webhook → PC Docker export → 4개 원격 게시·다운로드·화면 확인은 아직 미완료입니다.
+
+실제 PC Docker에서는 별도 공개 PNPM fixture로 온라인 cache 준비 → 오프라인 설치, metadata 누락 시 거절, lifecycle 미실행, host cache hash 불변 검사가 1 pass / 0 fail / 0 skip으로 통과했습니다. 기존 Lima가 공유하는 scratch 아래 새 QA 임시 폴더만 사용했습니다. 최초 실행은 VM에 공유되지 않은 macOS 임시 경로 때문에 `EXECUTION_FAILED`였으며, 기존 VM 설정을 바꾸지 않고 공유된 QA 경로와 arm64 이미지로 재검증했습니다. 이 결과는 실제 Docker 정책 검증이며 원격 앱 OTA export나 기기 적용 증거가 아닙니다.
 
 새 바이너리를 설치·실행하지 않은 경우 다운로드 검증을 OTA 적용·재시작이나 실제 사용자 채택률로 해석하지 않습니다. EAS·GitHub Actions workflow는 이 구현에서 추가하거나 실행하지 않습니다. QA 리소스를 자동 삭제하거나 기존 데이터를 초기화하지 않습니다.
 

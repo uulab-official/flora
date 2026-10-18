@@ -49,6 +49,28 @@ test("existing_install_never_bootstraps",async t=>{
  const f=await fixture(t),api=await import(modulePath),before=Buffer.from("retained private configuration");await fs.writeFile(join(f.dir,"existing-keys"),before,{mode:0o600});
  const result=await api.connectExisting(f.io,new AbortController().signal);assert.equal(result.state,"needs-operator");assert.equal(f.calls.length,0);assert.deepEqual(await fs.readFile(join(f.dir,"existing-keys")),before);assert.ok(f.messages.some(s=>s.includes("/login?returnTo=%2Fonboarding")));
 });
+test("dns_read_denial_keeps_installation_resumable_without_issuing_or_mutating",async t=>{
+ const f=await fixture(t),api=await import(modulePath);
+ const provider={...f.provider,inspect:async()=>{throw Error("SETUP_PROVIDER_DNS_READ_REQUIRED");}};
+ const result=await api.provisionNew(plan,f.file,provider,f.io,new AbortController().signal);
+ assert.deepEqual(result,{state:"needs-operator",code:"SETUP_PROVIDER_DNS_READ_REQUIRED"});
+ assert.equal(f.calls.length,0);
+ const journal=JSON.parse(await fs.readFile(f.file,"utf8"));assert.equal(journal.stage,"planned");assert.ok(journal.receipts.every((r:{state:string})=>r.state==="confirmed"));
+ await assert.rejects(fs.access(join(f.dir,"new-install","approval-code.txt")));
+ assert.ok(f.messages.some(s=>s.includes("DNS")&&s.includes(plan.hostname)));
+ const before=await fs.readFile(f.file);await api.resumeProvision(f.file,provider,f.io,new AbortController().signal);assert.deepEqual(await fs.readFile(f.file),before);
+});
+test("dns_denial_after_durable_mutation_intent_remains_unknown_and_never_replays",async t=>{
+ const f=await fixture(t),api=await import(modulePath);let creates=0;
+ const provider={...f.provider,createDatabase:async()=>{creates++;throw Error("SETUP_PROVIDER_DNS_READ_REQUIRED");}};
+ assert.deepEqual(await api.provisionNew(plan,f.file,provider,f.io,new AbortController().signal),{state:"unknown",code:"SETUP_OPERATION_UNCONFIRMED"});
+ const before=await fs.readFile(f.file);assert.equal((await api.resumeProvision(f.file,provider,f.io,new AbortController().signal)).state,"unknown");assert.equal(creates,1);assert.deepEqual(await fs.readFile(f.file),before);
+});
+test("prompt_cancellation_without_signal_abort_returns_cancelled_and_preserves_planned_journal",async t=>{
+ const f=await fixture(t),api=await import(modulePath),signal=new AbortController().signal;
+ const result=await api.provisionNew(plan,f.file,{...f.provider,inspect:async()=>{throw Error("SETUP_CANCELLED");}},f.io,signal);
+ assert.deepEqual(result,{state:"cancelled",code:"SETUP_CANCELLED"});assert.equal(signal.aborted,false);assert.equal(f.calls.length,0);assert.equal(JSON.parse(await fs.readFile(f.file,"utf8")).stage,"planned");
+});
 test("inspect_is_one_public_json_result_without_provider_or_token",async t=>{
  const f=await fixture(t),api=await import(modulePath);await api.provisionNew(plan,f.file,f.provider,f.io,new AbortController().signal);
  const before=await fs.readFile(f.file),token=(await fs.readFile(join(f.dir,"new-install","approval-code.txt"),"utf8")).trim(),reports:unknown[]=[];

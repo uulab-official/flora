@@ -284,6 +284,7 @@ See the [installation wizard verification record](docs/development/installation-
 | `PNPM_NOT_VERIFIED` / strict doctor fails | Full pinned `npm exec ... pnpm` prefix and Node/Git versions; never delete the lockfile or bypass TLS |
 | `WORKSPACE_SOURCE_INCOMPLETE` / missing `dist` | Clone the default main branch, then complete install and build |
 | Demo `PRIVATE_STORE_UNSAFE` | Owner-private 0600 database/0700 directories, no shared-writable ancestry or symlinks; canonicalize temporary HOME with realpath. Never delete an existing DB or relax its permissions |
+| Setup `SETUP_PROVIDER_DNS_READ_REQUIRED` | Supply a token limited to DNS Read on the target zone through the CLI's hidden input. The pinned Wrangler OAuth lacks this scope. The token stays in memory for that zone's DNS GET only; blank input stops. Resume the same private journal |
 | GitHub repository missing | App installation scope, organization approval and selected ref/root; refresh after permission changes |
 | `INVALID_RUNNER_CONFIG` | Actual image ID, HTTPS origin, token, allowed JSON fields, 0600 file/0700 parents and no symlinks |
 | Waiting jobs / offline Runner | Awake PC/daemon, presence, Docker socket and 2 GiB free space; a successful `--once` does not establish online status |

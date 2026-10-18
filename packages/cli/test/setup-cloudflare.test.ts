@@ -64,6 +64,39 @@ test("provider_auth_and_response_shapes_fail_closed_without_writes",async t=>{
  }
  assert.equal(f.calls.filter(c=>c.args.includes("create")||c.args.includes("deploy")).length,0);
 });
+test("dns_read_denial_identifies_missing_capability_without_creating_resources",async t=>{
+ const f=await fixture(t),{createWranglerProvider}=await import(path);
+ const provider=createWranglerProvider(f.runtime,f.dir,{...f.deps,fetch:async(url:string,init:RequestInit)=>new URL(url).pathname.endsWith("/dns_records")?new Response("synthetic-provider-secret",{status:403}):f.deps.fetch(url,init)});
+ await assert.rejects(provider.createDatabase(plan,new AbortController().signal),/\bSETUP_PROVIDER_DNS_READ_REQUIRED\b/);
+ assert.equal(f.calls.filter(c=>c.args.includes("create")||c.args.includes("deploy")).length,0);
+});
+test("separate_dns_credential_is_prompted_once_and_used_only_for_matching_zone_dns_get",async t=>{
+ const f=await fixture(t),{createWranglerProvider}=await import(path),secret="synthetic-dns-only-token-1234567890";let prompts=0,denials=0,dnsReads=0;
+ const provider=createWranglerProvider(f.runtime,f.dir,{...f.deps,readDNSCredential:async(scope:{zoneId:string;hostname:string})=>{prompts++;assert.deepEqual(scope,{zoneId:plan.zoneId,hostname:plan.hostname});return secret;},fetch:async(url:string,init:RequestInit)=>{
+  const address=new URL(url),token=new Headers(init.headers).get("Authorization");assert.equal(init.method,"GET");assert.equal(address.origin,"https://api.cloudflare.com");
+  if(address.pathname===`/client/v4/zones/${"c".repeat(32)}`)return Response.json({success:true,result:{id:"c".repeat(32),name:"example.com",account:{id:plan.accountId},status:"active"}});
+  if(address.pathname===`/client/v4/zones/${"c".repeat(32)}/dns_records`){assert.notEqual(token,"Bearer "+secret);return new Response("denied",{status:403});}
+  if(address.pathname===`/client/v4/zones/${plan.zoneId}/dns_records`){if(token==="Bearer synthetic-provider-secret"){denials++;return new Response("denied",{status:403});}assert.equal(token,"Bearer "+secret);dnsReads++;return Response.json({success:true,result:[]});}
+  assert.notEqual(token,"Bearer "+secret);return f.deps.fetch(url,init);
+ }});
+ assert.equal((await provider.inspect(plan,new AbortController().signal)).databaseId,null);
+ await provider.inspect(plan,new AbortController().signal);assert.equal(prompts,1);assert.equal(denials,1);assert.equal(dnsReads,2);
+ await assert.rejects(provider.inspect({...plan,zoneId:"c".repeat(32)},new AbortController().signal),/SETUP_PROVIDER_DNS_READ_REQUIRED/);assert.equal(prompts,1);
+ assert.ok(!JSON.stringify(f.calls).includes(secret));assert.deepEqual(await fs.readdir(f.dir),[]);
+});
+test("invalid_or_rejected_separate_dns_credentials_fail_closed_without_secret_output_or_reprompt",async t=>{
+ for(const [secret,status] of [["",403],["line\nbreak-secret",403],["x".repeat(2049),403],["synthetic-dns-rejected-token-12345",403],["synthetic-dns-expired-token-12345",401]] as const){
+  const f=await fixture(t),{createWranglerProvider}=await import(path);let prompts=0;
+  const provider=createWranglerProvider(f.runtime,f.dir,{...f.deps,readDNSCredential:async()=>{prompts++;return secret;},fetch:async(url:string,init:RequestInit)=>new URL(url).pathname.endsWith("/dns_records")?new Response("synthetic-provider-secret "+secret,{status:new Headers(init.headers).get("Authorization")==="Bearer synthetic-provider-secret"?403:status}):f.deps.fetch(url,init)});
+  for(let attempt=0;attempt<2;attempt++)await assert.rejects(provider.createDatabase(plan,new AbortController().signal),/^Error: SETUP_PROVIDER_DNS_READ_REQUIRED$/);
+  assert.equal(prompts,1);assert.equal(f.calls.filter(c=>c.args.includes("create")||c.args.includes("deploy")).length,0);assert.deepEqual(await fs.readdir(f.dir),[]);
+ }
+});
+test("dns_secret_prompt_ctrl_c_or_eof_remains_cancellation_without_an_aborted_signal",async t=>{
+ const f=await fixture(t),{createWranglerProvider}=await import(path),signal=new AbortController().signal;
+ const provider=createWranglerProvider(f.runtime,f.dir,{...f.deps,readDNSCredential:async()=>{throw Error("SETUP_CANCELLED");},fetch:async(url:string,init:RequestInit)=>new URL(url).pathname.endsWith("/dns_records")?new Response("denied",{status:403}):f.deps.fetch(url,init)});
+ await assert.rejects(provider.createDatabase(plan,signal),/^Error: SETUP_CANCELLED$/);assert.equal(signal.aborted,false);assert.equal(f.calls.filter(c=>c.args.includes("create")).length,0);
+});
 
 test("drift_stops_before_deploy_and_keeps_unrelated_settings",async t=>{
  const f=await fixture(t),api=await import(path),p=api.createWranglerProvider(f.runtime,f.dir,f.deps);

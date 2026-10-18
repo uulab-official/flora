@@ -7,7 +7,7 @@ import {canonicalJson} from "@app-ops/config";
 import {parseJournal,requireSetup,setupOrigin,type SetupJournal,type ResourcePlan,type SetupResult,type ActionReceipt,type ProviderSnapshot} from "./contracts.js";
 import {createJournal,readJournal,readPrivateFile,writePrivateFile,replaceJournal,withSetupLock} from "./private-files.js";
 import {createSetupConfig,createWranglerProvider,type SetupProvider} from "./cloudflare.js";
-import {resolveSetupRuntime} from "./runtime.js";
+import {resolveSetupRuntime,type SetupRuntime} from "./runtime.js";
 import type {SetupIO} from "./terminal.js";
 import type {SetupCommandDeps} from "../setup-command.js";
 const root=fileURLToPath(new URL("../../../../",import.meta.url));
@@ -98,10 +98,15 @@ async function continueInstallation(path:string,provider:SetupProvider,io:SetupI
     await action("setup-remove",async()=>provider.deploy(j.plan,await configFile(path,j),expected,signal),(snapshot,current)=>({...current,stage:"setup-removed",receipts:[...confirmed(current,"setup-remove"),...deploymentReceipts("setup-remove",snapshot,current.plan,database(current))]}));
    }
    io.notice("웹 설치 마법사: "+j.plan.origin+"/onboarding");return {state:"ready",code:"SETUP_CLOSED_OPERATOR_ACKNOWLEDGED"};
-  }catch{
+  }catch(e){
    const current=await readJournal(path);const unknown=current.receipts.some(r=>r.state!=="confirmed");
+   const cancelled=signal.aborted||(e instanceof Error&&e.message==="SETUP_CANCELLED");
+   if(!cancelled&&!unknown&&e instanceof Error&&e.message==="SETUP_PROVIDER_DNS_READ_REQUIRED"){
+    io.notice(`Cloudflare가 ${j.plan.hostname}의 DNS 레코드 조회를 거절했습니다. 현재 인증의 해당 zone DNS 읽기 권한을 확인하세요. hostname 충돌 검증을 생략하거나 권한을 자동 확대하지 않습니다. 인증을 준비한 뒤 같은 설치 원장으로 재개하세요.`);
+    return {state:"needs-operator",code:"SETUP_PROVIDER_DNS_READ_REQUIRED"};
+   }
    io.notice(unknown?"요청 결과 확인이 필요합니다. 같은 변경 요청을 재전송하지 않았습니다. 설치 원장과 provider 자원을 확인하세요.":"준비를 확인하지 못했습니다. Cloudflare 로그인·조회 권한·무료 사용량·DNS/TLS와 고정 소스를 확인한 뒤 같은 원장으로 재개하세요.");
-   return {state:signal.aborted?"cancelled":unknown?"unknown":"needs-operator",code:signal.aborted?"SETUP_CANCELLED":unknown?"SETUP_OPERATION_UNCONFIRMED":"SETUP_PREREQUISITE_UNVERIFIED"};
+   return {state:cancelled?"cancelled":unknown?"unknown":"needs-operator",code:cancelled?"SETUP_CANCELLED":unknown?"SETUP_OPERATION_UNCONFIRMED":"SETUP_PREREQUISITE_UNVERIFIED"};
   }
  });
 }
@@ -119,6 +124,12 @@ export async function connectExisting(io:SetupIO,signal:AbortSignal):Promise<Set
  signal.throwIfAborted();const origin=setupOrigin(await io.readPublic("기존 Flora HTTPS origin"));
  io.notice("기존 로그인으로 이어갑니다: "+origin+"/login?returnTo=%2Fonboarding");return {state:"needs-operator",code:"SETUP_CONTINUE_EXISTING_LOGIN"};
 }
+function interactiveProvider(runtime:SetupRuntime,directory:string,io:SetupIO):SetupProvider{
+ return createWranglerProvider(runtime,directory,{readDNSCredential:async(scope,signal)=>{
+  io.notice(`현재 인증으로 ${scope.hostname}의 DNS 조회가 거절됐습니다. zone ${scope.zoneId}에만 DNS 읽기를 허용한 별도 토큰을 입력하세요. 메모리에서 해당 zone DNS GET에만 사용하며 파일·환경변수·배포 명령에는 전달하지 않습니다. 빈 입력은 안전하게 중단합니다.`);
+  return io.readSecret("별도 DNS 읽기 전용 토큰: ",signal);
+ }});
+}
 export function createProvisionHandlers():Pick<SetupCommandDeps,"newInstall"|"existing"|"resume"|"inspect">{
  return {
   existing:connectExisting,
@@ -128,9 +139,9 @@ export function createProvisionHandlers():Pick<SetupCommandDeps,"newInstall"|"ex
    const accountId=(await io.readPublic("Cloudflare account ID")).trim(),zoneId=(await io.readPublic("도메인 zone ID")).trim(),origin=setupOrigin((await io.readPublic("새 Flora HTTPS origin")).trim()),workerBase=(await io.readPublic("새 Worker 기본 이름 [flora]")).trim()||"flora",databaseBase=(await io.readPublic("새 D1 기본 이름 [flora]")).trim()||"flora",ownerEmail=(await io.readPublic("최초 소유자 이메일")).trim();
    const defaultDirectory=join(await fs.realpath(homedir()),".flora-setup-"+installationId),directory=await io.readPublic("새 private 설치 디렉터리 ["+defaultDirectory+"]")||defaultDirectory;
    const plan:ResourcePlan={installationId,accountId,zoneId,origin,hostname:new URL(origin).hostname,workerName:workerBase+"-"+suffix,databaseName:databaseBase+"-"+suffix,ownerEmail,ownerId:"owner_"+randomUUID(),dbIdentity:randomUUID()};
-   return provisionNew(plan,join(directory,"journal.json"),createWranglerProvider(runtime,directory),io,signal);
+   return provisionNew(plan,join(directory,"journal.json"),interactiveProvider(runtime,directory,io),io,signal);
   },
-  async resume(path,io,signal){const runtime=await resolveSetupRuntime(root);return resumeProvision(path,createWranglerProvider(runtime,dirname(path)),io,signal);},
+  async resume(path,io,signal){const runtime=await resolveSetupRuntime(root);return resumeProvision(path,interactiveProvider(runtime,dirname(path),io),io,signal);},
   async inspect(path){const j=await inspectSetup(path);return {state:"needs-operator",code:"SETUP_LOCAL_INSPECTION",details:{installationId:j.plan.installationId,stage:j.stage,origin:j.plan.origin,workerName:j.plan.workerName,databaseId:j.receipts.find(r=>r.action==="create-db"&&r.state==="confirmed")?.resourceId??null,pendingActions:j.receipts.filter(r=>r.state!=="confirmed").map(r=>r.action)}};},
  };
 }
