@@ -1,3 +1,4 @@
+import {evaluatePublications} from "./onboarding-model.js";
 import {buildRunnerBinding} from "./onboarding-files.js";
 import { createOnboarding } from "./onboarding.js";
 import { createDeploymentDevices } from "./deployment-devices.js";
@@ -121,7 +122,7 @@ function renderAutomation(document, appId, state, detection, origin, operations 
   });
   platformInput.replaceChildren(...options); platformInput.value = draft || policyPlatformValue(state.policy ? policyPlatforms(state.policy) : ["ios", "android"].filter(value => supported.includes(value)));
   const checklist = document.getElementById("automation-checklist"); checklist.replaceChildren();
-  for (const [label, ready] of [["GitHub 커밋 인식", Boolean(detection?.commitSha)], ["체크인한 Flora SDK 설정", detection?.configSource === "flora.config.json" && Boolean(config)], ["이 앱의 PC Runner 온라인", state.runners.some(runner => runner.revokedAt === null && runnerPresence(runner).label === "온라인")], ["GitHub push 자동 OTA 정책", state.policy?.enabled === true], ["Runner 산출물 게시", state.jobs.some(job => detection && job.state === "succeeded" && job.deploymentId && job.detectionId === detection.id && job.commitSha === detection.commitSha && job.runtimeVersion === detection.runtimeVersion && job.channel === state.policy?.channel)]]) checklist.append(element(document, "li", `${ready ? "확인됨" : "준비 필요"} · ${label}`));
+  for (const [label, ready] of [["GitHub 커밋 인식", Boolean(detection?.commitSha)], ["체크인한 Flora SDK 설정", detection?.configSource === "flora.config.json" && Boolean(config)], ["이 앱의 PC Runner 온라인", state.runners.some(runner => runner.revokedAt === null && runnerPresence(runner).label === "온라인")], ["GitHub push 자동 OTA 정책", state.policy?.enabled === true], ["Runner 산출물 게시", Boolean(detection?.updatesEnabled && state.policy && evaluatePublications({appId,commitSha:detection.commitSha,channel:state.policy.channel,runtimeVersion:detection.runtimeVersion,platforms:policyPlatforms(state.policy)},state.jobs,(operations?.deployments??[]).map(deployment=>({appId,deploymentId:deployment.id,deployment}))).status === "published")]]) checklist.append(element(document, "li", `${ready ? "확인됨" : "준비 필요"} · ${label}`));
   checklist.append(element(document, "li", "기기 적용 미검증 · 설치된 바이너리의 네이티브 엔진과 실제 업데이트를 별도로 확인하세요."));
   document.getElementById("runner-config-template").textContent = JSON.stringify({ origin: origin || "https://flora.example.com", token: "REPLACE_WITH_ONE_TIME_RUNNER_ENROLLMENT_TOKEN", dockerImage: "registry.example.com/flora-export@sha256:REPLACE_WITH_VERIFIED_IMAGE_DIGEST", dockerNetwork: "none", resourceProfile: "github-hosted", dependencyPreparation: config?.toolchain?.packageManager?.name === "pnpm" ? "pnpm-registry" : "npm-registry", workDirectory: "/private/runner/scratch/work", recoveryDirectory: "/private/runner/recovery" }, null, 2);
   document.getElementById("runner-scope-note").textContent = `선택 앱 ${appId}에 권한을 등록하세요. 앱 ID는 서버의 등록 권한에 묶이며 설정 파일에 추가하지 않습니다.`;
@@ -455,7 +456,7 @@ export async function startClient(env) {
     isCurrent: () => !closed && Boolean(csrf) && active() && currentRoute.page === "onboarding",
     getSnapshot: () => ({authenticated:!closed && Boolean(csrf),appId:selectedAppId,connection:null,operations:operationsAppId===selectedAppId?operations:null,automation:automationAppId===selectedAppId?automation:null,target:null}),
     refreshData: async (selection,signal) => {if(selection.operations)await loadOperations(signal);if(!signal?.aborted&&selection.automation)await loadAutomation(signal);},
-    setActiveJobPolling: active => {wizardPolling=active;if(!active)stopAutomationPoll();},navigate:path=>navigate(path),expire,
+    setActiveJobPolling: active => {wizardPolling=active;if(!active)stopAutomationPoll();else scheduleAutomationPoll();},navigate:path=>navigate(path),expire,
   });
   let githubExchangeUnknown = false; const runnerEnrollmentUnknown = new Set(); let runnerReceiptId = null;
   let githubEpoch = 0; let githubInstallations = []; let githubRepositories = []; let githubCursor = null; let githubSelection = null; let githubRepositoryPages = 0;
@@ -833,7 +834,7 @@ export async function startClient(env) {
   function stopAutomationPoll() { env.clearTimeout(automationTimer); automationTimer = undefined; detailEpoch++; detailLoading.clear(); }
   function scheduleAutomationPoll() {
     env.clearTimeout(automationTimer); automationTimer = undefined;
-    if (!active() || document.hidden || currentRoute.page !== "runners" || !document.getElementById("automation-editor").open || automationAppId !== selectedAppId || !automation || (!automation.jobs.some(job => ["queued", "leased", "cancel_requested"].includes(job.state)) && !automation.runners.some(runner => runner.revokedAt === null))) return;
+    if (!active() || document.hidden || !(currentRoute.page === "runners" && document.getElementById("automation-editor").open || currentRoute.page === "onboarding" && wizardPolling) || automationAppId !== selectedAppId || !automation || (!automation.jobs.some(job => ["queued", "leased", "cancel_requested"].includes(job.state)) && (currentRoute.page === "onboarding" || !automation.runners.some(runner => runner.revokedAt === null)))) return;
     automationTimer = env.setTimeout(() => { env.clearTimeout(automationTimer); automationTimer = undefined; if (busy || reading) scheduleAutomationPoll(); else void loadAutomation(); }, automation.jobs.some(job => ["queued", "leased", "cancel_requested"].includes(job.state)) ? automationPollDelay : 30000);
   }
   function ciControls() {
@@ -949,7 +950,7 @@ export async function startClient(env) {
         document.getElementById("automation-platform").value = policyPlatforms(result.policy)[0];
         document.getElementById("automation-policy-platforms").value = policyPlatformValue(policyPlatforms(result.policy));
       }
-      automation = result; automationAppId = appId; automationPollDelay = 5000; automationControls();renderRunnerBinding();
+      automation = result; automationAppId = appId; automationPollDelay = 5000; automationControls();renderRunnerBinding();if(currentRoute.page === "onboarding")void onboardingPanel.update();
       document.getElementById("automation-status").textContent = "Runner와 자동 작업 이력을 확인했습니다."; if (currentRoute.page !== "onboarding" && ciAppId !== appId) void loadCI(); return true;
     } catch (error) {
       if (!current()) return false;
@@ -1366,7 +1367,7 @@ export async function startClient(env) {
   env.addEventListener?.("pagehide", () => close());
   env.addEventListener?.("pageshow", event => { if (event.persisted) { close(); env.location.replace("/"); } });
   env.addEventListener?.("focus", () => { if (active() && visibleSummaryPage()) { paintProjects(); void loadProjects(); } });
-  document.addEventListener?.("visibilitychange", () => { if (!active() || !visibleSummaryPage()) { stopProjectsPoll(); return; } paintProjects(); void loadProjects(); });
+  document.addEventListener?.("visibilitychange", () => { if(document.hidden)stopAutomationPoll();if(currentRoute.page === "onboarding"){if(document.hidden)onboardingPanel.leave();else if(active())void onboardingPanel.enter(selectedAppId);} if (!active() || !visibleSummaryPage()) { stopProjectsPoll(); return; } paintProjects(); void loadProjects(); });
   async function initialize() {
     if (closed || reading) return;
     reading = true; controls();

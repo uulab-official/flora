@@ -18,3 +18,22 @@ export function deriveOnboardingState(input) {
     step("runner",online?"verified":"needed",online?"이 앱 하나에 연결된 Runner의 현재 온라인 상태를 확인했습니다.":"앱 전용 Runner를 등록하고 PC에서 실행하세요."),
     step("publication","needed","검증할 커밋과 모든 선택 플랫폼의 실제 배포를 확인하세요.")]};
 }
+
+export function freezePublicationTarget(input){
+ const keys=["appId","commitSha","channel","runtimeVersion","platforms"];
+ if(!input||typeof input!=="object"||Array.isArray(input)||Object.keys(input).length!==keys.length||keys.some(k=>!Object.hasOwn(input,k))||["appId","commitSha","channel","runtimeVersion"].some(k=>typeof input[k]!=="string")||!/^[a-z][a-z0-9_-]{2,95}$/.test(input.appId??"")||!/^[a-f0-9]{40}$/.test(input.commitSha??"")||!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(input.channel??"")||typeof input.runtimeVersion!=="string"||!input.runtimeVersion||new TextEncoder().encode(input.runtimeVersion).length>128||/[\u0000-\u001f\u007f]/.test(input.runtimeVersion)||!Array.isArray(input.platforms)||input.platforms.length<1||input.platforms.length>2||new Set(input.platforms).size!==input.platforms.length||input.platforms.some(p=>!["ios","android"].includes(p)))throw Error("ONBOARDING_TARGET_INVALID");
+ return Object.freeze({appId:input.appId,commitSha:input.commitSha,channel:input.channel,runtimeVersion:input.runtimeVersion,platforms:Object.freeze([...input.platforms])});
+}
+export function evaluatePublications(input,jobs,publications){
+ const target=freezePublicationTarget(input),matches=(value,platform)=>value?.appId===target.appId&&value.commitSha===target.commitSha&&value.channel===target.channel&&value.runtimeVersion===target.runtimeVersion&&value.platform===platform;
+ const platforms=target.platforms.map(platform=>{
+  const candidates=jobs.filter(job=>matches(job,platform)&&job.state==="succeeded"&&typeof job.id==="string"&&/^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(job.deploymentId??""));
+  for(const job of candidates){
+   const publication=publications.find(p=>p.appId===target.appId&&p.deploymentId===job.deploymentId&&p.deployment?.id===job.deploymentId&&matches({appId:p.appId,...p.deployment},platform));
+   if(publication)return {platform,jobId:job.id,deploymentId:job.deploymentId,verified:true};
+  }
+  return {platform,jobId:candidates[0]?.id??null,deploymentId:candidates[0]?.deploymentId??null,verified:false};
+ });
+ const count=platforms.filter(p=>p.verified).length;
+ return {status:count===platforms.length?"published":count?"partial":"waiting",platforms};
+}

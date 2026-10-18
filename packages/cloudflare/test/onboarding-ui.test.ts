@@ -70,3 +70,18 @@ test("github_navigation_stores_only_the_fixed_public_origin_hint",async()=>{
  link.listeners.get("click")?.({preventDefault(){}});
  assert.deepEqual(writes,[["flora:onboarding-origin","onboarding"]]);panel.leave();
 });
+test("outside_twenty_uses_one_publication_lookup_and_idle_has_no_extra_poller",async()=>{
+ const {createOnboarding}=await import(wizard),doc=document(),calls:string[]=[],polls:boolean[]=[];
+ const id="11111111-1111-4111-8111-111111111111",sha="a".repeat(40);
+ const config={runtimeVersion:"native-1",platforms:["ios"],updatesUrl:"https://flora.test/updates/app_a"};
+ let snapshot={authenticated:true,appId:"app_a",connection:null,operations:{connection:{appId:"app_a"},detections:[{appId:"app_a",commitSha:sha,updatesEnabled:true,automationConfig:config}],assets:[],deployments:[]},automation:{policy:{channel:"preview",platforms:["ios"],enabled:true},runners:[],jobs:[{id:"automation_ios",appId:"app_a",commitSha:sha,runtimeVersion:"native-1",channel:"preview",platform:"ios",state:"succeeded",deploymentId:id}]},target:null};
+ const panel=createOnboarding({document:doc,location:{origin:"https://flora.test"}},{api:async(path:string)=>{calls.push(path);return path==="/api/github/connection"?{configured:true}:{appId:"app_a",deploymentId:id,deployment:{id,platform:"ios",channel:"preview",runtimeVersion:"native-1",commitSha:sha,createdAt:1}};},isCurrent:()=>true,getSnapshot:()=>snapshot,refreshData:async()=>{},setActiveJobPolling:(active:boolean)=>polls.push(active),navigate:()=>{}});
+ await panel.enter("app_a");
+ await doc.getElementById("onboarding-steps").children[4]!.listeners.get("click")?.();
+ const descendants=(n:Node):Node[]=>[n,...n.children.flatMap(descendants)];
+ const pin=descendants(doc.getElementById("onboarding-content")).find(n=>n.attrs.get("id")==="onboarding-pin-target");assert.ok(pin);
+ await pin.listeners.get("click")?.();await panel.update();await panel.update();
+ assert.equal(calls.filter(p=>p.endsWith("/publication")).length,1);assert.ok(doc.getElementById("onboarding-content").text.includes("게시 확인"));assert.ok(!polls.includes(true));
+ snapshot={...snapshot,operations:{...snapshot.operations,detections:[{...snapshot.operations.detections[0]!,commitSha:"b".repeat(40)}]}};
+ await panel.update();assert.ok(doc.getElementById("onboarding-content").text.includes(sha.slice(0,12)));panel.leave();
+});

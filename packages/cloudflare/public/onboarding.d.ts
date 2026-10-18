@@ -5,4 +5,4 @@ export interface OnboardingContext {
  refreshData(selection:{operations:boolean;automation:boolean},signal?:AbortSignal):Promise<void>;
  setActiveJobPolling(active:boolean):void;navigate(path:string):void;expire?():void;
 }
-export function createOnboarding(env:{document:Document},context:OnboardingContext):{enter(appId:string|null):Promise<void>;leave():void;expire():void};
+export function createOnboarding(env:{document:Document},context:OnboardingContext):{enter(appId:string|null):Promise<void>;leave():void;expire():void;update():Promise<void>};
