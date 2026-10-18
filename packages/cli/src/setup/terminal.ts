@@ -3,6 +3,7 @@ import type { Writable } from "node:stream";
 import { createInterface } from "node:readline/promises";
 import type { SetupResult } from "./contracts.js";
 export interface SetupIO {
+  notice(message:string):void;
   choose(label:string,choices:readonly string[]):Promise<string>;
   readPublic(label:string):Promise<string>;
   readSecret(label:string,signal:AbortSignal):Promise<string>;
@@ -47,6 +48,7 @@ export function createSetupIO(output:Writable=process.stdout):SetupIO{
   };
   return {
     readPublic,
+    notice:message=>{output.write(message+"\n");},
     async choose(label,choices){const selected=await readPublic(label+" ["+choices.join(" / ")+"]");if(!choices.includes(selected))throw new Error("SETUP_CHOICE_INVALID");return selected;},
     readSecret:(label,signal)=>readSecret(process.stdin,output,label,signal),
     confirm:async summary=>(await readPublic(summary+" [yes/no]"))==="yes",

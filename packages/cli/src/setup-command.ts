@@ -1,3 +1,4 @@
+import {createProvisionHandlers} from "./setup/provision.js";
 import { isAbsolute } from "node:path";
 import type { SetupResult } from "./setup/contracts.js";
 import { createSetupIO, type SetupIO } from "./setup/terminal.js";
@@ -9,7 +10,7 @@ export interface SetupCommandDeps {
   inspect(path:string,io:SetupIO,signal:AbortSignal):Promise<SetupResult>;
 }
 const pending=async():Promise<SetupResult>=>({state:"needs-operator",code:"SETUP_HANDLER_NOT_CONFIGURED"});
-export async function runSetupCommand(argv:readonly string[],io:SetupIO=createSetupIO(),deps:SetupCommandDeps={newInstall:pending,existing:pending,runner:pending,resume:pending,inspect:pending}):Promise<number>{
+export async function runSetupCommand(argv:readonly string[],io:SetupIO=createSetupIO(),deps:SetupCommandDeps={...createProvisionHandlers(),runner:pending}):Promise<number>{
   const controller=new AbortController(),cancel=()=>controller.abort();process.once("SIGINT",cancel);
   try{
     let result:SetupResult;

@@ -3,7 +3,7 @@ export type SetupMode = "new" | "existing" | "runner";
 export type ProvisionStage = "planned" | "database-created" | "schema-ready" | "server-locked" | "https-ready" | "setup-issued" | "setup-deployed" | "operator-confirmed" | "setup-removed";
 export type ActionState = "pending" | "confirmed" | "unknown";
 export interface PublicRunnerBinding { schemaVersion: 1; origin: string; appId: string; runnerId: string }
-export interface SetupResult { state: "ready" | "needs-operator" | "unknown" | "cancelled"; code: string }
+export interface SetupResult { state: "ready" | "needs-operator" | "unknown" | "cancelled"; code: string; details?:{installationId:string;stage:ProvisionStage;origin:string;workerName:string;databaseId:string|null;pendingActions:string[]} }
 export interface ResourcePlan {
   installationId: string; accountId: string; workerName: string; databaseName: string;
   hostname: string; zoneId: string; origin: string; ownerEmail: string; ownerId: string; dbIdentity: string;
