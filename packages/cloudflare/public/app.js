@@ -1,3 +1,4 @@
+import { createOnboarding } from "./onboarding.js";
 import { createDeploymentDevices } from "./deployment-devices.js";
 import { createAutoRollback } from "./auto-rollback.js";
 import { ADMIN_PAGES, adminPath, parseAdminPath } from "./admin-routes.js";
@@ -447,6 +448,14 @@ export async function startClient(env) {
   const nativePanel = createNativePanel(env, { appId: () => selectedAppId, appName: () => data?.selectedApplication?.name, commitSha: () => operationsAppId === selectedAppId ? currentDetection(operations)?.commitSha : null, active, ready: () => !closed && Boolean(csrf) && !busy && !reading && active(), api, expire });
   const deploymentDevices = createDeploymentDevices(env, { route: () => currentRoute, active: () => !closed && Boolean(csrf) && active(), api, expire });
   const autoRollback = createAutoRollback(env, { route: () => currentRoute, active: () => !closed && Boolean(csrf) && active(), api, expire });
+  let wizardPolling = false;
+  const onboardingPanel = createOnboarding(env, {
+    api: (path,body,signal) => api(path,body,csrf,false,signal),
+    isCurrent: () => !closed && Boolean(csrf) && active() && currentRoute.page === "onboarding",
+    getSnapshot: () => ({authenticated:!closed && Boolean(csrf),appId:selectedAppId,connection:null,operations:operationsAppId===selectedAppId?operations:null,automation:automationAppId===selectedAppId?automation:null,target:null}),
+    refreshData: async (selection,signal) => {if(selection.operations)await loadOperations(signal);if(!signal?.aborted&&selection.automation)await loadAutomation(signal);},
+    setActiveJobPolling: active => {wizardPolling=active;if(!active)stopAutomationPoll();},navigate:path=>navigate(path),expire,
+  });
   let githubEpoch = 0; let githubInstallations = []; let githubRepositories = []; let githubCursor = null; let githubSelection = null; let githubRepositoryPages = 0;
   // Clear the one-use authorization callback before any async work or private rendering.
   const callbackHash = String(env.location?.hash ?? "");
@@ -491,7 +500,7 @@ export async function startClient(env) {
   }
   function erase(preserveProjects = false) {
     stopProjectsPoll(); projectEpoch++; if (!preserveProjects) { projectSummary = null; projectStatus = "loading"; projectLastAttempt = -Infinity; node("workspace-status")?.replaceChildren(); } projectLoading = false; node("project-summary-status")?.replaceChildren();
-    credentialsPanel.clear(); nativePanel.clear(); deploymentDevices.clear(); autoRollback.clear();
+    credentialsPanel.clear(); nativePanel.clear(); deploymentDevices.clear(); autoRollback.clear(); onboardingPanel.leave();
     ciBinding = null; ciAppId = null; ciKnown = false; ciIdentity = null; ciEpoch++; ciConflict = false; clearCI(document);
     githubCallback = null; githubEpoch++; githubInstallations = []; githubRepositories = []; githubCursor = null; githubSelection = null; githubRepositoryPages = 0;
     for (const id of ["github-installation-select", "github-repository-select", "github-managed-status", "github-repository-scope", "github-repository-count", "signing-key-status"]) node(id)?.replaceChildren();
@@ -522,10 +531,10 @@ export async function startClient(env) {
     // This one-shot local deadline clears the screen; it never fetches or polls.
     expiryTimer = env.setTimeout(() => { if (now() >= expiresAt) expire(); else armExpiry(); }, remaining);
   }
-  async function api(url, body, csrfValue = csrf, raw = false) {
+  async function api(url, body, csrfValue = csrf, raw = false, signal) {
     const controller = new AbortController(); requests.add(controller);
     try {
-      const response = await env.fetch(url, { method: body === undefined ? "GET" : "POST", credentials: "same-origin", cache: "no-store", headers: body === undefined ? {} : { "Content-Type": raw ? "application/octet-stream" : "application/json", "X-Flora-CSRF": csrfValue }, ...(body === undefined ? {} : { body }), signal: controller.signal });
+      const response = await env.fetch(url, { method: body === undefined ? "GET" : "POST", credentials: "same-origin", cache: "no-store", headers: body === undefined ? {} : { "Content-Type": raw ? "application/octet-stream" : "application/json", "X-Flora-CSRF": csrfValue }, ...(body === undefined ? {} : { body }), signal: signal ? AbortSignal.any([controller.signal,signal]) : controller.signal });
       if (!response.ok) {
         let code = "";
         try { const payload = await response.json(); const value = payload?.error ?? payload?.code; if (["CONFLICT", "APP_CONFLICT", "IDEMPOTENCY_CONFLICT", "CAPACITY", "CAPACITY_EXCEEDED", "BUSY", "GITHUB_ACCESS_DENIED", "GITHUB_REPOSITORY_UNAVAILABLE", "GITHUB_REF_NOT_FOUND", "GITHUB_APP_UNSUPPORTED", "D1_DAILY_READ_LIMIT", "D1_DAILY_WRITE_LIMIT", "D1_ACCOUNT_STORAGE_LIMIT", "D1_DATABASE_SIZE_LIMIT", "D1_OVERLOADED"].includes(value)) code = value; } catch { /* Do not display raw server or proxy text. */ }
@@ -586,7 +595,7 @@ export async function startClient(env) {
     node("view-title").textContent = meta.title; node("view-label").textContent = appReady ? `${safe(data.selectedApplication.name)} / ${meta.title}` : meta.title; node("view-description").textContent = meta.description;
     for (const [page, entry] of Object.entries(ADMIN_PAGES)) node(entry.section).hidden = closed || page !== currentRoute.page || Boolean(currentRoute.appId && !appReady);
     node("route-empty").hidden = closed || !currentRoute.appId || appReady || reading;
-    node("application-select").value = currentRoute.appId ?? "";
+    node("application-select").value = currentRoute.page === "onboarding" ? selectedAppId ?? "" : currentRoute.appId ?? "";
     node("sidebar-app-name").textContent = appReady ? safe(data.selectedApplication.name) : "프로젝트를 선택하세요";
     node("sidebar-app-nav").hidden = !currentRoute.appId || !appReady;
     node("project-register-open").hidden = currentRoute.page !== "projects";
@@ -594,10 +603,10 @@ export async function startClient(env) {
     node("view-apps").hidden = currentRoute.page !== "source"; node("view-sources").hidden = currentRoute.page !== "source";
     node("view-history").hidden = currentRoute.page !== "activity";
     node("empty").hidden = currentRoute.page !== "source" || Boolean(data?.selected) || !appReady;
-    for (const [id, page] of Object.entries({ "nav-apps": "projects", "nav-account": "settings", "nav-overview": "overview", "nav-sources": "source", "nav-updates": "ota", "nav-runners": "runners", "nav-builds": "builds", "nav-credentials": "credentials", "nav-app-settings": "app-settings", "nav-history": "activity" })) {
+    for (const [id, page] of Object.entries({ "nav-onboarding": "onboarding", "nav-apps": "projects", "nav-account": "settings", "nav-overview": "overview", "nav-sources": "source", "nav-updates": "ota", "nav-runners": "runners", "nav-builds": "builds", "nav-credentials": "credentials", "nav-app-settings": "app-settings", "nav-history": "activity" })) {
       const item = node(id), path = adminPath(page, currentRoute.appId ?? selectedAppId);
       item.setAttribute("aria-current", (currentRoute.page === page || page === "ota" && currentRoute.page === "ota-detail") ? "page" : "false"); item.className = "nav-item" + ((currentRoute.page === page || page === "ota" && currentRoute.page === "ota-detail") ? " active" : "");
-      item.disabled = closed || !csrf || !path || Boolean(!["projects", "settings"].includes(page) && !appReady);
+      item.disabled = closed || !csrf || !path || Boolean(!["projects", "settings", "onboarding"].includes(page) && !appReady);
       if (path) item.setAttribute("data-admin-path", path);
     }
     for (const link of document.querySelectorAll?.("a[data-admin-page]") ?? []) { const path = adminPath(link.getAttribute("data-admin-page"), currentRoute.appId ?? selectedAppId); if (path) link.setAttribute("href", path); }
@@ -608,7 +617,8 @@ export async function startClient(env) {
     const page = currentRoute.page, app = currentRoute.appId;
     if (app && data.selectedApplication?.id !== app) return;
     const current = () => active() && epoch === routeEpoch && currentRoute.page === page && currentRoute.appId === app;
-    if (page === "projects") await loadProjects();
+    if (page === "onboarding") await onboardingPanel.enter(selectedAppId);
+    else if (page === "projects") await loadProjects();
     else if (page === "register") { node("application-registration").open = true; await loadGitHubConnection(); }
     else if (page === "credentials") { node("credential-editor").open = true; await credentialsPanel.load(); }
     else if (page === "builds") { if (operationsAppId !== app) await loadOperations(); if (current()) { node("native-editor").open = true; await nativePanel.load(); } }
@@ -624,7 +634,7 @@ export async function startClient(env) {
     if (!route) return false;
     const epoch = ++routeEpoch, previous = currentRoute;
     if (previous.page !== route.page || previous.appId !== route.appId) { projectEpoch++; projectLoading = false; stopProjectsPoll(); credentialsPanel.clear(); nativePanel.clear(); hideRunnerToken(); stopAutomationPoll(); node("operations-editor").open = false; node("automation-editor").open = false; }
-    deploymentDevices.leave(); autoRollback.leave();
+    deploymentDevices.leave(); autoRollback.leave(); onboardingPanel.leave();
     currentRoute = route; currentView = ADMIN_PAGES[route.page].legacy;
     if (!options.fromHistory) { const method = options.replace ? "replaceState" : "pushState"; if (env.location?.pathname !== route.path) env.history?.[method]?.({ flora: true }, "", route.path); }
     sidebar(false);
@@ -787,6 +797,10 @@ export async function startClient(env) {
     if (!active()) return false;
     if (!id) return navigate("projects");
     if (!data?.applications?.some(app => app.id === id)) return false;
+    if(currentRoute.page==="onboarding"){
+      generation++; onboardingPanel.leave(); operations=null;operationsAppId=null;automation=null;automationAppId=null;selectedAppId=id;
+      if(!await refresh())return false;await onboardingPanel.enter(id);return true;
+    }
     return navigate(currentRoute.page === "ota-detail" ? "ota" : currentRoute.appId ? currentRoute.page : "overview", id);
   }
   async function applicationWrite(url, body, registration = false) {
@@ -855,7 +869,7 @@ export async function startClient(env) {
     const current = () => !!active() && selectedAppId === appId && generation === version && ciEpoch === epoch;
     node("ci-status").textContent = "GitHub 실행 권한을 확인하는 중…";
     try {
-      if (operationsAppId !== appId) await loadOperations(); if (!current()) return false;
+      if (operationsAppId !== appId) await loadOperations(signal); if (!current()) return false;
       const result = await api("/api/apps/" + encodeURIComponent(appId) + "/automation/ci" + (resolve ? "?resolve=1" : "")); if (!current()) return false;
       if (!result || !("binding" in result) || resolve && !result.identity) throw new Error("INVALID_CI");
       const hydrate = explicit || ciAppId !== appId || !ciConflict && ciBinding?.version !== result.binding?.version;
@@ -918,14 +932,14 @@ export async function startClient(env) {
     } catch (error) { if (current()) { if (error.status === 401) expire(); else target.textContent = "작업별 이력을 확인하지 못했습니다. 닫았다가 다시 열어 확인하세요."; } }
     finally { if (detailEpoch === epoch) detailLoading.delete(jobId); }
   }
-  async function loadAutomation() {
+  async function loadAutomation(signal) {
     const appId = selectedAppId; const version = generation; const loadKey = appId + ":" + version; if (!appId || !active() || automationLoading === loadKey) return false;
     automationLoading = loadKey;
     const current = () => !!active() && version === generation && selectedAppId === appId;
     document.getElementById("automation-status").textContent = "Runner와 자동 작업을 확인하는 중…";
     try {
-      if (operationsAppId !== appId) await loadOperations(); if (!current()) return false;
-      const result = await api("/api/apps/" + encodeURIComponent(appId) + "/automation"); if (!current()) return false;
+      if (operationsAppId !== appId) await loadOperations(signal); if (!current()) return false;
+      const result = await api("/api/apps/" + encodeURIComponent(appId) + "/automation",undefined,csrf,false,signal); if (!current()) return false;
       renderAutomation(document, appId, result, operationsAppId === appId ? currentDetection(operations) : null, env.location?.origin, operationsAppId === appId ? operations : null);
       if (result.policy && (automationAppId !== appId || automation?.policy?.version !== result.policy.version)) {
         document.getElementById("automation-channel").value = result.policy.channel;
@@ -933,7 +947,7 @@ export async function startClient(env) {
         document.getElementById("automation-policy-platforms").value = policyPlatformValue(policyPlatforms(result.policy));
       }
       automation = result; automationAppId = appId; automationPollDelay = 5000; automationControls();
-      document.getElementById("automation-status").textContent = "Runner와 자동 작업 이력을 확인했습니다."; if (ciAppId !== appId) void loadCI(); return true;
+      document.getElementById("automation-status").textContent = "Runner와 자동 작업 이력을 확인했습니다."; if (currentRoute.page !== "onboarding" && ciAppId !== appId) void loadCI(); return true;
     } catch (error) {
       if (!current()) return false;
       if (error.status === 401) { expire(); return false; }
@@ -1091,12 +1105,12 @@ export async function startClient(env) {
     if (currentRoute.page === "overview") { await loadProjects(); if (current()) paintProjects(); return; }
     if (await loadOperations() && current()) await loadAutomation();
   }
-  async function loadOperations() {
+  async function loadOperations(signal) {
     const appId = selectedAppId; const version = generation;
     if (!appId || !active()) return;
     document.getElementById("operations-status").textContent = "GitHub 연결과 OTA 이력을 확인하는 중…";
     try {
-      const received = await api("/api/apps/" + encodeURIComponent(appId) + "/operations");
+      const received = await api("/api/apps/" + encodeURIComponent(appId) + "/operations",undefined,csrf,false,signal);
       const result = {...received, expectedRootDirectory: data?.selectedApplication?.rootDirectory};
       if (!active() || version !== generation || selectedAppId !== appId) return;
       renderOperations(document, appId, result); if (currentDetection(operations)?.id !== currentDetection(result)?.id) automationRequestKey = null; operations = result; operationsAppId = appId;

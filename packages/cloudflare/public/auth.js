@@ -72,7 +72,7 @@ export function startAuth(env, options = {}) {
       const session = await response.json();
       if (closed || version !== generation) return;
       if (typeof session.csrfToken !== "string" || !session.csrfToken || !Number.isSafeInteger(session.expiresAt) || session.expiresAt <= (env.now?.() ?? Date.now())) throw new Error("INVALID_SESSION");
-      clear(true); closed = true; env.location.replace(returnPath);
+      clear(true); closed = true; env.location.replace(purpose === "enroll" ? "/onboarding" : returnPath);
     } catch {
       if (!closed && version === generation) status(setup ? "등록·복구 완료 여부를 확인하지 못했습니다. 새 비밀번호로 로그인을 먼저 확인해 주세요. 이미 사용된 승인 코드는 다시 사용할 수 없습니다." : "인증을 완료하지 못했습니다. 요청이 중단되었을 수 있으니 다시 입력해 주세요.", true);
     } finally { body = ""; if (version === generation) { busy = false; pending = null; controls(); } }
