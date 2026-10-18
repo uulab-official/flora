@@ -1,6 +1,6 @@
 # 처음 실행하기
 
-[README](../README.md) · [English quick start](../README.en.md#try-the-local-foundation) · [CLI·데이터 계약 상세](development/local-foundation.ko.md)
+[README](../README.md) · [English quick start](../README.en.md#follow-the-path-to-your-first-ota) · [CLI·데이터 계약 상세](development/local-foundation.ko.md)
 
 > **실제 앱을 연결하려면 [README의 설치 → GitHub 연결 → PC Runner → 첫 OTA 절차](../README.md)를 먼저 따르세요.** 아래는 계정·실제 앱 없이 실행하는 Foundation 체험이며 실제 OTA를 게시하지 않습니다.
 

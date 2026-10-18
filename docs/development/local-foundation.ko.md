@@ -1,6 +1,6 @@
 # 로컬 Foundation 실행
 
-[처음 실행하기](../getting-started.ko.md) · [English quick start](../../README.en.md#try-the-local-foundation)
+[처음 실행하기](../getting-started.ko.md) · [English quick start](../../README.en.md#follow-the-path-to-your-first-ota)
 
 처음 받았다면 시작 가이드의 준비·예상 결과·문제 해결 순서를 따릅니다. 이 문서는 CLI와 데이터·보안 계약을 더 자세히 설명하는 reference입니다.
 
