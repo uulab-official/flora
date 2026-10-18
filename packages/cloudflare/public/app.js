@@ -1,3 +1,4 @@
+import {buildRunnerBinding} from "./onboarding-files.js";
 import { createOnboarding } from "./onboarding.js";
 import { createDeploymentDevices } from "./deployment-devices.js";
 import { createAutoRollback } from "./auto-rollback.js";
@@ -456,6 +457,7 @@ export async function startClient(env) {
     refreshData: async (selection,signal) => {if(selection.operations)await loadOperations(signal);if(!signal?.aborted&&selection.automation)await loadAutomation(signal);},
     setActiveJobPolling: active => {wizardPolling=active;if(!active)stopAutomationPoll();},navigate:path=>navigate(path),expire,
   });
+  let githubExchangeUnknown = false; const runnerEnrollmentUnknown = new Set(); let runnerReceiptId = null;
   let githubEpoch = 0; let githubInstallations = []; let githubRepositories = []; let githubCursor = null; let githubSelection = null; let githubRepositoryPages = 0;
   // Clear the one-use authorization callback before any async work or private rendering.
   const callbackHash = String(env.location?.hash ?? "");
@@ -473,6 +475,7 @@ export async function startClient(env) {
     operationControls();
     node("github-open").disabled = closed || !csrf;
     for (const id of ["github-managed-refresh", "github-manifest-start", "github-repository-use", "github-repositories-more"]) node(id).disabled = closed || !csrf || busy || reading;
+    if (githubExchangeUnknown) node("github-manifest-start").disabled = true;
     node("signing-key-create").disabled = closed || !csrf || busy || reading || !selectedAppId;
     for (const id of ["application-register", "settings-save"]) node(id).disabled = closed || !csrf || busy || reading;
     node("settings-json").disabled = closed || busy || reading || !data?.selectedApplication;
@@ -819,7 +822,7 @@ export async function startClient(env) {
   function automationWrite(work) { const epoch = routeEpoch; return operationWrite((id, current) => work(id, () => current() && epoch === routeEpoch), "automation-status"); }
   function automationControls() {
     const ready = !closed && !busy && !reading && Boolean(selectedAppId);
-    for (const id of ["automation-refresh", "runner-enroll"]) { const input = document.getElementById(id); if (input) input.disabled = !ready; }
+    for (const id of ["automation-refresh", "runner-enroll"]) { const input = document.getElementById(id); if (input) input.disabled = !ready || id === "runner-enroll" && runnerEnrollmentUnknown.has(selectedAppId); }
     const detection = operationsAppId === selectedAppId ? currentDetection(operations) : null;
     const runners = automationAppId === selectedAppId ? automation?.runners ?? [] : [];
     const enabled = ready && detection?.updatesEnabled && detection.configSource === "flora.config.json" && detection.automationConfig && runners.some(runner => runner.revokedAt === null && runner.appIds.includes(selectedAppId));
@@ -869,7 +872,7 @@ export async function startClient(env) {
     const current = () => !!active() && selectedAppId === appId && generation === version && ciEpoch === epoch;
     node("ci-status").textContent = "GitHub 실행 권한을 확인하는 중…";
     try {
-      if (operationsAppId !== appId) await loadOperations(signal); if (!current()) return false;
+      if (operationsAppId !== appId) await loadOperations(); if (!current()) return false;
       const result = await api("/api/apps/" + encodeURIComponent(appId) + "/automation/ci" + (resolve ? "?resolve=1" : "")); if (!current()) return false;
       if (!result || !("binding" in result) || resolve && !result.identity) throw new Error("INVALID_CI");
       const hydrate = explicit || ciAppId !== appId || !ciConflict && ciBinding?.version !== result.binding?.version;
@@ -946,7 +949,7 @@ export async function startClient(env) {
         document.getElementById("automation-platform").value = policyPlatforms(result.policy)[0];
         document.getElementById("automation-policy-platforms").value = policyPlatformValue(policyPlatforms(result.policy));
       }
-      automation = result; automationAppId = appId; automationPollDelay = 5000; automationControls();
+      automation = result; automationAppId = appId; automationPollDelay = 5000; automationControls();renderRunnerBinding();
       document.getElementById("automation-status").textContent = "Runner와 자동 작업 이력을 확인했습니다."; if (currentRoute.page !== "onboarding" && ciAppId !== appId) void loadCI(); return true;
     } catch (error) {
       if (!current()) return false;
@@ -979,19 +982,29 @@ export async function startClient(env) {
     return automationWrite(async (id, current) => { await api("/api/apps/" + encodeURIComponent(id) + "/automation/jobs/" + encodeURIComponent(jobId) + "/cancel", "{}"); if (current()) await loadAutomation(); });
   }
   async function enrollRunner() {
-    const name = document.getElementById("runner-name").value.trim(); if (!name) return;
+    const name = document.getElementById("runner-name").value.trim(); if (!name || runnerEnrollmentUnknown.has(selectedAppId)) return;
     return automationWrite(async (id, current) => {
-      const result = await api("/api/runners", JSON.stringify({ name, appIds: [id] })); if (!current()) return;
+      runnerEnrollmentUnknown.add(id);
+      let result;
+      try{result = await api("/api/runners", JSON.stringify({ name, appIds: [id] }));}
+      catch(error){if(error.status===401)throw error;if(current()){await loadAutomation();return "Runner 등록 결과 확인 필요 · 목록에서 새 Runner를 확인하세요. 토큰을 잃었다면 정확한 Runner만 폐기한 뒤 다시 등록하세요.";}return;}
+      if (!current()) return;
       if (!Array.isArray(result?.runner?.appIds) || result.runner.appIds.length !== 1 || result.runner.appIds[0] !== id || typeof result.token !== "string" || !result.token) throw new Error("INVALID_RUNNER");
-      runnerToken = result.token; runnerTokenAppId = id;
+      runnerToken = result.token; runnerTokenAppId = id; runnerReceiptId=result.runner.id;runnerEnrollmentUnknown.delete(id);
       document.getElementById("runner-token").textContent = runnerToken; document.getElementById("runner-token-panel").hidden = false; await loadAutomation();
     });
   }
+  function renderRunnerBinding(){
+    const link=node("runner-binding-download");if(!link)return;link.hidden=true;link.removeAttribute("href");
+    if(!runnerToken||runnerTokenAppId!==selectedAppId||automationAppId!==selectedAppId||!runnerToken.startsWith(runnerReceiptId+"."))return;
+    const runner=automation?.runners.find(r=>r.id===runnerReceiptId);if(!runner)return;
+    try{const binding=buildRunnerBinding(env.location?.origin,selectedAppId,runner);link.setAttribute("href","data:application/json;charset=utf-8,"+encodeURIComponent(JSON.stringify(binding,null,2)+"\n"));link.setAttribute("download","flora.runner-binding.json");link.hidden=false;}catch{}
+  }
   async function revokeRunner(runnerId) {
     if (automationAppId !== selectedAppId || !automation?.runners.some(runner => runner.id === runnerId && runner.revokedAt === null)) return;
-    return automationWrite(async (id, current) => { await api("/api/runners/" + encodeURIComponent(runnerId) + "/revoke", "{}"); if (!current()) return; runnerToken = ""; runnerTokenAppId = null; document.getElementById("runner-token").replaceChildren(); document.getElementById("runner-token-panel").hidden = true; await loadAutomation(); });
+    return automationWrite(async (id, current) => { await api("/api/runners/" + encodeURIComponent(runnerId) + "/revoke", "{}"); if (!current()) return; runnerEnrollmentUnknown.delete(id);runnerToken = ""; runnerTokenAppId = null; document.getElementById("runner-token").replaceChildren(); document.getElementById("runner-token-panel").hidden = true; await loadAutomation(); });
   }
-  function hideRunnerToken() { runnerToken = ""; runnerTokenAppId = null; document.getElementById("runner-token").replaceChildren(); document.getElementById("runner-token-panel").hidden = true; automationControls(); }
+  function hideRunnerToken() { runnerReceiptId=null;node("runner-binding-download")?.removeAttribute("href");if(node("runner-binding-download"))node("runner-binding-download").hidden=true;runnerToken = ""; runnerTokenAppId = null; document.getElementById("runner-token").replaceChildren(); document.getElementById("runner-token-panel").hidden = true; automationControls(); }
   async function copyRunnerToken() {
     if (!active() || !runnerToken || runnerTokenAppId !== selectedAppId) return;
     const version = generation;
@@ -1150,6 +1163,7 @@ export async function startClient(env) {
     try {
       const connection = await api("/api/github/connection"); if (!githubCurrent(epoch)) return;
       if (typeof connection?.configured !== "boolean") throw new Error("INVALID_CONNECTION");
+      if (githubExchangeUnknown && !connection.configured) {node("github-manifest-form").hidden=true;node("github-manifest-start").disabled=true;node("github-managed-status").textContent="GitHub 연결 완료 여부 확인 필요 · 기존 App 설정을 확인하세요. 변환 코드는 재전송하지 않습니다.";return;}
       node("github-manifest-form").hidden = connection.configured; node("github-install-link").hidden = true; node("github-repository-picker").hidden = true;
       if (!connection.configured) { node("github-managed-status").textContent = "GitHub 연결 앱을 먼저 생성하세요. 인증 키는 Flora 서버가 관리합니다."; return; }
       if (connection.installationUrl) { const url = githubURL(connection.installationUrl, true); node("github-install-link").setAttribute("href", url.href); node("github-install-link").hidden = false; }
@@ -1211,7 +1225,7 @@ export async function startClient(env) {
     node("github-managed-status").textContent = fullName + " · 프로젝트 등록 시 GitHub 소스도 연결합니다.";
   }
   async function startGitHubManifest() {
-    if (!active() || !csrf || busy || reading) return;
+    if (githubExchangeUnknown || !active() || !csrf || busy || reading) return;
     const epoch = ++githubEpoch;
     try {
       const result = await api("/api/github/manifest/start", JSON.stringify({ organization: node("github-organization").value.trim() || undefined })); if (!githubCurrent(epoch)) return;
@@ -1224,8 +1238,13 @@ export async function startClient(env) {
   async function completeGitHubManifest(callback) {
     if (!active() || !csrf || !callback || !/^[a-zA-Z0-9_-]{1,256}$/.test(callback.code ?? "") || !/^[a-zA-Z0-9_-]{16,256}$/.test(callback.state ?? "")) { if (callback) node("github-managed-status").textContent = "GitHub 연결 응답이 올바르지 않습니다. 연결을 다시 시작하세요."; return; }
     const epoch = ++githubEpoch;
-    try { await api("/api/github/manifest/complete", JSON.stringify(callback)); if (!githubCurrent(epoch)) return; await navigate("register"); }
-    catch (error) { if (githubCurrent(epoch)) githubError(error); }
+    const destination=()=>{let hint=null;try{hint=env.sessionStorage?.getItem("flora:onboarding-origin");env.sessionStorage?.removeItem("flora:onboarding-origin");}catch{}return hint==="onboarding"?"onboarding":"register";};
+    try { await api("/api/github/manifest/complete", JSON.stringify(callback)); if (!githubCurrent(epoch)) return; await navigate(destination()); }
+    catch (error) {
+      if(!githubCurrent(epoch))return;githubExchangeUnknown=true;
+      try{const current=await api("/api/github/connection");if(!githubCurrent(epoch))return;if(current?.configured===true){githubExchangeUnknown=false;await navigate(destination());return;}}catch{}
+      if(githubCurrent(epoch)){node("github-manifest-form").hidden=true;node("github-manifest-start").disabled=true;node("github-managed-status").textContent="GitHub 연결 완료 여부 확인 필요 · 설정을 다시 확인하세요. 변환 코드는 재전송하거나 새 App을 만들지 않습니다.";}
+    }
   }
   async function prepareSigningKey() {
     const appId = selectedAppId; const version = generation; if (!appId || !active() || !csrf || busy || reading) return;
@@ -1233,12 +1252,14 @@ export async function startClient(env) {
     try {
       const result = await api("/api/apps/" + encodeURIComponent(appId) + "/signing-key", "{}"); if (!active() || version !== generation || selectedAppId !== appId) return;
       const certificate = result.certificate ?? result.certificatePem;
-      if (result.appId !== appId || typeof certificate !== "string" || certificate.length > 65536 || !certificate.startsWith("-----BEGIN CERTIFICATE-----")) throw new Error("INVALID_CERTIFICATE");
+      if (result.appId !== appId || !/^[A-Za-z0-9._-]{1,128}$/.test(result.keyId ?? "") || typeof certificate !== "string" || certificate.length > 65536 || !certificate.startsWith("-----BEGIN CERTIFICATE-----")) throw new Error("INVALID_CERTIFICATE");
       node("signing-certificate-download").setAttribute("href", "data:application/x-pem-file;charset=utf-8," + encodeURIComponent(certificate)); node("signing-certificate-download").setAttribute("download", "flora-" + appId + ".pem"); node("signing-certificate-download").hidden = false;
       node("signing-key-status").textContent = "OTA 서명이 준비되었습니다. SDK에 공개 인증서를 포함한 최초 앱 빌드를 PC 또는 자체 Runner에서 실행하세요.";
     } catch (error) { if (!active() || version !== generation || selectedAppId !== appId) return; if (error.status === 401) expire(); else node("signing-key-status").textContent = "OTA 서명을 준비하지 못했습니다. 서버의 서명 저장소 설정을 확인하세요."; }
   }
   async function registerApplication() {
+    const existing=data?.applications?.find(app=>app.repositoryId===node("application-repository").value && (app.rootDirectory??".")===node("application-root").value);
+    if(existing){await navigate("source",existing.id);notice("이미 등록된 저장소·앱 경로입니다. 기존 프로젝트로 이어갑니다.");return;}
     const selection = githubSelection && githubSelection.repositoryId === node("application-repository").value ? { ...githubSelection } : null;
     const registered = await applicationWrite("/api/apps", { name: node("application-name").value, repositoryId: node("application-repository").value, rootDirectory: node("application-root").value }, true);
     const appId = selectedAppId;

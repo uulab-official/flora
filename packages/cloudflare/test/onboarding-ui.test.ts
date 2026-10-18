@@ -63,3 +63,10 @@ test("sdk_is_verified_only_for_current_app_source_config",async()=>{
  assert.equal(deriveOnboardingState(input).steps.find((s:{id:string})=>s.id==="sdk").status,"verified");
  for(const bad of [{...detection,appId:"app_b"},{...detection,automationConfig:{...config,updatesUrl:"https://flora.test/updates/app_b"}},{...detection,connection:{...connection,version:2}}])assert.notEqual(deriveOnboardingState({...input,operations:{...input.operations,detections:[bad]}}).steps.find((s:{id:string})=>s.id==="sdk").status,"verified");
 });
+test("github_navigation_stores_only_the_fixed_public_origin_hint",async()=>{
+ const {createOnboarding}=await import(wizard),doc=document(),writes:unknown[]=[];
+ const panel=createOnboarding({document:doc,sessionStorage:{setItem:(...args:unknown[])=>writes.push(args)}},{api:async()=>({configured:false}),isCurrent:()=>true,getSnapshot:()=>({authenticated:true,appId:null,connection:null,operations:null,automation:null,target:null}),refreshData:async()=>{},setActiveJobPolling:()=>{},navigate:()=>{}});
+ await panel.enter(null);const link=doc.getElementById("onboarding-content").children.find(n=>n.attrs.get("href")==="/projects/new");assert.ok(link);
+ link.listeners.get("click")?.({preventDefault(){}});
+ assert.deepEqual(writes,[["flora:onboarding-origin","onboarding"]]);panel.leave();
+});

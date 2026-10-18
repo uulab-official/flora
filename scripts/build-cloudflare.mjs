@@ -9,7 +9,7 @@ process.env.WRANGLER_LOG_PATH ??= join(packageRoot, "dist/hosted-build.log");
 process.env.WRANGLER_SEND_METRICS = "false";
 const require = createRequire(join(packageRoot, "package.json"));
 const { build } = require("esbuild");
-export const HOSTED_ASSETS = Object.freeze(["index.html", "app.js", "onboarding.js", "onboarding-model.js", "onboarding.css", "project-views.js", "deployment-devices.js", "auto-rollback.js", "admin-routes.js", "app.css", "auth.html", "auth.js", "auth.css", "brand.png", "icons.svg"]);
+export const HOSTED_ASSETS = Object.freeze(["index.html", "app.js", "onboarding.js", "onboarding-model.js", "onboarding-files.js", "onboarding.css", "project-views.js", "deployment-devices.js", "auto-rollback.js", "admin-routes.js", "app.css", "auth.html", "auth.js", "auth.css", "brand.png", "icons.svg"]);
 
 /** Official pinned Wrangler parser; this does not create or access an account. */
 export async function validateExampleConfig(file = join(packageRoot, "wrangler.example.jsonc")) {

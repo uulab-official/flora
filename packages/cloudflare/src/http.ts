@@ -24,6 +24,7 @@ export function autoRollbackInstallationsRoute(path: string): string | null {
   return /^\/api\/apps\/([a-z][a-z0-9_-]{2,95})\/ota\/rollback-installations$/.exec(path)?.[1] ?? null;
 }
 const assets: Record<string, { kind: "public-asset" | "private-asset"; file: string }> = {
+  "/onboarding-files.js": {kind:"private-asset",file:"/onboarding-files.js"},
   "/onboarding.js": {kind:"private-asset",file:"/onboarding.js"}, "/onboarding-model.js": {kind:"private-asset",file:"/onboarding-model.js"}, "/onboarding.css": {kind:"private-asset",file:"/onboarding.css"},
   "/login": { kind: "public-asset", file: "/auth.html" }, "/setup": { kind: "public-asset", file: "/auth.html" },
   "/admin-routes.js": { kind: "public-asset", file: "/admin-routes.js" },

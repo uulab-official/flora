@@ -171,7 +171,7 @@ test("session_expiry_clears_private_dom_without_network_polling", async () => {
 test("hosted_ui_never_calls_legacy_runs_and_only_polls_lightweight_visible_summary", async () => {
   const app = await controller(); await app.client.refresh();
   assert.ok(app.calls.every(call => !/runs|cancel|providers/.test(call.url))); assert.deepEqual([...app.timers.values()].map(timer=>timer.delay).sort((a,b)=>a-b),[60000,3600000]);
-  const source = readFileSync(new URL("../public/app.js", import.meta.url), "utf8"); assert.ok(!/setInterval|\/api\/runs|localStorage|sessionStorage|console\./.test(source)); app.client.close();
+  const source = readFileSync(new URL("../public/app.js", import.meta.url), "utf8"); assert.ok(!/setInterval|\/api\/runs|localStorage|console\./.test(source)); app.client.close();
 });
 test("original_file_bytes_and_exact_import_limits_use_session_csrf", async () => {
   const app = await controller(state(), async url => url === "/api/sources" ? response(state().selected) : url.startsWith("/api/baselines?") ? response(record()) : undefined);
@@ -296,11 +296,11 @@ test("login_and_setup_allow_paste_without_password_storage", async () => {
   const html = readFileSync(new URL("../public/auth.html", import.meta.url), "utf8"); assert.ok(!/maxlength|onpaste|oncopy|oncut|uulab|gmail\.com/.test(html));
   for (const pathname of ["/login", "/setup"]) {
     const app = await authController(pathname); const password = credentials(app.document, pathname === "/setup"); await app.client.submit();
-    const sent = JSON.parse(String(app.calls[0]!.init.body)); assert.equal(sent.password, password); assert.deepEqual(app.navigations, ["/"]); assert.equal(app.document.getElementById("password").value, "");
+    const sent = JSON.parse(String(app.calls[0]!.init.body)); assert.equal(sent.password, password); assert.deepEqual(app.navigations, [pathname === "/setup" ? "/onboarding" : "/"]); assert.equal(app.document.getElementById("password").value, "");
     if (pathname === "/setup") { assert.equal(sent.confirmation, password); assert.equal(app.calls[0]!.url, "/api/auth/enroll"); assert.equal(app.document.getElementById("token").value, ""); }
     app.client.close();
   }
-  for (const name of ["auth.js", "app.js"]) assert.ok(!/localStorage|sessionStorage|console\.|document\.cookie|history\.(?:pushState|replaceState)/.test(readFileSync(new URL("../public/" + name, import.meta.url), "utf8")));
+  for (const name of ["auth.js", "app.js"]) assert.ok(!/localStorage|console\.|document\.cookie|history\.(?:pushState|replaceState)/.test(readFileSync(new URL("../public/" + name, import.meta.url), "utf8")));
 });
 test("setup_validates_codepoints_without_normalizing_and_requires_owner_code", async () => {
   const { validPassword } = await loadAuth(); assert.equal(validPassword("🙂".repeat(128)), true); assert.equal(validPassword("🙂".repeat(129)), false); assert.equal(validPassword(" ".repeat(15)), true); assert.equal(validPassword("a".repeat(14)), false); assert.equal(validPassword("a".repeat(15) + "\ud800"), false);
@@ -942,7 +942,7 @@ test("GitHub setup rejects an external manifest action without submitting creden
 });
 test("app-specific OTA public certificate is cleared on app change and late responses are fenced", async () => {
   const gate = deferred<any>(); const app = await controller(registryState("app_a") as any, async url => url === "/api/apps/app_a/signing-key" ? gate.promise : url === "/api/state?appId=app_b" ? response(registryState("app_b")) : undefined);
-  const preparing = app.client.prepareSigningKey(); await app.client.chooseApplication("app_b"); gate.resolve(response({ appId: "app_a", certificate: "-----BEGIN CERTIFICATE-----\nPUBLIC\n-----END CERTIFICATE-----" })); await preparing;
+  const preparing = app.client.prepareSigningKey(); await app.client.chooseApplication("app_b"); gate.resolve(response({ appId: "app_a", keyId: "ota-key-1", certificate: "-----BEGIN CERTIFICATE-----\nPUBLIC\n-----END CERTIFICATE-----" })); await preparing;
   assert.equal(app.document.getElementById("signing-certificate-download").hidden, true); assert.equal(app.document.getElementById("signing-key-status").textContent, ""); app.client.close();
 });
 test("managed manifest posts only supplied public manifest to the exact GitHub organization endpoint", async () => {
@@ -1145,7 +1145,7 @@ test("PC Runner is primary and GitHub Actions setup is an optional collapsed sec
 });
 
 test("OTA signing setup guides the initial native build on PC without requiring GitHub CI", async () => {
-  const app = await controller(registryState("app_a") as any, async url => url === "/api/apps/app_a/signing-key" ? response({ appId: "app_a", certificate: "-----BEGIN CERTIFICATE-----\nPUBLIC\n-----END CERTIFICATE-----" }) : undefined);
+  const app = await controller(registryState("app_a") as any, async url => url === "/api/apps/app_a/signing-key" ? response({ appId: "app_a", keyId: "ota-key-1", certificate: "-----BEGIN CERTIFICATE-----\nPUBLIC\n-----END CERTIFICATE-----" }) : undefined);
   await app.client.prepareSigningKey();
   assert.equal(app.document.getElementById("signing-certificate-download").hidden, false);
   const guidance = app.document.getElementById("signing-key-status").textContent;
@@ -1335,4 +1335,32 @@ test("management overview reuses one summary cache without opening or fetching p
  await app.client.navigate("overview", "app_a");
  assert.match(app.document.getElementById("project-readiness").textContent,/PC Runner온라인/);assert.match(app.document.getElementById("project-readiness").textContent,/iOS \+ Android/);
  assert.equal(app.document.getElementById("automation-editor").open,false);assert.equal(app.calls.filter(call=>call.url.endsWith("/automation")||call.url.endsWith("/operations")).length,0);assert.equal(app.calls.filter(call=>call.url==="/api/projects").length,1);app.client.close();
+});
+
+test("manifest_lost_reply_is_not_replayed_and_current_connection_is_read_back",async()=>{
+ let completion=0;
+ const app=await controller(state(),async url=>{if(url==="/api/github/manifest/complete"){completion++;throw Error("network lost");}return githubTransport(url);});
+ await app.client.completeGitHubManifest({code:"one_use_code",state:"s".repeat(32)});
+ assert.equal(completion,1);assert.ok(app.calls.some(c=>c.url==="/api/github/connection"));
+ assert.ok(!app.calls.some(c=>c.url==="/api/github/manifest/start"));app.client.close();
+});
+test("callback_hint_is_fixed_secret_free_and_returns_to_onboarding",async()=>{
+ const values=new Map<string,string>([["flora:onboarding-origin","onboarding"]]);
+ const app=await controller(state(),async url=>url==="/api/github/manifest/complete"?response(githubReady):githubTransport(url),{sessionStorage:{getItem:(k:string)=>values.get(k)??null,setItem:(k:string,v:string)=>values.set(k,v),removeItem:(k:string)=>values.delete(k)}});
+ await app.client.completeGitHubManifest({code:"one_use_code",state:"s".repeat(32)});
+ assert.equal(app.client.route().page,"onboarding");assert.equal(values.has("flora:onboarding-origin"),false);app.client.close();
+});
+test("runner_lost_reply_reads_scoped_list_without_reenrollment",async()=>{
+ let posts=0;
+ const app=await controller(registryState("app_a") as any,async (url,init)=>{
+  if(url==="/api/runners"){posts++;throw Error("lost registration reply");}
+  if(url==="/api/apps/app_a/operations")return response(automatedOps());
+  if(url==="/api/apps/app_a/automation")return response({jobs:[],runners:[runner],policy:null});
+ });
+ await app.client.loadAutomation();app.document.getElementById("runner-name").value="QA Runner";
+ const before=app.calls.filter(c=>c.url==="/api/apps/app_a/automation").length;
+ await app.client.enrollRunner();await app.client.enrollRunner();assert.equal(posts,1);
+ assert.ok(app.calls.filter(c=>c.url==="/api/apps/app_a/automation").length>before);
+ assert.equal(app.document.getElementById("runner-enroll").disabled,true);
+ assert.ok(app.document.getElementById("automation-status").textContent.includes("확인 필요"));app.client.close();
 });

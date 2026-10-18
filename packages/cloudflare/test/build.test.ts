@@ -15,7 +15,7 @@ test("hosted_build_contains_only_private_slice_and_exact_assets", async () => {
   const bundle = await readFile(new URL("packages/cloudflare/dist/hosted/worker.js", root), "utf8");
   assert.doesNotMatch(bundle, /node:(?:sqlite|http|https|fs|child_process)|__test\/|SYNTHETIC_|setInterval/);
   const { HOSTED_ASSETS } = await import("../../../scripts/build-cloudflare.mjs");
-  assert.deepEqual(HOSTED_ASSETS, ["index.html", "app.js", "onboarding.js", "onboarding-model.js", "onboarding.css", "project-views.js", "deployment-devices.js", "auto-rollback.js", "admin-routes.js", "app.css", "auth.html", "auth.js", "auth.css", "brand.png", "icons.svg"]);
+  assert.deepEqual(HOSTED_ASSETS, ["index.html", "app.js", "onboarding.js", "onboarding-model.js", "onboarding-files.js", "onboarding.css", "project-views.js", "deployment-devices.js", "auto-rollback.js", "admin-routes.js", "app.css", "auth.html", "auth.js", "auth.css", "brand.png", "icons.svg"]);
   for (const name of HOSTED_ASSETS) assert.deepEqual(await readFile(new URL("packages/cloudflare/dist/hosted/public/" + name, root)), await readFile(new URL("packages/cloudflare/public/" + name, root)), name + " must preserve hosted source bytes");
   assert.notEqual(await readFile(new URL("packages/cloudflare/dist/hosted/public/app.css", root), "utf8"), await readFile(new URL("packages/dashboard/public/app.css", root), "utf8"), "The hosted console owns its CSS");
 });
