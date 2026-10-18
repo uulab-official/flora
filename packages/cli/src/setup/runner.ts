@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import {constants} from "node:fs";
 import {spawn} from "node:child_process";
 import {createHash} from "node:crypto";
-import {dirname,join,isAbsolute,relative} from "node:path";
+import {dirname,join,isAbsolute,relative,sep} from "node:path";
 import {pathToFileURL,fileURLToPath} from "node:url";
 import {homedir} from "node:os";
 import {readRunnerConfig,createRunnerClient} from "@flora/runner";
@@ -37,7 +37,7 @@ async function socketHost(value:string):Promise<string>{
 }
 async function ensureNewDirectory(directory:string,runtime:SetupRuntime,availableBytes:RunnerDeps["availableBytes"]){
  requireSetup(["darwin","linux"].includes(process.platform)&&typeof process.getuid==="function"&&process.getuid()>0&&safePath(directory),"SETUP_RUNNER_HOST_REQUIRED");
- const rel=relative(runtime.root,directory);requireSetup(rel.startsWith("..")||isAbsolute(rel),"SETUP_PRIVATE_DIRECTORY_OUTSIDE_CHECKOUT_REQUIRED");
+ const rel=relative(runtime.root,directory);requireSetup(rel===".."||rel.startsWith(".."+sep)||isAbsolute(rel),"SETUP_PRIVATE_DIRECTORY_OUTSIDE_CHECKOUT_REQUIRED");
  requireSetup(await fs.realpath(dirname(directory))===dirname(directory),"SETUP_PRIVATE_PATH_UNSAFE");
  try{await fs.lstat(directory);throw Error("SETUP_EXISTING_RUNNER_PRESERVED");}catch(e){if((e as NodeJS.ErrnoException).code!=="ENOENT")throw e;}
  requireSetup(await availableBytes(dirname(directory))>=2147483648n,"SETUP_DISK_SPACE_LOW");

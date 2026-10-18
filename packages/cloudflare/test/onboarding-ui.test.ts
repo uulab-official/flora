@@ -59,7 +59,7 @@ test("sdk_is_verified_only_for_current_app_source_config",async()=>{
  const connection={appId:"app_a",version:1,installationId:1,owner:"org",repository:"app",ref:"main",connectedAt:1};
  const config={schemaVersion:1,bundler:"metro",entryFile:"index.js",toolchain:{nodeVersion:"24.19.0",packageManager:{name:"npm",version:"10.9.8"}},runtimeVersion:"native-1",platforms:["ios","android"],updatesUrl:"https://flora.test/updates/app_a"};
  const detection={id:"detection_a",appId:"app_a",connection,rootDirectory:".",detectedAt:2,configSource:"flora.config.json",updatesEnabled:true,updatesUrl:config.updatesUrl,runtimeVersion:config.runtimeVersion,automationConfig:config};
- const input={authenticated:true,appId:"app_a",connection:{configured:true},operations:{connection,detections:[detection],assets:[],deployments:[]},automation:null,target:null};
+ const input={authenticated:true,origin:"https://flora.test",appId:"app_a",connection:{configured:true},operations:{connection,detections:[detection],assets:[],deployments:[]},automation:null,target:null};
  assert.equal(deriveOnboardingState(input).steps.find((s:{id:string})=>s.id==="sdk").status,"verified");
  for(const bad of [{...detection,appId:"app_b"},{...detection,automationConfig:{...config,updatesUrl:"https://flora.test/updates/app_b"}},{...detection,connection:{...connection,version:2}}])assert.notEqual(deriveOnboardingState({...input,operations:{...input.operations,detections:[bad]}}).steps.find((s:{id:string})=>s.id==="sdk").status,"verified");
 });
@@ -84,4 +84,38 @@ test("outside_twenty_uses_one_publication_lookup_and_idle_has_no_extra_poller",a
  assert.equal(calls.filter(p=>p.endsWith("/publication")).length,1);assert.ok(doc.getElementById("onboarding-content").text.includes("게시 확인"));assert.ok(!polls.includes(true));
  snapshot={...snapshot,operations:{...snapshot.operations,detections:[{...snapshot.operations.detections[0]!,commitSha:"b".repeat(40)}]}};
  await panel.update();assert.ok(doc.getElementById("onboarding-content").text.includes(sha.slice(0,12)));panel.leave();
+});
+test("sdk_verification_rejects_a_different_server_origin",async()=>{
+ const {deriveOnboardingState}=await import(model),origin="https://flora.test",connection={appId:"app_a",version:1,installationId:1,owner:"org",repository:"app",ref:"main",connectedAt:1};
+ const config={schemaVersion:1,bundler:"metro",entryFile:"index.js",toolchain:{nodeVersion:"24.19.0",packageManager:{name:"npm",version:"10.9.8"}},runtimeVersion:"native-1",platforms:["ios"],updatesUrl:"https://foreign.test/updates/app_a"};
+ const detection={appId:"app_a",connection,rootDirectory:".",detectedAt:2,configSource:"flora.config.json",updatesEnabled:true,updatesUrl:config.updatesUrl,runtimeVersion:"native-1",automationConfig:config};
+ const state=deriveOnboardingState({authenticated:true,origin,appId:"app_a",connection:{configured:true},operations:{connection,detections:[detection]},automation:null,target:null});
+ assert.notEqual(state.steps.find((s:{id:string})=>s.id==="sdk").status,"verified");
+ for(const [query,expected]of [["",true],["?channel=preview",true],["?channel=other",false],["?channel=preview&channel=preview",false],["?token=unexpected",false],["#fragment",false]] as const){
+  const url=origin+"/updates/app_a"+query,next={...detection,updatesUrl:url,automationConfig:{...config,updatesUrl:url}};
+  const checked=deriveOnboardingState({authenticated:true,origin,appId:"app_a",connection:{configured:true},operations:{connection,detections:[next]},automation:{policy:{channel:"preview"}},target:null});
+  assert.equal(checked.steps.find((s:{id:string})=>s.id==="sdk").status==="verified",expected,query);
+ }
+});
+test("successful_retry_is_not_hidden_by_an_older_failed_job",async()=>{
+ const {createOnboarding}=await import(wizard),doc=document(),id="11111111-1111-4111-8111-111111111111",sha="a".repeat(40),calls:string[]=[];
+ const success={id:"automation_retry",appId:"app_a",commitSha:sha,runtimeVersion:"native-1",channel:"preview",platform:"ios",state:"succeeded",deploymentId:id},failure={...success,id:"automation_old",state:"failed",deploymentId:null};
+ let jobs=[success,failure];
+ const config={runtimeVersion:"native-1",platforms:["ios"],updatesUrl:"https://flora.test/updates/app_a"};
+ const snapshot=()=>({authenticated:true,appId:"app_a",operations:{connection:{appId:"app_a"},detections:[{appId:"app_a",commitSha:sha,updatesEnabled:true,automationConfig:config}],deployments:[]},automation:{policy:{enabled:true,channel:"preview",platforms:["ios"]},jobs,runners:[]},target:null});
+ const panel=createOnboarding({document:doc,location:{origin:"https://flora.test"}},{api:async(path:string)=>{calls.push(path);return path==="/api/github/connection"?{configured:true}:{appId:"app_a",deploymentId:id,deployment:{id,platform:"ios",channel:"preview",runtimeVersion:"native-1",commitSha:sha,createdAt:1}};},isCurrent:()=>true,getSnapshot:snapshot,refreshData:async()=>{},setActiveJobPolling:()=>{},navigate:()=>{}});
+ await panel.enter("app_a");await doc.getElementById("onboarding-steps").children[4]!.listeners.get("click")?.();const descendants=(n:Node):Node[]=>[n,...n.children.flatMap(descendants)];const pin=descendants(doc.getElementById("onboarding-content")).find(n=>n.attrs.get("id")==="onboarding-pin-target");assert.ok(pin);await pin.listeners.get("click")?.();await panel.update();
+ assert.ok(doc.getElementById("onboarding-content").text.includes("게시 확인"));assert.equal(calls.filter(p=>p.endsWith("/publication")).length,1);
+ jobs=[failure];await panel.update();assert.ok(doc.getElementById("onboarding-content").text.includes("게시 확인"));assert.equal(calls.filter(p=>p.endsWith("/publication")).length,1);panel.leave();
+});
+test("known_active_job_is_reconciled_after_leaving_recent_twenty",async()=>{
+ const {createOnboarding}=await import(wizard),doc=document(),id="11111111-1111-4111-8111-111111111111",sha="a".repeat(40),calls:string[]=[],polls:boolean[]=[];
+ const job={id:"automation_target",appId:"app_a",commitSha:sha,runtimeVersion:"native-1",channel:"preview",platform:"ios",state:"leased",deploymentId:null},success={...job,state:"succeeded",deploymentId:id},deployment={appId:"app_a",id,platform:"ios",channel:"preview",runtimeVersion:"native-1",commitSha:sha,createdAt:1};
+ const config={runtimeVersion:"native-1",platforms:["ios"],updatesUrl:"https://flora.test/updates/app_a"};
+ let jobs=[job],deployments:typeof deployment[]=[];
+ const snapshot=()=>({authenticated:true,appId:"app_a",operations:{connection:{appId:"app_a"},detections:[{appId:"app_a",commitSha:sha,updatesEnabled:true,automationConfig:config}],deployments},automation:{policy:{enabled:true,channel:"preview",platforms:["ios"]},jobs,runners:[]},target:null});
+ const panel=createOnboarding({document:doc,location:{origin:"https://flora.test"}},{api:async(path:string)=>{calls.push(path);return path==="/api/github/connection"?{configured:true}:path.endsWith("/automation/jobs/automation_target")?{job:success,attempts:[],events:[]}:{appId:"app_a",deploymentId:id,deployment};},isCurrent:()=>true,getSnapshot:snapshot,refreshData:async()=>{},setActiveJobPolling:(v:boolean)=>polls.push(v),navigate:()=>{}});
+ await panel.enter("app_a");await doc.getElementById("onboarding-steps").children[4]!.listeners.get("click")?.();const descendants=(n:Node):Node[]=>[n,...n.children.flatMap(descendants)];const pin=descendants(doc.getElementById("onboarding-content")).find(n=>n.attrs.get("id")==="onboarding-pin-target");assert.ok(pin);await pin.listeners.get("click")?.();assert.ok(polls.includes(true));
+ jobs=Array.from({length:20},(_,i)=>({...job,id:"automation_other_"+i,commitSha:"b".repeat(40),state:"succeeded"}));deployments=[deployment];await panel.update();await panel.update();
+ assert.equal(calls.filter(p=>p.endsWith("/automation/jobs/automation_target")).length,1);assert.ok(doc.getElementById("onboarding-content").text.includes("게시 확인"));assert.equal(polls.at(-1),false);panel.leave();
 });

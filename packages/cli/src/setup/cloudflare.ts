@@ -1,5 +1,5 @@
 import {createHash,randomUUID} from "node:crypto";
-import {join,isAbsolute,relative} from "node:path";
+import {join,isAbsolute,relative,sep} from "node:path";
 import {canonicalJson} from "@app-ops/config";
 import {parseJournal,requireSetup,strictObject,type ResourcePlan,type ProviderSnapshot} from "./contracts.js";
 import {readPrivateFile,writePrivateFile,verifyPrivateDirectory} from "./private-files.js";
@@ -55,7 +55,7 @@ export function createSetupConfig(plan:ResourcePlan,databaseId:string,root:strin
 export function createWranglerProvider(runtime:SetupRuntime,directory:string,injected:Partial<ProviderDeps>={}):SetupProvider{
  const deps:ProviderDeps={run:injected.run??runBoundedTool,fetch:injected.fetch??((url,init)=>fetch(url,init))};
  let credential:{value:string;at:number}|null=null;
- async function checkedDirectory(){await verifyPrivateDirectory(directory);const rel=relative(runtime.root,directory);requireSetup(rel.startsWith("..")||isAbsolute(rel),"SETUP_PRIVATE_DIRECTORY_OUTSIDE_CHECKOUT_REQUIRED");}
+ async function checkedDirectory(){await verifyPrivateDirectory(directory);const rel=relative(runtime.root,directory);requireSetup(rel===".."||rel.startsWith(".."+sep)||isAbsolute(rel),"SETUP_PRIVATE_DIRECTORY_OUTSIDE_CHECKOUT_REQUIRED");}
  async function run(args:readonly string[],signal:AbortSignal,maxBytes=65536){
   await checkedDirectory();return deps.run(runtime.nodePath,[runtime.wranglerEntry,...args],{cwd:directory,timeoutMs:120000,maxBytes,signal});
  }

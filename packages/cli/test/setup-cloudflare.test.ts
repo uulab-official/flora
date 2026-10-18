@@ -99,3 +99,8 @@ test("pinned_wrangler_auth_capture_writes_no_token_log_in_an_isolated_home",asyn
  const created=await files(dir);assert.ok(!created.some(p=>p.endsWith(".log")),"Wrangler must not persist its auth output");
  for(const file of created.filter(p=>p!==authFile))assert.ok(!(await fs.readFile(file,"utf8")).includes(synthetic));
 });
+test("dot_dot_named_child_is_still_inside_checkout",async t=>{
+ const f=await fixture(t),api=await import(path),directory=join(f.dir,"..private");await fs.mkdir(directory,{mode:0o700});let tools=0;
+ const provider=api.createWranglerProvider({...f.runtime,root:f.dir},directory,{run:async()=>{tools++;throw Error("must reject before credential capture");},fetch:async()=>assert.fail("no API")});
+ await assert.rejects(provider.inspect(plan,new AbortController().signal));assert.equal(tools,0);
+});

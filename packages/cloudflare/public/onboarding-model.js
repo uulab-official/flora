@@ -9,7 +9,11 @@ export function deriveOnboardingState(input) {
   let sdk=false;
   if(detection?.configSource==="flora.config.json" && detection.updatesEnabled && detection.automationConfig){
     const config=detection.automationConfig;
-    try{sdk=config.updatesUrl===detection.updatesUrl && new URL(config.updatesUrl).pathname===`/updates/${appId}` && config.runtimeVersion===detection.runtimeVersion && Array.isArray(config.platforms) && config.platforms.length>0;}catch{}
+    try{
+      const destination=new URL(config.updatesUrl),server=new URL(input.origin),query=[...destination.searchParams];
+      const channel=query.length===0 || query.length===1 && query[0][0]==="channel" && query[0][1]===input.automation?.policy?.channel;
+      sdk=server.origin===input.origin && server.protocol==="https:" && destination.origin===server.origin && !destination.username && !destination.password && !destination.hash && destination.href===config.updatesUrl && channel && config.updatesUrl===detection.updatesUrl && destination.pathname===`/updates/${appId}` && config.runtimeVersion===detection.runtimeVersion && Array.isArray(config.platforms) && config.platforms.length>0;
+    }catch{}
   }
   const online=automation?.runners?.some(r=>r.revokedAt===null&&r.appIds?.length===1&&r.appIds[0]===appId&&r.presence?.status==="online"&&Number.isSafeInteger(r.presence?.lastSeenAt));
   return {steps:[step("owner","verified","현재 소유자 세션으로 확인했습니다."),

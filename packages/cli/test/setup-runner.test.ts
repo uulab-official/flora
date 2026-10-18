@@ -40,3 +40,7 @@ test("remote_docker_and_missing_disk_block_without_token_input",async t=>{
  await assert.rejects(api.configureRunner(f.binding,f.connection,f.runtimeDirectory,f.io,f.runtime,new AbortController().signal,{...f.deps,dockerHost:"tcp://remote:2375"}));assert.equal(reads,0);
  await assert.rejects(api.configureRunner(f.binding,f.connection,f.runtimeDirectory,f.io,f.runtime,new AbortController().signal,{...f.deps,availableBytes:async()=>0n}));assert.equal(reads,0);
 });
+test("dot_dot_named_child_cannot_store_runner_credentials_in_checkout",async t=>{
+ const f=await fixture(t),api=await import(modulePath);let secrets=0;f.io.readSecret=async()=>{secrets++;return token;};
+ await assert.rejects(api.configureRunner(f.binding,f.connection,join(f.dir,"..private"),f.io,{...f.runtime,root:f.dir},new AbortController().signal,f.deps));assert.equal(secrets,0);assert.equal(f.calls.length,0);
+});

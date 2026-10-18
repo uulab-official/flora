@@ -86,3 +86,9 @@ test("unsafe_schema_and_unavailable_directory_sync_stop_before_action",async t=>
  finally{patch.mock.restore();}
  assert.equal(calls,0);
 });
+test("new_private_directory_syncs_its_parent_entry_before_remote_work",async t=>{
+ const fsModule=await import("node:fs/promises"),fs=fsModule.default,os=await import("node:os"),path=await import("node:path"),root=await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()),"flora-parent-sync-"));t.after(()=>fs.rm(root,{recursive:true,force:true}));
+ const modulePath="../dist/setup/private-files.js",{createPrivateDirectory}=await import(modulePath),original=fs.open,synced:string[]=[];
+ fs.open=(async(...args:Parameters<typeof fs.open>)=>{const handle=await original(...args);return new Proxy(handle,{get(target,key){if(key==="sync")return async()=>{synced.push(String(args[0]));return target.sync();};const value=Reflect.get(target,key);return typeof value==="function"?value.bind(target):value;}});}) as typeof fs.open;
+ try{await createPrivateDirectory(path.join(root,"new"));assert.ok(synced.includes(root),"parent entry must be durable before provisioning proceeds");}finally{fs.open=original;}
+});

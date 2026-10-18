@@ -31,7 +31,27 @@ export function createOnboarding(env,context){
  async function collectPublications(){
   if(!target)return;const currentTarget=target,version=epoch;
   const input=context.getSnapshot(),jobs=input.automation?.jobs??[];
-  for(const job of jobs)if(job.appId===target.appId&&job.commitSha===target.commitSha&&job.channel===target.channel&&job.runtimeVersion===target.runtimeVersion&&target.platforms.includes(job.platform))knownJobs.set(job.platform,job);
+  const matches=job=>job?.appId===currentTarget.appId&&job.commitSha===currentTarget.commitSha&&job.channel===currentTarget.channel&&job.runtimeVersion===currentTarget.runtimeVersion&&currentTarget.platforms.includes(job.platform);
+  const active=job=>["queued","leased","cancel_requested"].includes(job?.state);
+  // The server returns newest first. Retain successful evidence across retries.
+  for(const platform of currentTarget.platforms){
+   const candidates=jobs.filter(job=>matches(job)&&job.platform===platform),prior=knownJobs.get(platform);
+   const selected=candidates.find(job=>job.state==="succeeded"&&job.deploymentId)??(prior?.state==="succeeded"?prior:candidates[0]);
+   if(selected)knownJobs.set(platform,selected);
+  }
+  // A pinned job can leave the bounded recent list while still running. Refresh
+  // only its known ID; failures wait for manual retry instead of scanning history.
+  for(const job of [...knownJobs.values()]){
+   if(!active(job)||jobs.some(item=>item.id===job.id)||!/^automation_[a-z0-9_-]{1,80}$/.test(job.id??""))continue;
+   const key="job:"+job.id;if(pending.has(key)){await pending.get(key);continue;}if(attempted.has(key))continue;attempted.add(key);
+   const work=(async()=>{try{
+    const view=await context.api(`/api/apps/${currentTarget.appId}/automation/jobs/${job.id}`,undefined,controller?.signal),updated=view?.job;
+    if(version===epoch&&target===currentTarget&&context.isCurrent()&&context.getSnapshot().appId===currentTarget.appId&&updated?.id===job.id&&updated.platform===job.platform&&matches(updated)){
+     knownJobs.set(job.platform,updated);attempted.delete(key);
+    }
+   }catch{}})();pending.set(key,work);await work;if(pending.get(key)===work)pending.delete(key);
+  }
+  if(version!==epoch||target!==currentTarget||!context.isCurrent())return;
   for(const deployment of input.operations?.deployments??[])if(deployment.appId===target.appId)publications.set(deployment.id,{appId:target.appId,deploymentId:deployment.id,deployment});
   for(const job of knownJobs.values()){
    if(version!==epoch||target!==currentTarget||!context.isCurrent())return;
@@ -45,9 +65,9 @@ export function createOnboarding(env,context){
  async function update(){
   if(!controller||controller.signal.aborted||!context.isCurrent()||document.hidden||context.getSnapshot().appId!==currentApp)return;
   const version=epoch,selectedAtStart=selected;await collectPublications();if(version!==epoch||!context.isCurrent()||selected!==selectedAtStart)return;
-  const input=context.getSnapshot();state=deriveOnboardingState({...input,connection,target});
+  const input=context.getSnapshot();state=deriveOnboardingState({...input,origin:env.location?.origin,connection,target});
   const publication=result();if(publication){const step=state.steps.find(s=>s.id==="publication");step.status=publication.status==="published"?"verified":publication.status==="partial"?"working":"unknown";step.reason=publication.status==="published"?"모든 선택 플랫폼의 작업과 실제 게시 배포를 확인했습니다.":publication.status==="partial"?"일부 플랫폼만 게시됐습니다. 나머지 플랫폼을 확인하세요.":"고정한 커밋의 배포를 기다리고 있습니다.";}
-  context.setActiveJobPolling(Boolean(selected==="publication"&&target&&input.automation?.jobs?.some(j=>j.appId===currentApp&&j.commitSha===target.commitSha&&["queued","leased","cancel_requested"].includes(j.state))));render();
+  context.setActiveJobPolling(Boolean(selected==="publication"&&target&&[...knownJobs.values()].some(j=>!attempted.has("job:"+j.id)&&["queued","leased","cancel_requested"].includes(j.state))));render();
  }
  async function check(){
   if(!controller||!context.isCurrent())return;const version=epoch;

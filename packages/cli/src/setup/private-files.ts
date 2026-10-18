@@ -37,6 +37,16 @@ export async function createPrivateDirectory(directory:string):Promise<void>{
   requireSetup(isAbsolute(directory) && normalize(directory)===directory && await fs.realpath(dirname(directory))===dirname(directory),unsafe);
   await fs.mkdir(directory,{mode:0o700});
   await syncPrivateDirectory(directory);
+  // The ledger must remain reachable after power loss, not just its contents.
+  // Directory fsync does not persist its own entry in the parent directory.
+  const parent=dirname(directory),before=await fs.lstat(parent);
+  const handle=await fs.open(parent,constants.O_RDONLY|constants.O_NOFOLLOW);
+  try {
+    requireSetup(same(before,await handle.stat()),unsafe);
+    await handle.sync();
+    requireSetup(same(before,await fs.lstat(parent)),unsafe);
+    await verifyPrivateDirectory(directory);
+  }finally{await handle.close();}
 }
 export async function readPrivateFile(file:string,maxBytes=16384):Promise<Buffer>{
   try{
