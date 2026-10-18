@@ -56,6 +56,22 @@ test("output_requires_one_uuid_and_name_in_complete_config",async()=>{
  assert.deepEqual(parseCreatedDatabase(valid,plan.databaseName),{databaseId,databaseName:plan.databaseName});
  for(const invalid of ["<html>403 synthetic-provider-secret</html>",valid.slice(0,-5),valid+valid,valid.replace(plan.databaseName,"another-name").replaceAll(plan.databaseName,"another-name"),valid.replace(databaseId,"invalid")])assert.throws(()=>parseCreatedDatabase(invalid,plan.databaseName),e=>e instanceof Error&&!e.message.includes("synthetic-provider-secret"));
 });
+test("identity_read_uses_query_results_instead_of_file_import_summary",async t=>{
+ const f=await fixture(t),{createWranglerProvider}=await import(path);let rows:unknown[]=[],reads=0;
+ const provider=createWranglerProvider(f.runtime,f.dir,{...f.deps,run:async(exe:string,args:readonly string[],options:{cwd:string})=>{
+  if(!args.includes("execute"))return f.deps.run(exe,args,options);
+  reads++;
+  // Wrangler remote --file runs the import endpoint, returning a summary rather than SELECT rows.
+  if(args.includes("--file"))return {exitCode:0,stdout:'├ Checking if file needs uploading\n[ {"results":[{"Total queries executed":1}],"success":true} ]'};
+  assert.equal(args[args.indexOf("--command")+1],"SELECT owner_id,origin,db_identity FROM flora_deployment WHERE singleton=1;");
+  return {exitCode:0,stdout:JSON.stringify([{results:rows,success:true}])};
+ }});
+ await provider.createDatabase(plan,new AbortController().signal);
+ assert.equal(await provider.readIdentity(plan,databaseId,new AbortController().signal),null);
+ rows=[{owner_id:plan.ownerId,origin:plan.origin,db_identity:plan.dbIdentity}];
+ assert.deepEqual(await provider.readIdentity(plan,databaseId,new AbortController().signal),{ownerId:plan.ownerId,origin:plan.origin,dbIdentity:plan.dbIdentity});assert.equal(reads,2);
+ assert.ok(!(await fs.readdir(f.dir)).some(name=>name.startsWith("identity-read-")));
+});
 test("provider_auth_and_response_shapes_fail_closed_without_writes",async t=>{
  const f=await fixture(t),{createWranglerProvider}=await import(path);
  for(const response of [()=>new Response("synthetic-provider-secret",{status:403}),()=>new Response("{",{status:200}),()=>new Response(JSON.stringify({success:true,result:{}}),{status:200})]){

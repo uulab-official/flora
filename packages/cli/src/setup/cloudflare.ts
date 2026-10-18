@@ -133,9 +133,9 @@ export function createWranglerProvider(runtime:SetupRuntime,directory:string,inj
  }
  async function requireDatabase(p:ResourcePlan,id:string,signal:AbortSignal){requireSetup(uuid.test(id),"SETUP_PROVIDER_DATABASE_MISMATCH");const current=await inspectRaw(p,signal);requireSetup(current.snapshot.databaseId===id,"SETUP_PROVIDER_DATABASE_MISMATCH");return current;}
  async function identity(p:ResourcePlan,id:string,signal:AbortSignal){
-  await requireDatabase(p,id,signal);const configPath=await config(p,id,signal),sqlPath=join(directory,"identity-read-"+randomUUID()+".sql");
-  await writePrivateFile(sqlPath,Buffer.from("SELECT owner_id,origin,db_identity FROM flora_deployment WHERE singleton=1;\n"));
-  const output=await run(["d1","execute","FLORA_DB","--remote","--json","--file",sqlPath,"--config",configPath],signal);
+  await requireDatabase(p,id,signal);const configPath=await config(p,id,signal);
+  // Remote --file uses the import endpoint and returns execution statistics, not SELECT rows.
+  const output=await run(["d1","execute","FLORA_DB","--remote","--json","--command","SELECT owner_id,origin,db_identity FROM flora_deployment WHERE singleton=1;","--config",configPath],signal);
   const result=array(json(output.stdout),1);requireSetup(result.length===1,"SETUP_PROVIDER_RESPONSE_INVALID");const rows=array(record(result[0]).results,1);
   if(!rows.length)return null;const row=record(rows[0]);requireSetup(typeof row.owner_id==="string"&&typeof row.origin==="string"&&typeof row.db_identity==="string","SETUP_PROVIDER_RESPONSE_INVALID");return {ownerId:row.owner_id,origin:row.origin,dbIdentity:row.db_identity};
  }
