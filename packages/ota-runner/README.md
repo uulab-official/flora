@@ -7,7 +7,9 @@ publication receipt. It does not use an EAS account, EAS Build, or EAS Update.
 
 ## Run
 
-Build the workspace with its locked dependencies and Node 24.19.0. Enroll a runner
+Follow the [root README](../../README.en.md) to install and build Flora with Node
+24.19.0 and pnpm 11.19.0. The controller supports unprivileged Linux/macOS users
+with Docker; it does not install Docker or an export image for you. Enroll a runner
 for the required app IDs through Flora's operator interface. The returned token
 is shown once. Store it outside the source checkout in a private file:
 
@@ -27,6 +29,18 @@ node packages/ota-runner/dist/main.js --config /private/runner/runner.json
 # Process one job and exit (including an empty queue):
 node packages/ota-runner/dist/main.js --config /private/runner/runner.json --once
 ```
+
+`--once` processes at most one queued job; it does not send the idle presence
+used by the dashboard. For a one-time presence check use:
+
+```sh
+node packages/ota-runner/dist/main.js --config /private/runner/runner.json --presence
+```
+
+The foreground daemon also does not provide a separate idle-presence loop. An
+online dashboard status requires periodic successful presence requests; a running
+process or an empty queue alone does not prove online status. The UULab supervisor
+mentioned below supplies this separate loop.
 
 The file must be a regular file owned by the controller, without group/other
 permissions or symlinks. Run as an unprivileged Unix user with Docker access.
@@ -61,9 +75,24 @@ that policy.
 
 Installation uses `npm ci`, `pnpm install --frozen-lockfile`, or Yarn's immutable /
 frozen-lockfile mode. Install scripts and repository bundler/config code run only
-in the bounded container. A regular lockfile is required at the app root. This
-initial implementation supports an app-root lockfile; it does not infer a parent
-monorepo workspace install.
+in the bounded container. The default path requires a regular lockfile at the
+configured app root. Parent workspace installation is available only through the
+explicit `pnpm-registry` preparation path below; it is not inferred by default.
+
+### PC deployment and asset storage
+
+A GitHub push webhook reaches Flora; the PC controller claims the queued job and
+exports in Docker. This route does not run GitHub Actions. With no `assetStorage`
+configuration, uploads use the server's default D1 asset storage and its configured
+capacity limits. Existing deployments and history do not need migration.
+
+The [macOS LaunchAgent/supervisor guide](../../docs/development/local-pc-runner.ko.md)
+describes UULab's existing private paths, service label and Lima setup. Adapt and
+review them before use; no generic service installer is run by these commands.
+The optional [GitHub Release publisher](../../docs/development/github-release-ota-storage.ko.md)
+is currently restricted in code to `uulab-official/flora-ota-assets`. It is an
+advanced UULab integration, not an arbitrary-repository storage option for new
+self-hosters. Do not copy UULab credentials or private paths.
 
 The default container has a read-only root filesystem, no Linux capabilities, no new
 privileges, 128 PIDs, 1 GiB memory (no additional swap), 2 CPUs, 768 MiB writable
@@ -71,11 +100,12 @@ workspace, 64 MiB temporary space and 65 MiB output space. Installation has a
 10-minute deadline; export has 5 minutes; the whole Docker invocation has 15
 minutes. Child diagnostics are bounded and are not echoed into controller logs.
 
-### GitHub-hosted npm profile
+### Optional larger resource profile and npm preparation
 
 The explicit operator configuration below enables preparation for an npm v3
-lockfile and the bounded GitHub-hosted resource profile. Repository jobs cannot
-choose these options or an image. The trusted image must contain exactly Node
+lockfile and the bounded `github-hosted` resource profile. This is a configuration
+name, not a requirement to use GitHub Actions; a suitably sized PC can use it.
+Repository jobs cannot choose these options or an image. The trusted image must contain exactly Node
 24.19.0 and npm 10.9.8; preparation checks both before installation.
 
 ```json
@@ -121,6 +151,22 @@ mounts it read-only, copies it into tmpfs, runs `npm ci --offline`, and exports 
 The source and small public helper are read-only; no host exporter fallback exists.
 Both unique containers must be confirmed absent and temporary seed/cache/helper
 directories are disposed after the attempt.
+
+### Optional pnpm workspace preparation
+
+For a pnpm workspace, set operator-only `resourceProfile: "github-hosted"` and
+`dependencyPreparation: "pnpm-registry"`, keep the export network `none`, and use
+a trusted image with Node 24.19.0 and **pnpm 11.10.0**. That app-image pin is
+separate from Flora's own development toolchain, pnpm 11.19.0.
+
+This bounded path installs at the Git repository root, which must contain
+`pnpm-lock.yaml` (lockfile version 9.0), `pnpm-workspace.yaml` and a root manifest
+with `packageManager: "pnpm@11.10.0"`. The configured app root must be a
+non-root importer in that lockfile. Supported workspace patterns, importers, patches, registry
+packages and `@flora/ota` vendor tarballs are validated before preparation;
+arbitrary pnpm workspaces/configuration are not supported. The preparation
+container fetches audited packages without repository scripts, and the compiler
+installs from the validated cache offline before running the app's export.
 
 ### Ephemeral CI recovery
 
@@ -278,6 +324,10 @@ that a stale EAS destination stops before export output is created. This opt-in
 fixture uses the installed app's dependencies and has no operator credentials;
 it proves the export helper, not Docker installation or native device loading.
 
+### Separate GitHub Actions integration (not the PC route)
+
+The implementation also contains an optional CI integration. It is not enabled
+by the commands above, and is not required for a no-Actions installation.
 GitHub-hosted compute for private applications must run in those applications'
 repositories, subject to their included allowance and a zero-spend budget. A caller
 push workflow can invoke an immutable trusted reusable Flora workflow. GitHub OIDC

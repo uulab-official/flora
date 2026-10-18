@@ -1,24 +1,39 @@
 # Flora 네이티브 OTA SDK
 
-`@flora/ota` 0.2.0에는 Flora 자체 iOS/Android 엔진이 포함됩니다. 기본 검증 대상은
+`@flora/ota` 0.3.2에는 Flora 자체 iOS/Android 엔진이 포함됩니다. 기본 검증 대상은
 bare React Native 0.86.3입니다. Expo 프레임워크, EAS 계정, EAS Update 및 프로젝트
 ID가 필요하지 않습니다. `@flora/ota` 코어는 RN을 import하지 않으며 RN peer도
 선택 사항입니다. 실제 앱에서는 `@flora/ota/native`를 사용합니다.
 
-서버에는 `FLORA_OTA_SIGNING_PRIVATE_KEY`와 `FLORA_OTA_SIGNING_KEY_ID`를 설정합니다.
-private key는 서버 secret에만 두고, 대응하는 X.509 공개 인증서와 같은 key ID를
-앱 바이너리에 고정합니다. 자체 엔진은 서명 없는 응답을 거부합니다. 로컬 QA도
-서버의 실제 RSA signer를 사용합니다.
+Flora 관리자 화면에서 앱을 선택하고 **Flora OTA 서명 → 이 앱의 OTA 서명 준비**를
+누른 뒤 **SDK 공개 인증서 다운로드**로 공개 X.509 인증서를 받습니다. 현재 화면은
+key ID를 별도로 표시하지 않으므로 브라우저 개발자 도구의 Network에서 해당
+`POST /api/apps/<앱 ID>/signing-key` 응답의 `keyId`를 확인합니다. 이 응답은 공개 인증서와
+공개 식별 정보만 반환하며 개인키를 포함하지 않습니다. 관리형 키는 앱별로 서버에
+보관되며, 앱·저장소·Runner에는 개인키를 넣지
+않습니다. 공개 인증서와 같은 key ID만 앱 바이너리에 고정합니다. 자체 엔진은 서명
+없는 응답을 거부하므로 실제 배포 전 서명 응답을 확인합니다. 기존 키를 사용하는
+앱에서는 인증서를 임의로 교체하지 않습니다.
+
+기존 운영자를 위한 전역 fallback은 서버 secret `FLORA_OTA_SIGNING_PRIVATE_KEY`와
+`FLORA_OTA_SIGNING_KEY_ID`입니다. 앱별 관리형 키가 있으면 그것을 우선합니다.
+새 설치는 관리형 키를 사용하며, 이 가이드는 개인키를 복사하도록 요구하지 않습니다.
 
 ## 설치와 앱 등록
 
-Flora 저장소에서 `pnpm sdk:pack --out /absolute/new-directory`로 SDK를 패키징합니다.
-출력된 `flora-ota-0.2.0.tgz`와 SHA-256을 보관하고 각 앱 저장소에 같은 후보를
+Flora 저장소의 설치·빌드를 마친 뒤 다음 명령으로 SDK를 패키징합니다. npm registry에
+공개된 패키지 설치를 전제하지 않습니다. 출력 디렉터리는 아직 존재하지 않는 경로를 선택합니다.
+
+```sh
+npm exec --yes --package=pnpm@11.19.0 -- pnpm sdk:pack --out /absolute/new-directory
+```
+
+출력된 `flora-ota-0.3.2.tgz`와 SHA-256을 보관하고 각 앱 저장소에 같은 후보를
 설치합니다. 기존 출력 파일은 덮어쓰지 않습니다. Runner가 설치할 수 있도록 앱
 저장소의 `vendor/`에 tarball을 두고 상대 `file:` 의존성과 lockfile을 커밋할 수 있습니다.
 
 ```sh
-npm install --ignore-scripts --no-audit --no-fund ./vendor/flora-ota-0.2.0.tgz
+npm install --ignore-scripts --no-audit --no-fund ./vendor/flora-ota-0.3.2.tgz
 ```
 
 서로 다른 저장소의 앱을 별도의 Flora 앱 ID로 등록합니다. 앱별 네이티브 설정의
@@ -133,10 +148,13 @@ if (checked.available) {
 캐시를 사용합니다. 서버도 앱별 배포·이력을 유지합니다. 테스트는 별도의 저장소와
 DB를 생성하며 기존 운영 앱이나 DB를 초기화하지 않습니다.
 
-네이티브 QA 진입점은 `scripts/native-qa/backend.mjs`, `generate-apps.mjs`,
-`build-app.mjs`와 `examples/native-ota/App.tsx`입니다. 생성기는 고정한 RN template을
-검증하고 두 앱을 각각 독립 Git 저장소로 만듭니다. 테스트 HTTPS 인증서는 전용
-시뮬레이터/QA 앱에서만 명시적으로 신뢰합니다. 엔진의 TLS 검증을 끄지 않습니다.
+공개 소스의 네이티브 엔진 테스트는 `packages/ota-sdk/ios/Tests/run.sh`와
+`packages/ota-sdk/android/tests/run.sh`이며, JS 연결 예제는
+[`examples/native-ota/App.tsx`](../../examples/native-ota/App.tsx)입니다. 각 테스트는
+Swift 또는 Kotlin/Java 도구가 별도로 필요합니다. 아래 과거 검증에서 사용한 앱 생성·빌드
+운영 스크립트는 현재 clone의 제공 도구가 아니므로 그대로 실행할 명령으로 취급하지 않습니다.
+테스트 HTTPS 인증서는 전용 시뮬레이터/QA 앱에서만 명시적으로 신뢰합니다.
+엔진의 TLS 검증을 끄지 않습니다.
 
 검증은 세 단계로 구분합니다: JS 계약 테스트, 네이티브 서명·저장소·복구 테스트,
 실제 시뮬레이터/에뮬레이터의 다운로드·적용·프로세스 재시작. 앞의 두 단계 통과만으로

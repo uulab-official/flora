@@ -2,6 +2,8 @@
 
 [README](../README.md) · [English quick start](../README.en.md#try-the-local-foundation) · [CLI·데이터 계약 상세](development/local-foundation.ko.md)
 
+> **실제 앱을 연결하려면 [README의 설치 → GitHub 연결 → PC Runner → 첫 OTA 절차](../README.md)를 먼저 따르세요.** 아래는 계정·실제 앱 없이 실행하는 Foundation 체험이며 실제 OTA를 게시하지 않습니다.
+
 ## 지금 무엇을 써볼 수 있나요?
 
 처음에는 **로컬 Foundation CLI와 보호된 loopback 웹 화면**을 체험할 수 있습니다. 설정·Job/lease를 시험하고, 정적 앱 source snapshot과 반입한 개발 baseline 이력을 봅니다. Foundation artifact는 모의 metadata이며 이 경로의 기본 실행 provider는 blocked입니다. 아래 체험은 실제 앱 빌드·OTA 배포가 아니며 앱 계정, API key, `.env`, 인증서를 넣을 필요가 없습니다.
@@ -126,8 +128,8 @@ npm exec --yes --package=pnpm@11.19.0 -- pnpm verify:clean
 
 1. [Cloudflare 호스팅 준비](development/password-hosting.ko.md#self-host-준비-순서)로 전용 DB·배포 identity·HTTPS origin·소유자 로그인을 준비합니다. SQL migration만으로 설치가 완성되지는 않습니다. 기존 DB·키를 덮어쓰지 않습니다.
 2. [Flora 네이티브 SDK](development/native-ota.ko.md)를 호환되는 앱 binary에 연결하고 앱별 GitHub 저장소·브랜치·runtime·채널을 고정합니다. OTA JS는 호환되지 않는 native 변경을 대신하지 않습니다.
-3. [PC Runner](development/local-pc-runner.ko.md)를 별도 private 경로에 설치하고 앱별 권한·작업 디렉터리·복구 저널을 분리합니다. PC가 꺼지거나 잠들면 새 export는 기다립니다. macOS LaunchAgent는 사용자 로그인 후 시작하며 이 가이드의 로컬 체험이 자동 설치하지 않습니다.
-4. [비공개 GitHub Release 자산 저장소](development/github-release-ota-storage.ko.md)를 선택하면 R2 구독 없이 새 OTA 파일을 저장할 수 있습니다. 확인된 자산 다운로드는 PC가 꺼져도 가능하며 기존 D1 자산·배포 이력은 유지합니다. 이 PC 경로는 EAS·GitHub Actions를 실행하지 않습니다.
+3. [범용 Docker PC Runner](../packages/ota-runner/README.md#run)를 권한 없는 Linux/macOS 사용자로 실행하고 앱별 권한·작업 디렉터리·복구 저널을 분리합니다. 신뢰하는 고정 이미지와 dependency cache를 준비해야 합니다. PC가 꺼지거나 잠들면 새 export는 기다립니다.
+4. 기본 OTA 자산은 D1에 보관합니다. [PC 자동 시작·presence supervisor](development/local-pc-runner.ko.md)와 [GitHub Release 저장소](development/github-release-ota-storage.ko.md)는 UULab 운영 구성이며 범용 자동 설치 기능이 아닙니다. 특히 현재 Release publisher는 `uulab-official/flora-ota-assets`만 허용하므로 자신의 저장소 이름으로 바꾸는 설정만으로 사용할 수 없습니다. EAS·GitHub Actions는 이 PC 경로에 필요하지 않습니다.
 5. 새 커밋의 Job·Runner export·게시·서명/다운로드와 실제 앱의 적용·재시작을 각각 확인합니다. [최신 6개 조합 검증](development/github-release-ota-network-2026-10-17.ko.md)은 장애 후 복구 화면까지 포함하지만 새로운 설치의 결과를 대신하지 않습니다.
 
 별도 유료 구독을 피하는 구성이어도 PC 전력·네트워크, Apple/Google 계정, Cloudflare/GitHub 요청·저장량 한도는 남습니다. 무제한 무료를 보장하지 않습니다. 이 설치에는 일반 사용자용 완전 자동 self-host bootstrap과 모든 인증 DB의 안전한 오프라인 복원 도구가 아직 제공되지 않으므로 호스팅 가이드의 제한을 먼저 확인하세요.
