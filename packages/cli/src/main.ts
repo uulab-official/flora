@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { DomainError, ensure } from "@app-ops/core";
 import { resolveSnapshot } from "@app-ops/config";
 import { readInputFile, decodeWorkflow } from "./config-command.js";
+import { runSetupCommand } from "./setup-command.js";
 import { inspectToolchain } from "./doctor.js";
 import { simulateWorkflow } from "./simulate.js";
 import { runDogfoodCommand } from "./dogfood-command.js";
@@ -18,12 +19,13 @@ const productName = (process.env.PRODUCT_NAME || "Flora")
 const help =
   productName +
   " — " +
-  "Local App Operations Foundation\nplatform doctor [--json] [--strict]\nplatform config validate --file <json>\nplatform job simulate --file <json> [--scenario happy-path|runner-replacement|unsafe-expiry]\nflora dogfood --help\nDoctor --strict exits 1 when Node, pnpm or Git prerequisites are not verified.\nNo native builds, provider connections or deployments.\n";
+  "Local App Operations Foundation\nplatform doctor [--json] [--strict]\nplatform config validate --file <json>\nplatform job simulate --file <json> [--scenario happy-path|runner-replacement|unsafe-expiry]\nflora dogfood --help\nflora setup [runner | --resume <private-state> | inspect --state <private-state> --json]\nDoctor --strict exits 1 when Node, pnpm or Git prerequisites are not verified.\nNo native builds, provider connections or deployments.\n";
 export async function runCli(
   argv: readonly string[],
   io: CliIO,
 ): Promise<number> {
   try {
+    if (argv[0] === "setup") return await runSetupCommand(argv.slice(1));
     if (argv[0] === "dogfood") return await runDogfoodCommand(argv.slice(1), io);
     if (argv.length === 0 || (argv.length === 1 && argv[0] === "--help")) {
       io.stdout(help);
