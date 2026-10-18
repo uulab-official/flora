@@ -180,3 +180,21 @@ test("publication receipt replays after reconnect but changed input never reuses
   await assert.rejects(service.publish("app_test", { ...input, channel: "preview" }), { code: "IDEMPOTENCY_CONFLICT" });
   await assert.rejects(service.publish("app_test", { ...input, requestKey: "publish_new" }), { code: "CONFIG_CONFLICT" });
 });
+
+test("publication_projects_only_metadata_and_never_reads_history",async()=>{
+ const {ctx,deployments}=memory();
+ const deployment:OTADeployment={id:"11111111-1111-4111-8111-111111111111",appId:"app_test",createdAt:5,requestKey:"old",detectionId:"detect_old",commitSha:"a".repeat(40),channel:"preview",runtimeVersion:"native-1",platform:"ios",launchAssetId:"asset_"+"a".repeat(64),assetIds:[],launchAsset:{} as OTAAsset,assets:[]};
+ deployments.push(deployment);
+ ctx.operations.listOTADeployments=async()=>assert.fail("publication must not list history");
+ const service=createOperationsService(ctx,undefined);
+ const get=Reflect.get(service,"getPublication");assert.equal(typeof get,"function");
+ const read=(appId:string,id:string)=>get.call(service,appId,id);
+ assert.deepEqual(await read("app_test",deployment.id),{appId:"app_test",deploymentId:deployment.id,deployment:{id:deployment.id,platform:"ios",channel:"preview",runtimeVersion:"native-1",commitSha:"a".repeat(40),createdAt:5}});
+ await assert.rejects(read("app_other",deployment.id),{code:"NOT_FOUND"});
+ await assert.rejects(read("app_test","22222222-2222-4222-8222-222222222222"),{code:"NOT_FOUND"});
+ await assert.rejects(read("app_test","not-a-uuid"),{code:"INVALID_INPUT"});
+ ctx.operations.getOTADeployment=async()=>({...deployment,appId:"app_other"});
+ await assert.rejects(read("app_test",deployment.id),{code:"CONFIG_CONFLICT"});
+ ctx.operations.getOTADeployment=async()=>({...deployment,commitSha:"broken"});
+ await assert.rejects(read("app_test",deployment.id),{code:"CONFIG_CONFLICT"});
+});

@@ -52,3 +52,20 @@ test("local GitHub management returns the same safe source failure statuses as h
     }
   } finally { await app.close(); }
 });
+
+test("publication_requires_session_exact_uuid_and_read_only_shape",async()=>{
+ const deploymentId="11111111-1111-4111-8111-111111111111";
+ const path="/api/apps/application_test/ota/deployments/"+deploymentId+"/publication";
+ const view={appId:"application_test",deploymentId,deployment:{id:deploymentId,platform:"ios",channel:"preview",runtimeVersion:"1",commitSha:"a".repeat(40),createdAt:1}};
+ let calls=0;
+ const app=await startDashboard({service:{operations:{async getPublication(appId:string,id:string){assert.equal(appId,"application_test");assert.equal(id,deploymentId);calls++;return view;}}} as unknown as DogfoodService});
+ try{
+  assert.equal((await fetch(app.origin+path)).status,401);assert.equal(calls,0);
+  const enrolled=await fetch(app.origin+"/api/session",{method:"POST",headers:{Origin:app.origin,"Content-Type":"application/json"},body:JSON.stringify({bootstrap:new URL(app.bootstrapUrl).hash.slice(1)})});
+  const cookie=enrolled.headers.get("set-cookie")!.split(";")[0]!;
+  const r=await fetch(app.origin+path,{headers:{Cookie:cookie}});assert.equal(r.status,200);assert.deepEqual(await r.json(),view);assert.equal(calls,1);
+  for(const suffix of ["?cursor=all","?appId=other","/"]){assert.ok((await fetch(app.origin+path+suffix,{headers:{Cookie:cookie}})).status>=400);}
+  for(const method of ["POST","HEAD"]){assert.ok((await fetch(app.origin+path,{method,headers:{Cookie:cookie,Origin:app.origin}})).status>=400);}
+  assert.equal(calls,1);
+ }finally{await app.close();}
+});

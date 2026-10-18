@@ -1,5 +1,5 @@
 import type { ApplicationStore } from "./applications.js";
-import { digest, ensure, id, integer, object, text } from "@app-ops/core";
+import { DomainError, digest, ensure, id, integer, object, text } from "@app-ops/core";
 import { canonicalJson, freeze } from "@app-ops/config";
 import { parseAutomationConfigSnapshot } from "./automation.js";
 import type { AutomationConfigSnapshot } from "./automation.js";
@@ -122,7 +122,11 @@ export interface OperationsContext { applications: ApplicationStore; operations:
 export interface GitHubResolver {
   detect(connection: GitHubConnection, rootDirectory: string, resolvedConfig?: unknown, requireCommitSha?: string): Promise<GitHubDetectionResult>;
 }
+export interface OTAPublicationView {
+  appId:string; deploymentId:string; deployment:{id:string;platform:OTAPlatform;channel:string;runtimeVersion:string;commitSha:string;createdAt:number};
+}
 export interface OperationsService {
+  getPublication(appId:string,deploymentId:string):Promise<OTAPublicationView>;
   getState(appId: string): Promise<OperationsState>;
   connect(appId: string, input: GitHubConnectionUpdate, resolvedConfig?: unknown): Promise<OperationsState>;
   detect(appId: string, resolvedConfig?: unknown): Promise<GitHubDetection>;
@@ -274,6 +278,18 @@ export function assertUpdateDestination(detection: GitHubDetection, appId: strin
 export function createOperationsService(ctx: OperationsContext, github: GitHubResolver | undefined, now: () => number = Date.now, options: Omit<OperationsServiceOptions, "github" | "now"> = {}): OperationsService {
   async function app(appId: string) { const value = await ctx.applications.getApplication(id(appId)); ensure(value, "NOT_FOUND"); return value; }
   const service: OperationsService = {
+    async getPublication(appId,deploymentId) {
+      otaDeploymentId(deploymentId); await app(appId);
+      const saved=await ctx.operations.getOTADeployment(appId,deploymentId);
+      ensure(saved,"NOT_FOUND");
+      try {
+        ensure(saved.id===deploymentId && saved.appId===appId);
+        const selection=parseOTASelection({channel:saved.channel,runtimeVersion:saved.runtimeVersion,platform:saved.platform});
+        ensure(typeof saved.commitSha==="string" && /^[a-f0-9]{40}$/.test(saved.commitSha));
+        const createdAt=integer(saved.createdAt);
+        return freeze({appId,deploymentId,deployment:{id:deploymentId,...selection,commitSha:saved.commitSha,createdAt}});
+      } catch {throw new DomainError("CONFIG_CONFLICT");}
+    },
     async getState(appId) {
       await app(appId);
       const [connection, detections, assets, deployments] = await Promise.all([ctx.operations.getGitHubConnection(appId), ctx.operations.listGitHubDetections(appId), ctx.operations.listOTAAssets(appId), ctx.operations.listOTADeployments(appId)]);

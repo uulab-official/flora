@@ -113,6 +113,7 @@ export async function createDogfoodService(store: DogfoodStore, providers: reado
   const rawOperations = store.applications && store.operations ? createOperationsService({ applications: store.applications, operations: store.operations }, options.github, now, { ...(options.publicOrigin ? { publicOrigin: options.publicOrigin } : {}), ...(options.signer ? { signer: options.signer } : {}) }) : null;
   const operations: OperationsService | null = rawOperations ? {
     getState: (...args) => operation(() => rawOperations.getState(...args)),
+    getPublication: (...args) => operation(() => rawOperations.getPublication(...args)),
     connect: (...args) => operation(() => rawOperations.connect(...args)),
     detect: (...args) => operation(() => rawOperations.detect(...args)),
     detectCommit: (...args) => operation(() => rawOperations.detectCommit(...args)),
