@@ -31,3 +31,8 @@ test("bounded_tools_never_leak_errors_and_kill_timeout_or_excess_output",async()
  await assert.rejects(runBoundedTool(process.execPath,["-e","console.log('s'.repeat(500))"],options),/SETUP_TOOL_OUTPUT_LIMIT/);
  await assert.rejects(runBoundedTool(process.execPath,["-e","setInterval(()=>{},1000)"],{...options,timeoutMs:100}),/SETUP_TOOL_TIMEOUT/);
 });
+test("provider_tool_capture_disables_wrangler_disk_logs",async()=>{
+ const {runBoundedTool}=await import(runtime);
+ const result=await runBoundedTool(process.execPath,["-e","process.stdout.write(process.env.WRANGLER_WRITE_LOGS ?? 'missing')"],{cwd:process.cwd(),timeoutMs:1000,maxBytes:256,signal:new AbortController().signal});
+ assert.equal(result.stdout,"false");
+});

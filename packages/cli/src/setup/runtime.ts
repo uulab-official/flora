@@ -21,7 +21,7 @@ export async function resolveSetupRuntime(root:string):Promise<SetupRuntime>{
 export function runBoundedTool(executable:string,args:readonly string[],options:{cwd:string;timeoutMs:number;maxBytes:number;signal:AbortSignal}):Promise<{exitCode:number;stdout:string}>{
   return new Promise((resolve,reject)=>{
     if(!isAbsolute(executable)||!isAbsolute(options.cwd)||options.signal.aborted||!Number.isSafeInteger(options.timeoutMs)||options.timeoutMs<1||!Number.isSafeInteger(options.maxBytes)||options.maxBytes<1){reject(new Error("SETUP_TOOL_INVALID"));return;}
-    const env:NodeJS.ProcessEnv={WRANGLER_SEND_METRICS:"false"};
+    const env:NodeJS.ProcessEnv={WRANGLER_SEND_METRICS:"false",WRANGLER_WRITE_LOGS:"false",NO_COLOR:"1"};
     for(const key of ["PATH","HOME","XDG_CONFIG_HOME","XDG_CACHE_HOME","TMPDIR","LANG","LC_ALL"]){const value=process.env[key];if(value!==undefined)env[key]=value;}
     const child=spawn(executable,[...args],{cwd:options.cwd,env,shell:false,detached:process.platform!=="win32",stdio:["ignore","pipe","pipe"]});
     let bytes=0,output="",finished=false;let timer:ReturnType<typeof setTimeout>;
