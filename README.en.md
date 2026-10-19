@@ -163,6 +163,16 @@ Polling starts at 30 seconds and backs off to five minutes when idle. Presence d
 
 A powered-off/sleeping PC or closed terminal cannot process jobs. The generic wizard does not install an autostart service. UULab's specific LaunchAgent is an [operator reference](docs/development/local-pc-runner.ko.md); review its names/paths before adapting it.
 
+For an offline Runner or a local readiness check, run this from the Flora checkout and replace the example with the absolute path to your private `service.json`. It inspects an existing macOS/Linux Runner configured with a local Unix Docker socket.
+
+```sh
+npm exec --yes --package=pnpm@11.19.0 -- pnpm --silent flora doctor --runner-service /absolute/private-runner/service.json --strict --json
+```
+
+The `runner` report checks service/app configuration and permissions, Docker response, free disk space, the safety-stop marker, and per-app pending recovery. Read the fixed codes and `remediation` in `readiness.issues`. With `--strict`, failed tool or selected Runner checks exit 1; invalid command options exit 2. Without `--strict`, readiness failures remain informational and exit 0.
+
+The check only reads files and sends a read-only `/_ping` request to the validated local Docker socket. It does not print tokens, keys, configuration paths or raw logs, contact cloud services, claim jobs, change configuration, restart a Runner, or delete journals. `runner.ready: true` verifies these local checks; it does not establish a running process, autostart, server connectivity, or successful publication (`serverOnlineVerified: false`). Review preserved recovery/safety-stop evidence before taking a separate recovery action; do not delete it to make the check pass.
+
 ### 6. Publish iOS and Android OTA from a commit
 
 1. In the app's **PC Runner**, enable **Automatic OTA on GitHub push** (`GitHub push 시 자동 OTA`), select `iOS + Android` and channel `preview`, then choose **Save GitHub push policy** (`GitHub push 정책 저장`). Resolve any missing source detection or active Runner first.

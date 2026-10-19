@@ -1,6 +1,7 @@
 import { realpathSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, extname } from "node:path";
 import { spawn } from "node:child_process";
+import type { RunnerDoctorReport } from "./runner-doctor.js";
 export interface ToolReport {
   status: "available" | "unavailable" | "unsupported";
   version: string | null;
@@ -97,10 +98,11 @@ export function probeTool(tool: ToolName, command: string, args: readonly string
 export interface DoctorReadiness {
   ready: boolean;
   issues: {
-    tool: "node" | "pnpm" | "git";
+    tool: "node" | "pnpm" | "git" | "runner";
     code: string;
     message: string;
     remediation: string;
+    runnerIndex?: number;
   }[];
 }
 export interface DoctorReport {
@@ -112,6 +114,7 @@ export interface DoctorReport {
   tools: { xcode: ToolReport; java: ToolReport; git: ToolReport };
   readiness: DoctorReadiness;
   nativeBuildVerified: false;
+  runner?: RunnerDoctorReport;
 }
 export function assessReadiness(report: Pick<DoctorReport, "node" | "pnpm" | "tools">): DoctorReadiness {
   const issues: DoctorReadiness["issues"] = [];

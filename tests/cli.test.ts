@@ -67,6 +67,48 @@ test("strict doctor succeeds on verified prerequisites and rejects the actual pn
     rmSync(directory, { recursive: true, force: true });
   }
 });
+test("doctor runner-service diagnostics block strict readiness without leaking private input", () => {
+  const directory = mkdtempSync(join(tmpdir(), "flora-runner-cli-"));
+  try {
+    const entry = join(directory, "pnpm.cjs");
+    writeFileSync(join(directory, "package.json"), JSON.stringify({ name: "pnpm", version: "11.19.0" }));
+    writeFileSync(entry, "console.log('11.19.0')");
+    const env = { ...process.env, npm_execpath: entry };
+    const privatePath = join(directory, "private-sample-missing.json");
+    const strict = run(["doctor", "--json", "--runner-service", privatePath, "--strict"], env);
+    assert.equal(strict.status, 1, strict.stderr);
+    const report = JSON.parse(strict.stdout);
+    assert.equal(report.runner.readOnly, true);
+    assert.equal(report.runner.serverOnlineVerified, false);
+    assert.equal(report.runner.ready, false);
+    assert.equal(report.readiness.ready, false);
+    assert.ok(report.readiness.issues.some((issue: { tool: string }) => issue.tool === "runner"));
+    assert.equal(strict.stderr, "");
+    assert.ok(!strict.stdout.includes("private-sample"));
+    const informational = run(["doctor", "--runner-service", privatePath], env);
+    assert.equal(informational.status, 0, informational.stderr);
+    assert.equal(JSON.parse(informational.stdout).runner.ready, false);
+    assert.equal(run(["doctor", "--json"], env).status, 0);
+    assert.equal(JSON.parse(run(["doctor", "--json"], env).stdout).runner, undefined);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+test("doctor rejects incomplete or duplicate runner-service flags without exposing arguments", () => {
+  for (const flags of [
+    ["--runner-service"],
+    ["--runner-service", "--strict"],
+    ["--runner-service", "private-sample", "--runner-service", "private-sample"],
+    ["--runner-service", "private-sample", "--json", "--json"],
+    ["--runner-service=private-sample"],
+  ]) {
+    const result = run(["doctor", ...flags]);
+    assert.equal(result.status, 2);
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /^USAGE_ERROR\n/);
+    assert.ok(!result.stderr.includes("private-sample"));
+  }
+});
 test("configuration CLI hides values and aliases share implementation", () => {
   const r = run(["config", "validate", "--file", example]);
   assert.equal(r.status, 0, r.stderr);

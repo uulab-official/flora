@@ -85,6 +85,16 @@ npm exec --yes --package=pnpm@11.19.0 -- pnpm platform config validate --file ex
 
 `nativeBuildVerified: false`는 정상입니다. Xcode·Java의 `unavailable`, Linux/Windows의 Xcode `unsupported`는 이 체험의 실패가 아닙니다. doctor는 도구를 설치하거나 설정을 바꾸지 않으며, 로컬 준비 성공이 native build·서명·클라우드 연결 성공을 증명하지 않습니다.
 
+이미 PC Runner를 구성했다면 해당 private 서비스 파일의 절대 경로를 지정해 로컬 실행 준비도 함께 검사할 수 있습니다(macOS/Linux, 로컬 Unix Docker 소켓).
+
+```sh
+npm exec --yes --package=pnpm@11.19.0 -- pnpm --silent flora doctor --runner-service /absolute/private-runner/service.json --strict --json
+```
+
+기존 Node·pnpm·Git 검사에 서비스/앱별 설정·권한, Docker 응답, 디스크 여유, 안전 중지·복구 대기 검사가 추가됩니다. `runner.ready`와 전체 `readiness.ready`는 구분됩니다. 검사 실패는 고정 코드와 복구 안내를 제공하며 `--strict`에서 종료 코드 1을 반환합니다. 설정 파일이나 경로가 잘못됐다고 원문이나 토큰을 오류에 출력하지 않습니다. 명령 옵션 오류는 종료 코드 2입니다.
+
+파일과 저널은 읽기만 하고, Docker는 검증된 로컬 소켓의 읽기 전용 `/_ping`만 사용합니다([Docker Engine API](https://docs.docker.com/reference/api/engine/version/v1.51/)). 원격 Docker·Flora·GitHub에 요청하지 않고 설정 수정·프로세스 재시작·자동 복구를 수행하지 않습니다. `serverOnlineVerified: false`는 정상입니다. 로컬 검사 통과가 서비스 실행·재부팅 후 자동 시작·서버 온라인·OTA 배포 성공을 증명하지 않습니다. 복구 대기나 안전 중지일 때는 기존 저널과 표식을 보존하고 운영 이력을 먼저 확인하세요.
+
 예제를 바꾸지 않았다면 config 결과의 `mode`는 `local`이고 `snapshotId`는 다음과 같습니다.
 
 ```text

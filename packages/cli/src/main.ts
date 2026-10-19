@@ -7,6 +7,7 @@ import { resolveSnapshot } from "@app-ops/config";
 import { readInputFile, decodeWorkflow } from "./config-command.js";
 import { runSetupCommand } from "./setup-command.js";
 import { inspectToolchain } from "./doctor.js";
+import { inspectRunnerService } from "./runner-doctor.js";
 import { simulateWorkflow } from "./simulate.js";
 import { runDogfoodCommand } from "./dogfood-command.js";
 import type { Scenario } from "./simulate.js";
@@ -21,7 +22,22 @@ const productName = (process.env.PRODUCT_NAME || "Flora")
 const help =
   productName +
   " — " +
-  "Local App Operations Foundation\nplatform doctor [--json] [--strict]\nplatform config validate --file <json>\nplatform job simulate --file <json> [--scenario happy-path|runner-replacement|unsafe-expiry]\nflora dogfood --help\nflora setup [runner | --resume <private-state> | renew --state <private-state> | inspect --state <private-state> --json]\nDoctor --strict exits 1 when Node, pnpm or Git prerequisites are not verified.\nFoundation commands are local. setup can provision a new Cloudflare server and guide a PC Runner; review its explicit resource scope.\n";
+  "Local App Operations Foundation\nplatform doctor [--json] [--strict] [--runner-service <absolute-service.json>]\nplatform config validate --file <json>\nplatform job simulate --file <json> [--scenario happy-path|runner-replacement|unsafe-expiry]\nflora dogfood --help\nflora setup [runner | --resume <private-state> | renew --state <private-state> | inspect --state <private-state> --json]\nDoctor --strict exits 1 when required prerequisites or selected local Runner checks are not verified.\nRunner doctor only reads local files and the configured local Docker socket; server connectivity and native builds remain unverified.\nFoundation commands are local. setup can provision a new Cloudflare server and guide a PC Runner; review its explicit resource scope.\n";
+function doctorOptions(argv: readonly string[]): { strict: boolean; runnerService?: string } | null {
+  const seen = new Set<string>();
+  let runnerService: string | undefined;
+  for (let i = 0; i < argv.length; i++) {
+    const flag = argv[i]!;
+    if (!["--json", "--strict", "--runner-service"].includes(flag) || seen.has(flag)) return null;
+    seen.add(flag);
+    if (flag === "--runner-service") {
+      const value = argv[++i];
+      if (!value || value.startsWith("--")) return null;
+      runnerService = value;
+    }
+  }
+  return { strict: seen.has("--strict"), ...(runnerService === undefined ? {} : { runnerService }) };
+}
 export async function runCli(
   argv: readonly string[],
   io: CliIO,
@@ -37,15 +53,23 @@ export async function runCli(
       io.stdout("0.1.0\n");
       return 0;
     }
-    if (
-      argv[0] === "doctor" &&
-      argv.length <= 3 &&
-      argv.slice(1).every(flag => flag === "--json" || flag === "--strict") &&
-      new Set(argv.slice(1)).size === argv.length - 1
-    ) {
+    if (argv[0] === "doctor") {
+      const options = doctorOptions(argv.slice(1));
+      if (!options) { io.stderr("USAGE_ERROR\n" + help); return 2; }
       const report = await inspectToolchain();
+      if (options.runnerService !== undefined) {
+        const runner = await inspectRunnerService(options.runnerService);
+        report.runner = runner;
+        report.readiness = {
+          ready: report.readiness.ready && runner.ready,
+          issues: [...report.readiness.issues, ...runner.issues.map(issue => ({
+            tool: "runner" as const, code: issue.code, message: issue.message, remediation: issue.remediation,
+            ...(issue.runnerIndex === undefined ? {} : { runnerIndex: issue.runnerIndex }),
+          }))],
+        };
+      }
       io.stdout(JSON.stringify(report, null, 2) + "\n");
-      return argv.includes("--strict") && !report.readiness.ready ? 1 : 0;
+      return options.strict && !report.readiness.ready ? 1 : 0;
     }
     const config = argv[0] === "config" && argv[1] === "validate",
       simulation = argv[0] === "job" && argv[1] === "simulate";

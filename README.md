@@ -163,6 +163,16 @@ npm exec --yes --package=pnpm@11.19.0 -- pnpm flora setup runner
 
 PC가 꺼지거나 잠들거나 터미널이 닫히면 작업을 처리하지 못합니다. 일반 마법사는 자동 시작 서비스를 설치하지 않습니다. UULab 전용 LaunchAgent는 [운영 참고](docs/development/local-pc-runner.ko.md)이며 이름·경로를 검토 없이 다른 설치에 복사하지 마세요.
 
+Runner가 오프라인이거나 실행 준비 상태를 확인하려면, 저장소 루트에서 아래 경로를 자신의 private `service.json` 절대 경로로 바꿔 실행합니다. macOS/Linux의 로컬 Unix Docker 소켓을 사용하는 기존 Runner 구성을 읽습니다.
+
+```sh
+npm exec --yes --package=pnpm@11.19.0 -- pnpm --silent flora doctor --runner-service /absolute/private-runner/service.json --strict --json
+```
+
+`runner`에는 서비스·앱별 설정과 권한, Docker 응답, 디스크 여유, 안전 중지 표식과 앱별 복구 대기 결과가 표시됩니다. `readiness.issues`의 고정 오류 코드와 `remediation`을 확인합니다. `--strict`는 도구 또는 선택한 Runner 검사 실패 시 1, 잘못된 명령 옵션은 2를 반환합니다. `--strict`를 생략하면 준비 실패도 현황 보고 후 0을 반환합니다.
+
+이 진단은 파일을 읽고 검증된 로컬 Docker 소켓에 읽기 전용 `/_ping` 요청만 보냅니다. 토큰·키·설정 경로·로그 원문은 출력하지 않으며 서버 요청·작업 claim·설정 변경·Runner 재시작·저널 삭제를 하지 않습니다. `runner.ready: true`는 로컬 검사 통과이며 서비스 실행, 자동 시작, 서버 온라인 또는 배포 성공의 증거가 아닙니다(`serverOnlineVerified: false`). 복구 대기나 안전 중지 표식은 해당 이력을 확인한 뒤 별도로 조치하세요. 기존 파일을 지워서 통과시키지 마세요.
+
 ### 6. 커밋으로 iOS·Android OTA 게시하기
 
 1. 앱의 **PC Runner** 화면에서 **GitHub push 시 자동 OTA**를 켜고 `iOS + Android`, `preview` 채널을 선택한 뒤 **GitHub push 정책 저장**을 누릅니다. source 감지·활성 Runner가 준비되지 않았다면 먼저 그 원인을 해결합니다.
