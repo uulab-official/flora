@@ -157,6 +157,8 @@ npm exec --yes --package=pnpm@11.19.0 -- pnpm flora setup runner
 
 이미 검증한 immutable `sha256:` 이미지 ID를 입력하거나 비워 고정 Dockerfile의 공개 도구 이미지를 빌드합니다. 이미지에 앱 소스·비밀키·토큰을 넣지 않습니다. Flora 자체 pnpm 11.19.0과 앱 Runner pnpm 11.10.0은 별개입니다. Docker 도구 버전과 정확한 Runner presence를 확인한 후, 마지막 질문에서 foreground 실행을 선택합니다.
 
+일반 PC Runner 토큰은 앱별 로컬 복구 저널을 사용합니다. CI 세션 전용 `publicationRecovery: "remote-checkpoint"`를 PC 설정에 추가하지 마세요. 기존 서버가 GitHub Releases 자산 저장소를 사용한다면 [Runner의 `assetStorage` 설정](packages/ota-runner/README.md)을 같은 저장소와 별도 private cache로 연결합니다. 기존 복구 저널과 토큰은 유지합니다.
+
 기본 조회는 30초, 유휴 시 최대 5분으로 늘어납니다. 연결만 확인됐다고 export·게시 성공으로 표시하지 않습니다. Ctrl-C는 이번 실행만 종료합니다. 같은 파일·디렉터리로 다시 실행하면 fingerprint·앱 scope를 확인하고 기존 토큰을 재사용합니다. 기존 파일·복구 journal·`fatal-stop`은 덮어쓰거나 삭제하지 않습니다.
 
 PC가 꺼지거나 잠들거나 터미널이 닫히면 작업을 처리하지 못합니다. 일반 마법사는 자동 시작 서비스를 설치하지 않습니다. UULab 전용 LaunchAgent는 [운영 참고](docs/development/local-pc-runner.ko.md)이며 이름·경로를 검토 없이 다른 설치에 복사하지 마세요.

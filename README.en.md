@@ -157,6 +157,8 @@ Enter absolute paths to the binding/SDK files and a new private runtime director
 
 Enter a previously verified immutable `sha256:` image ID, or leave blank to build from Flora's fixed public-tool Dockerfile. App source, secrets and tokens never enter the image. Flora development pnpm 11.19.0 and app Runner pnpm 11.10.0 are separate pins. After image/tool and exact Runner presence checks, explicitly choose foreground execution.
 
+Ordinary PC Runner tokens use app-scoped local recovery journals. Do not add the CI-session-only `publicationRecovery: "remote-checkpoint"` setting. If an existing server uses GitHub Releases asset storage, configure the Runner [`assetStorage` option](packages/ota-runner/README.md) for that repository with a separate private cache, retaining existing journals and tokens.
+
 Polling starts at 30 seconds and backs off to five minutes when idle. Presence does not prove export/publication success. Ctrl-C stops only this execution. Reuse the same files/directory to verify fingerprints and scope without issuing a new token. Existing config, recovery journals and `fatal-stop` are preserved.
 
 A powered-off/sleeping PC or closed terminal cannot process jobs. The generic wizard does not install an autostart service. UULab's specific LaunchAgent is an [operator reference](docs/development/local-pc-runner.ko.md); review its names/paths before adapting it.

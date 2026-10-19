@@ -21,8 +21,11 @@ async function harness(t: TestContext) {
   await runtime.d1.prepare('INSERT INTO flora_deployment(singleton,owner_id,origin,db_identity) VALUES(1,?,?,?)').bind('synthetic-owner', origin, 'synthetic-db').run();
   const enrolled = await runtime.fetch(origin + '/api/auth/enroll', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'owner@example.test', password, confirmation: password, token: token.toString('base64url') }) }); assert.equal(enrolled.status, 200);
   const cookie = enrolled.headers.getSetCookie().map(c => c.split(';', 1)[0]).join('; '), csrf = (await enrolled.json() as any).csrfToken;
-  const call = (path: string, input?: unknown, headers: Record<string, string> = {}) => runtime.fetch(origin + path, { method: input === undefined ? 'GET' : 'POST', headers: { Cookie: cookie, ...(input === undefined ? {} : { Origin: origin, 'Content-Type': 'application/json', 'X-Flora-CSRF': csrf }), ...headers }, ...(input === undefined ? {} : { body: JSON.stringify(input) }) });
-  const machine = (token: string, action: string, input: unknown) => runtime.fetch(origin + '/api/native-runner/' + action, { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+  // These endpoints return bounded JSON. Drain each Miniflare response before
+  // issuing another request; retain independent bodies for caller assertions.
+  const complete = async (pending: ReturnType<typeof runtime.fetch>) => { const response = await pending; return new Response(await response.arrayBuffer(), { status: response.status, statusText: response.statusText, headers: [...response.headers.entries()] }); };
+  const call = (path: string, input?: unknown, headers: Record<string, string> = {}) => complete(runtime.fetch(origin + path, { method: input === undefined ? 'GET' : 'POST', headers: { Cookie: cookie, ...(input === undefined ? {} : { Origin: origin, 'Content-Type': 'application/json', 'X-Flora-CSRF': csrf }), ...headers }, ...(input === undefined ? {} : { body: JSON.stringify(input) }) }));
+  const machine = (token: string, action: string, input: unknown) => complete(runtime.fetch(origin + '/api/native-runner/' + action, { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify(input) }));
   const apps: string[] = [];
   for (const repository of ['expo-one', 'rn-two']) {
     const r = await call('/api/apps', { name: repository, repositoryId: 'github:synthetic/' + repository, rootDirectory: '.' }); assert.equal(r.status, 201); const appId = (await r.json() as any).id; apps.push(appId); appMap.set(repository, appId);

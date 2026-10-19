@@ -1,5 +1,67 @@
 # 설치 마법사 검증 기록 — 2026-10-18
 
+## 2026-10-19 기존 UULab 서버의 실제 GitHub·PC Runner 검증
+
+사용자가 연결 대상을 `https://flora.uulab.co.kr`로 지정했다. 기존 GitHub App의
+저장소 전체 읽기 설치에서 새 비공개 저장소 두 개를 확인하고 별도 앱으로 등록했다.
+이 결과는 기존 설치의 연결 경로 검증이다. 별도 새 QA 서버의 최초 관리자 등록과
+새 설치 전체 완료를 대신하지 않는다.
+
+| 앱 / GitHub 저장소 | 실제 자동 배포 커밋 | iOS 게시 | Android 게시 |
+| --- | --- | --- | --- |
+| Flora QA A / `uulab-official/flora-qa-13836a78-a` | `d928ad242242660ee15be0d0b31d64abde28b8c3` | `47cc38aa-6997-46a6-91b2-aac25df17090` | `ff360944-bcb4-4503-903d-6f1209fb9a0a` |
+| Flora QA B / `uulab-official/flora-qa-13836a78-b` | `aba265d4bd334fa64ae251f3b9532a836299b3da` | `eb42428c-4870-4638-8e04-b285cbf21375` | `86be924f-48cc-47ed-aa01-6848cccd8282` |
+
+두 앱은 RN 0.86.3, Flora SDK 0.3.2, Node 24.19.0/npm 10.9.8, Metro,
+`qa-onboarding` 채널과 `qa-native-1` 런타임을 사용한다. 서로 다른 앱 ID·공개 서명
+인증서·SDK URL·private Runner 토큰과 작업/복구/자산 캐시를 사용한다. iOS/Android
+네이티브 호스트의 연결 소스와 공개 설정은 각 저장소에 포함했다. 새 네이티브
+바이너리의 빌드·설치·기기 적용·재시작은 이번 검증 범위에 포함하지 않았다.
+
+실제 GitHub push가 `hook_…_ios` / `hook_…_android` 작업을 생성했고 PC Docker가
+온라인 npm 의존성 준비 후 네트워크 없는 export를 수행했다. 네 작업은 각각 한 번의
+시도로 게시됐으며 queued → claimed → heartbeat → succeeded 상세 이력이 있다.
+수동 queue 요청이나 EAS를 사용하지 않았고 두 저장소의 Actions run 수는 각각 0이다.
+
+공개 `scripts/onboarding-download-qa.mjs`로 각 앱의 두 플랫폼을 순차 검증했다.
+RSA 서명·인증서·앱/채널/런타임/플랫폼/커밋/배포 ID와 전체 자산 SHA-256이 모두
+일치했다. 네 자산의 실제 다운로드 해시는 private 게시 캐시의 `github-ota-v3`
+커밋 표식이 포함된 번들과도 일치한다. 이는 서명된 HTTPS 다운로드 증거이며
+실제 기기의 다운로드·적용 보고로 집계하거나 채택률로 해석하지 않았다.
+
+앱 A 설정 저장 후 앱 B 설정이 그대로임을 확인하고 두 앱에 서로 다른 공개 QA
+설정을 저장했다. A Runner로 B 소스를 요청하면 403, A 경로에서 B 작업 상세 또는
+자산을 요청하면 404다. B manifest를 A 인증서로 검증하면 거절된다. Flora 화면에서
+각 앱의 양 플랫폼 게시·온라인 상태·실패/취소/성공 이력이 분리되어 보인다.
+
+실행 중 발견한 PC 설정 오류도 수정했다. 일반 PC 토큰에 CI 전용
+`publicationRecovery: "remote-checkpoint"`를 지정하면 `CI_SESSION_REQUIRED`로
+중지되므로 설치 CLI는 기존의 durable local recovery journal을 사용한다.
+회귀 테스트의 실패를 확인한 뒤 수정했고 CLI/복구 집중 검사 11건이 통과했다.
+기존 서버는 GitHub Releases 자산 저장소를 사용하므로 새 Runner에도 같은 private
+저장소와 별도 캐시를 연결했다. 최초 게시의 428 실패와 대기 작업 취소 기록, 이전
+설정·중지 표식은 보존했고 새 커밋으로 재검증했다.
+
+QA 전용 LaunchAgent 두 개를 기존 운영 서비스와 다른 이름으로 등록했다.
+컨트롤러를 PC의 private 영속 경로에 번들링했고 둘 다 launchd `running` 및 실제
+presence 응답을 확인했다. RunAtLoad는 사용자 로그인 시 시작하며 기존 Docker VM을
+사용한다. 물리적인 PC 재부팅은 수행하지 않았다. 일반 설치 마법사의 foreground
+기본 동작이나 기존 세 앱의 자동 시작 서비스는 변경하지 않았다.
+
+전체 `pnpm check`: **1,459 pass / 0 fail / 3 skip / 0 cancelled**, 607.11초, exit 0.
+생략은 Windows, 명시적인 Expo 앱 환경, 명시적인 PNPM Docker 이미지 환경 각 1건이다.
+최초 전체 검사에서는 native HTTP 테스트의 응답 본문 중복 읽기가 실패했다.
+해당 테스트의 bounded JSON 응답을 다음 요청 전에 완전히 읽고 독립 Response로
+반환하도록 보완했고, 집중 6건과 최종 전체 검사가 통과했다. 실패 로그도 보존했다.
+
+기존 Isso·Promise·Reward의 GitHub/OTA 상태·정책·Runner 목록·작업 이력과 앱 목록
+요약을 작업 전과 대조해 모두 일치했다. 기존 키를 교체·반출하거나 DB를 초기화하지
+않았다. 원본 작업 폴더 559개 파일 hash, HEAD, index, staging과 전체 untracked 상태도
+그대로다. 검증 산출물은 원본의 무시된 `dist/installation-wizard-implementation-2026-10-18/`
+아래 보존했다. 구현 브랜치 변경을 운영 Worker 배포나 Flora main 병합으로 보고하지 않는다.
+
+## 2026-10-18 새 설치 경로의 이전 검증
+
 승인된 설계와 구현 계획에 따라 독립 브랜치에 구현하고 최종 로컬 검증을 마쳤습니다. 기존 UULab 운영 앱·키·DB·서비스를 새 설치로 교체하지 않습니다. 이 기록은 현재 단계의 증거이며 원격 설치 완료를 뜻하지 않습니다.
 
 ## 확인한 범위
