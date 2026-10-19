@@ -173,6 +173,8 @@ npm exec --yes --package=pnpm@11.19.0 -- pnpm --silent flora doctor --runner-ser
 
 이 진단은 파일을 읽고 검증된 로컬 Docker 소켓에 읽기 전용 `/_ping` 요청만 보냅니다. 토큰·키·설정 경로·로그 원문은 출력하지 않으며 서버 요청·작업 claim·설정 변경·Runner 재시작·저널 삭제를 하지 않습니다. `runner.ready: true`는 로컬 검사 통과이며 서비스 실행, 자동 시작, 서버 온라인 또는 배포 성공의 증거가 아닙니다(`serverOnlineVerified: false`). 복구 대기나 안전 중지 표식은 해당 이력을 확인한 뒤 별도로 조치하세요. 기존 파일을 지워서 통과시키지 마세요.
 
+오류 코드별 확인 순서와 복구 경계는 [PC Runner 진단 가이드](docs/development/runner-doctor.ko.md)를 참고하세요.
+
 ### 6. 커밋으로 iOS·Android OTA 게시하기
 
 1. 앱의 **PC Runner** 화면에서 **GitHub push 시 자동 OTA**를 켜고 `iOS + Android`, `preview` 채널을 선택한 뒤 **GitHub push 정책 저장**을 누릅니다. source 감지·활성 Runner가 준비되지 않았다면 먼저 그 원인을 해결합니다.

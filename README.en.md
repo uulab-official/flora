@@ -173,6 +173,8 @@ The `runner` report checks service/app configuration and permissions, Docker res
 
 The check only reads files and sends a read-only `/_ping` request to the validated local Docker socket. It does not print tokens, keys, configuration paths or raw logs, contact cloud services, claim jobs, change configuration, restart a Runner, or delete journals. `runner.ready: true` verifies these local checks; it does not establish a running process, autostart, server connectivity, or successful publication (`serverOnlineVerified: false`). Review preserved recovery/safety-stop evidence before taking a separate recovery action; do not delete it to make the check pass.
 
+For fixed-code troubleshooting and recovery boundaries, see the [PC Runner diagnosis guide (Korean)](docs/development/runner-doctor.ko.md).
+
 ### 6. Publish iOS and Android OTA from a commit
 
 1. In the app's **PC Runner**, enable **Automatic OTA on GitHub push** (`GitHub push 시 자동 OTA`), select `iOS + Android` and channel `preview`, then choose **Save GitHub push policy** (`GitHub push 정책 저장`). Resolve any missing source detection or active Runner first.
