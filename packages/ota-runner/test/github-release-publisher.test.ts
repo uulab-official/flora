@@ -139,3 +139,43 @@ test("host publisher abort drains the gh process group without passing environme
   for(const pid of [pids.pid,pids.child]){let alive=true;for(let i=0;i<100&&alive;i++){try{process.kill(pid,0);await new Promise(resolve=>setTimeout(resolve,10));}catch{alive=false;}}assert.equal(alive,false,"process group is fully stopped");}
  }finally{stop.abort();if(original===undefined)delete process.env.GH_TOKEN;else process.env.GH_TOKEN=original;}
 });
+
+test("host GitHub GET retries a negative response once with a fresh query while preserving mutation requests",async t=>{
+ const f=await fixture(t),capture=join(f.root,"gh-requests.json");await writeFile(capture,JSON.stringify({calls:[],release:null}),{mode:0o600});
+ await writeFile(f.storage.ghPath,"#!"+process.execPath+"\n"+`
+const fs=require('node:fs'),crypto=require('node:crypto'),path=${JSON.stringify(capture)},saved=JSON.parse(fs.readFileSync(path,'utf8')),args=process.argv.slice(2);
+const value=key=>args[args.indexOf(key)+1],method=value('--method'),resource=args[args.indexOf('--method')+2],headers=args.flatMap((arg,index)=>arg==='--header'?[args[index+1]]:[]),url=new URL(resource,'https://api.github.com/');
+saved.calls.push({args,method,resource,headers,hasToken:!!(process.env.GH_TOKEN||process.env.GITHUB_TOKEN),hasHome:!!process.env.HOME});
+let input='';process.stdin.on('data',bytes=>input+=bytes);process.stdin.on('end',()=>{
+ let status=200,body={},release=saved.release;const base='/repos/uulab-official/flora-ota-assets',fresh=url.searchParams.has('flora_check')&&headers.includes('Cache-Control: no-cache');
+ if(method==='GET'&&url.pathname===base){status=fresh?200:404;body=fresh?{private:true,full_name:'uulab-official/flora-ota-assets',default_branch:'main'}:{message:'Not Found'};}
+ else if(method==='GET'&&url.pathname.includes('/releases/tags/')){status=404;body={message:'Not Found'};}
+ else if(method==='GET'&&url.pathname===base+'/releases'){status=fresh?200:404;body=fresh?[]:{message:'Not Found'};}
+ else if(method==='GET'&&url.pathname===base+'/commits/main')body={sha:'b'.repeat(40)};
+ else if(method==='GET'&&url.pathname===base+'/releases/10')body=release;
+ else if(method==='POST'&&url.pathname===base+'/releases'){release={id:10,...JSON.parse(input),assets:[]};status=201;body=release;}
+ else if(method==='POST'&&url.pathname===base+'/releases/10/assets'){const bytes=fs.readFileSync(value('--input')),digest=crypto.createHash('sha256').update(bytes).digest('hex');body={id:20,name:url.searchParams.get('name'),digest:'sha256:'+digest,size:bytes.length,state:'uploaded',content_type:'application/octet-stream'};release.assets=[body];status=201;}
+ else if(method==='PATCH'&&url.pathname===base+'/releases/10'){release.draft=false;body=release;}
+ else{status=400;body={message:'Unexpected request'};}
+ saved.release=release;fs.writeFileSync(path,JSON.stringify(saved));process.stdout.write('HTTP/2.0 '+status+' Status\\nContent-Type: application/json\\n\\n'+JSON.stringify(body));process.exitCode=status>=400?1:0;
+});
+`);
+ const originalGH=process.env.GH_TOKEN,originalGitHub=process.env.GITHUB_TOKEN;process.env.GH_TOKEN="fixture-gh-token-not-real";process.env.GITHUB_TOKEN="fixture-github-token-not-real";
+ try{
+  const publisher=createGitHubReleasePublisher(f.storage,{pause:async()=>{}});assert.deepEqual(await publisher({origin:f.origin,job:f.job,lease:f.lease,upload:f.upload,bytes:f.bytes}),{schemaVersion:1,releaseId:10,assetId:20});
+  const {calls}=JSON.parse(await readFile(capture,"utf8")) as {calls:{args:string[];method:string;resource:string;headers:string[];hasToken:boolean;hasHome:boolean}[]};
+  const get=calls.filter(call=>call.method==="GET"),fresh=get.filter(call=>new URL(call.resource,"https://api.github.com/").searchParams.has("flora_check"));assert.equal(fresh.length,3);
+  const nonces=fresh.map(call=>new URL(call.resource,"https://api.github.com/").searchParams.get("flora_check")!);assert.equal(new Set(nonces).size,3);assert.ok(nonces.every(nonce=>/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(nonce)));
+  assert.ok(fresh.every(call=>call.headers.includes("Cache-Control: no-cache")));assert.ok(get.filter(call=>!fresh.includes(call)).every(call=>!call.headers.includes("Cache-Control: no-cache")));
+  const lists=get.filter(call=>new URL(call.resource,"https://api.github.com/").pathname.endsWith("/releases"));assert.equal(lists.length,2);assert.ok(lists.every(call=>new URL(call.resource,"https://api.github.com/").searchParams.get("per_page")==="100"));assert.equal(get.filter(call=>call.resource.includes("/releases/tags/")).length,2,"a real missing tag is retried once before the existing list check");
+  assert.deepEqual(calls.filter(call=>call.method!=="GET").map(call=>({method:call.method,resource:call.resource})),[{method:"POST",resource:"repos/uulab-official/flora-ota-assets/releases"},{method:"POST",resource:"https://uploads.github.com/repos/uulab-official/flora-ota-assets/releases/10/assets?name=flora-"+f.asset.digest+".bin"},{method:"PATCH",resource:"repos/uulab-official/flora-ota-assets/releases/10"}]);
+  assert.ok(calls.filter(call=>call.method!=="GET").every(call=>!call.headers.includes("Cache-Control: no-cache")));assert.ok(calls.every(call=>!call.hasToken&&call.hasHome));assert.ok(!JSON.stringify(calls).includes("fixture-gh-token-not-real")&&!JSON.stringify(calls).includes("fixture-github-token-not-real"));
+ }finally{if(originalGH===undefined)delete process.env.GH_TOKEN;else process.env.GH_TOKEN=originalGH;if(originalGitHub===undefined)delete process.env.GITHUB_TOKEN;else process.env.GITHUB_TOKEN=originalGitHub;}
+});
+
+test("host GitHub permanent repository 404 remains rejected after one fresh GET without creating resources",async t=>{
+ const f=await fixture(t),capture=join(f.root,"gh-404.json");await writeFile(capture,"[]",{mode:0o600});await writeFile(f.storage.ghPath,"#!"+process.execPath+"\nconst fs=require('node:fs'),path="+JSON.stringify(capture)+",calls=JSON.parse(fs.readFileSync(path,'utf8'));calls.push(process.argv.slice(2));fs.writeFileSync(path,JSON.stringify(calls));console.log('HTTP/2.0 404 Not Found\\nContent-Type: application/json\\n\\n{\"message\":\"Not Found\"}');process.exitCode=1;\n");
+ await assert.rejects(createGitHubReleasePublisher(f.storage)({origin:f.origin,job:f.job,lease:f.lease,upload:f.upload,bytes:f.bytes}),/^Error: ASSET_STORAGE_UNAVAILABLE$/);
+ const calls=JSON.parse(await readFile(capture,"utf8")) as string[][];assert.equal(calls.length,2);assert.ok(calls.every(args=>args[args.indexOf("--method")+1]==="GET"));assert.equal(calls[0]![calls[0]!.indexOf("--method")+2],"repos/uulab-official/flora-ota-assets");assert.match(calls[1]![calls[1]!.indexOf("--method")+2]!,/^repos\/uulab-official\/flora-ota-assets\?flora_check=[0-9a-f-]{36}$/);
+ const dir=join(f.storage.cacheDirectory,(await readdir(f.storage.cacheDirectory))[0]!);assert.equal(JSON.parse(await readFile(join(dir,"state.json"),"utf8")).phase,"new");assert.deepEqual(await readFile(join(dir,"asset.bin")),Buffer.from(f.bytes));
+});

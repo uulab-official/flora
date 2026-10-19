@@ -32,13 +32,15 @@ async function atomic(path:string,value:unknown){const temporary=path+"."+random
 async function diskBudget(root:string,additional:number){const stat=await statfs(root,{bigint:true});invariant(stat.bavail*stat.bsize>=2n*1024n**3n+BigInt(additional),"ASSET_STORAGE_CAPACITY");let bytes=0,entries=0;
  for(const child of await readdir(root,{withFileTypes:true})){invariant(++entries<=100000,"ASSET_STORAGE_CAPACITY");const path=join(root,child.name);if(child.isDirectory()){await privateEntry(path,true);for(const name of await readdir(path)){invariant(++entries<=100000,"ASSET_STORAGE_CAPACITY");bytes+=(await privateEntry(join(path,name))).size;}}else bytes+=(await privateEntry(path)).size;invariant(bytes+additional<=capacity,"ASSET_STORAGE_CAPACITY");}
 }
-async function ghRequest(config:GitHubAssetStorage,input:APIRequest):Promise<APIReply>{
- const args=["api","--hostname","github.com","--include","--method",input.method,input.path,"--header","Accept: application/vnd.github+json","--header","X-GitHub-Api-Version: 2026-03-10"];
+async function ghRequest(config:GitHubAssetStorage,input:APIRequest,fresh=false):Promise<APIReply>{
+ const path=fresh?input.path+(input.path.includes("?")?"&":"?")+"flora_check="+randomUUID():input.path;
+ const args=["api","--hostname","github.com","--include","--method",input.method,path,"--header","Accept: application/vnd.github+json","--header","X-GitHub-Api-Version: 2026-03-10"];
+ if(fresh)args.push("--header","Cache-Control: no-cache");
  if(input.file)args.push("--header","Content-Type: application/octet-stream","--input",input.file);else if(input.body!==undefined)args.push("--input","-");
  // Existing host gh login only. No GH_TOKEN/GITHUB_TOKEN or source/Runner token
  // is copied to the process or to Docker. Never retain gh stderr/API bodies.
  const env={HOME:process.env.HOME??"",PATH:process.env.PATH??"/usr/bin:/bin",LANG:"C.UTF-8",GH_HOST:"github.com",GH_PROMPT_DISABLED:"1",GH_PAGER:"cat",NO_COLOR:"1"};
- return new Promise((resolve,reject)=>{if(input.signal.aborted){reject(Error("LEASE_EXPIRED"));return;}let child:ReturnType<typeof spawn>,failed=false,size=0;const chunks:Buffer[]=[];
+ const response=await new Promise<APIReply>((resolve,reject)=>{if(input.signal.aborted){reject(Error("LEASE_EXPIRED"));return;}let child:ReturnType<typeof spawn>,failed=false,size=0;const chunks:Buffer[]=[];
   try{child=spawn(config.ghPath,args,{env,stdio:["pipe","pipe","pipe"],detached:process.platform!=="win32"});}catch{reject(Error(fail));return;}
   const stop=()=>{failed=true;try{if(child.pid&&process.platform!=="win32")process.kill(-child.pid,"SIGKILL");else child.kill("SIGKILL");}catch{}};
   const timer=setTimeout(stop,30000);input.signal.addEventListener("abort",stop,{once:true});
@@ -49,6 +51,9 @@ async function ghRequest(config:GitHubAssetStorage,input:APIRequest):Promise<API
    try{const body=JSON.parse(stdout.slice(separator).trim()),retryAfter=/^retry-after:\s*([^\r\n]*)$/im.exec(stdout.slice(0,separator))?.[1];resolve({status:Number(match[1]),body,...(retryAfter?{retryAfter}:{})});}catch{reject(Error(fail));}
   });child.stdin!.on("error",()=>{});child.stdin!.end(input.body===undefined?"":canonical(input.body));if(input.signal.aborted)stop();
  });
+ // A negative GET may be stale. Re-read once using the same host credentials;
+ // a second 404 stays a 404. Mutations are never replayed by this transport.
+ return input.method==="GET"&&response.status===404&&!fresh?ghRequest(config,input,true):response;
 }
 const wait=(ms:number,signal:AbortSignal)=>new Promise<void>((resolve,reject)=>{const timer=setTimeout(done,ms);function done(){signal.removeEventListener("abort",stop);resolve();}function stop(){clearTimeout(timer);signal.removeEventListener("abort",stop);reject(Error("LEASE_EXPIRED"));}signal.addEventListener("abort",stop,{once:true});if(signal.aborted)stop();});
 
