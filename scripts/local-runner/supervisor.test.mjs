@@ -142,7 +142,10 @@ test('presence deadline permits a graceful zero exit only with exact transient r
 });
 test('presence deadline keeps success, authority, configuration, recovery, work-stage and overflow results fail closed',async()=>{
  const transport=[{diagnostic:true,stage:'runner-execution',code:'RUNNER_TRANSPORT_UNAVAILABLE'},{code:'RUNNER_TRANSPORT_UNAVAILABLE'}];
- const cases=[{exitCode:0,records:[presenceRecord]},
+ const cases=[{exitCode:0,records:[presenceRecord,presenceRecord]},
+  {exitCode:0,records:[{...presenceRecord,runnerId:'invalid'}]},
+  {exitCode:0,records:[{...presenceRecord,token:'never-log-secret'}]},
+  {exitCode:0,records:[presenceRecord,{diagnostic:true,stage:'runner-execution',httpStatus:401,code:'FORBIDDEN'}]},
   {exitCode:null,records:[...transport,{state:'presence'}]},
   {exitCode:null,records:[{diagnostic:true,stage:'runner-execution',code:'RUNNER_TRANSPORT_UNAVAILABLE',httpStatus:401}]},
   ...['FORBIDDEN','RUNNER_REVOKED','CONFIG_CONFLICT','INVALID_RUNNER_CONFIG','INVALID_RECOVERY_JOURNAL','RUNNER_RESPONSE_INVALID'].map(code=>({exitCode:null,records:[{diagnostic:true,stage:'runner-execution',code,httpStatus:503},{code}]})),
@@ -297,4 +300,23 @@ test('ten idle apps with maximum configured interval retain five-minute fair pol
  const f=await fixture(Array.from({length:10},(_,i)=>'app-'+i)),controller=new AbortController(),calls=[];let time=1800000000000;const start=time;
  try{assert.equal(await supervise({...f.c,pollIntervalMs:300000},{presence:false,now:()=>time,signal:controller.signal,run:async(_cmd,args)=>{calls.push({app:args[2],time});return {exitCode:0,records:[{state:'empty'}]};},pause:async ms=>{time+=ms;if(time-start>=1200000)controller.abort();},log:async()=>{},fatal:async()=>assert.fail('idle must not fail')}),0);for(const app of f.c.runnerConfigs){const times=calls.filter(row=>row.app===app).map(row=>row.time);assert.ok(times.length>=3);for(let i=1;i<times.length;i++)assert.ok(times[i]-times[i-1]<=300000);}
  }finally{await f.cleanup();}
+});
+
+test('late successful presence after its own deadline stays unavailable, retries boundedly and preserves journals',async()=>{
+ for(const exitCode of [0,null,1]){
+  const f=await fixture(),controller=new AbortController(),calls=[],waits=[],logs=[];let cycles=0,late=0;
+  try{const journal=join(f.runtime,'recovery.json');await writeFile(journal,'preserved-receipt',{mode:0o600});const before=await Promise.all(f.c.runnerConfigs.map(path=>readFile(path,'utf8')));
+   await presenceLoop(f.c,{signal:controller.signal,timeoutMs:3,env:{},run:async(_command,args,_env,signal)=>{calls.push(args[2]);if(args[2]===f.c.runnerConfigs[0]&&late<3){late++;await new Promise(resolve=>signal.addEventListener('abort',resolve,{once:true}));return {exitCode,records:[presenceRecord],overflow:false};}return {exitCode:0,records:[presenceRecord],overflow:false};},pause:async ms=>{waits.push(ms);if(ms===60000&&++cycles===2)controller.abort();},log:async event=>logs.push(event),stop:async()=>assert.fail('own deadline with exact presence cannot disable all runners')});
+   assert.deepEqual(calls,[f.c.runnerConfigs[0],f.c.runnerConfigs[0],...f.c.runnerConfigs,...f.c.runnerConfigs]);assert.deepEqual(waits,[5000,5000,60000,60000]);
+   assert.equal(logs.filter(e=>e.event==='presence-deadline-expired').length,3);assert.equal(logs.filter(e=>e.appIndex===0&&e.state==='presence').length,1);assert.equal(logs.filter(e=>e.appIndex===0&&e.event==='presence-unavailable').length,1);
+   assert.equal(await readFile(journal,'utf8'),'preserved-receipt');assert.deepEqual(await Promise.all(f.c.runnerConfigs.map(path=>readFile(path,'utf8'))),before);
+  }finally{controller.abort();await f.cleanup();}
+ }
+});
+test('a real late SIGTERM presence child drains without emitting a false success or fatal stop',async()=>{
+ const f=await fixture(['isso']),controller=new AbortController(),logs=[],results=[];
+ const source=`process.on('SIGTERM',()=>{console.log(JSON.stringify(${JSON.stringify(presenceRecord)}));process.exitCode=0;clearInterval(timer);});const timer=setInterval(()=>{},1000);`;
+ try{await presenceLoop(f.c,{signal:controller.signal,timeoutMs:500,env:{PATH:process.env.PATH},run:async(_cmd,_args,env,signal)=>{const result=await runChild(process.execPath,['-e',source],env,signal);results.push(result);return result;},pause:async ms=>{if(ms===60000)controller.abort();},log:async e=>logs.push(e),stop:async()=>assert.fail('drained late presence must not latch')});
+  assert.equal(results.length,3);assert.ok(results.every(r=>r.exitCode===0&&r.records.length===1));assert.equal(logs.filter(e=>e.event==='presence-deadline-expired').length,3);assert.ok(!logs.some(e=>e.state==='presence'));
+ }finally{controller.abort();await f.cleanup();}
 });

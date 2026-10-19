@@ -92,12 +92,18 @@ export async function presenceLoop(c,{run=runChild,pause=wait,signal,env,log,sto
     const request=new AbortController(),abort=()=>request.abort();signal.addEventListener('abort',abort,{once:true});if(signal.aborted)abort();let timedOut=false;const timer=setTimeout(()=>{timedOut=true;request.abort();},timeoutMs);
     let result;try{result=await run(c.nodePath,[c.runnerMain,'--config',c.runnerConfigs[i],'--presence'],env,request.signal);}finally{clearTimeout(timer);signal.removeEventListener('abort',abort);}
     if(signal.aborted)return;
-    for(const r of result.records)await log({event:'presence',appIndex:i,...r});
+    // A cancelled presence may finish after the supervisor's own deadline.
+    // It proves no work/lease/publication: retry boundedly, without recording
+    // success. Only one exact sanitized presence is allowed in this exception.
+    const latePresence=timedOut&&!result.overflow&&[0,1,null].includes(result.exitCode)&&result.records.length===1&&
+     Object.keys(result.records[0]).length===3&&sanitizedLine(JSON.stringify(result.records[0]))?.state==='presence';
+    if(latePresence)await log({event:'presence-deadline-expired',appIndex:i,exitCode:result.exitCode});
+    else for(const r of result.records)await log({event:'presence',appIndex:i,...r});
     if(dailyQuotaFailure(result,'runner-execution')){quota.until=Math.max(quota.until,utcReset(now()));await log({event:'quota-cooldown',appIndex:i,until:quota.until});break;}
     const valid=result.exitCode===0&&!result.overflow&&!timedOut&&result.records.some(r=>r.state==='presence')&&!result.records.some(r=>r.code||r.httpStatus>=400);
     if(valid)break;
     const timedOutExit=timedOut&&(result.exitCode===0||result.exitCode===1||result.exitCode===null);
-    const transient=timedOutExit&&result.records.length===0||recoverablePresenceFailure(result,timedOut);
+    const transient=latePresence||timedOutExit&&result.records.length===0||recoverablePresenceFailure(result,timedOut);
     if(transient&&!result.overflow){
      if(attempt<2){await pause(5000,signal);continue;}
      // No successful presence is invented: the server's lastSeenAt can expire.
