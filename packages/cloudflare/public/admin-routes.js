@@ -1,7 +1,7 @@
 /** Explicit console pages. This public module contains no application data. */
 export const ADMIN_PAGES = Object.freeze({
   onboarding: {title:"Flora 시작하기",description:"관리자 등록부터 GitHub · SDK · PC Runner · 첫 OTA까지 안내합니다.",section:"page-onboarding",legacy:"account"},
-  projects: { title: "프로젝트", description: "등록한 앱을 찾고, 각 앱의 관리 화면을 여세요.", section: "application-panel", legacy: "apps" },
+  projects: { title: "프로젝트", description: "앱의 소스부터 배포와 복구까지, 한곳에서.", section: "application-panel", legacy: "apps" },
   register: { title: "프로젝트 등록", description: "GitHub 저장소와 앱 폴더를 선택해 새 프로젝트를 연결하세요.", section: "page-register", legacy: "account" },
   overview: { title: "앱 개요", description: "선택한 앱의 소스, Runner와 배포 상태를 확인하세요.", section: "page-overview", legacy: "updates" },
   source: { title: "GitHub · SDK", description: "앱의 저장소 연결, 인식된 설정과 소스 근거를 관리하세요.", section: "page-source", legacy: "sources" },

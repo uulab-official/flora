@@ -97,3 +97,11 @@ test("successful login resumes only its validated destination and clears credent
     for (const id of ["email", "password", "confirmation", "token"]) assert.equal(document.getElementById(id).value, "");
   }
 });
+
+test('gallery assets and bounded installation icons stay authenticated GET-only routes',()=>{
+ for(const path of ['/project-gallery.css','/project-branding.js','/project-icons/mobile.png','/project-icons/app-2.webp']){
+  const route=routeRequest(new Request(origin+path));assert.equal(route.kind,'private-asset');assert.equal(route.path,path);
+  assert.throws(()=>routeRequest(new Request(origin+path,{method:'POST'})),(e:unknown)=>e instanceof HttpFailure&&e.status===405);
+ }
+ for(const path of ['/project-icons/../private.json','/project-icons/%2e%2e%2fsecret.png','/project-icons/a.svg','/project-icons/a.png/extra'])assert.throws(()=>routeRequest(new Request(origin+path)),(e:unknown)=>e instanceof HttpFailure&&e.status===404);
+});

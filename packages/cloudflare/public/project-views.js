@@ -1,5 +1,6 @@
 import { adminPath } from "./admin-routes.js";
 import { validateAutomaticRollbackDecision } from "./auto-rollback.js";
+import { projectBranding } from "./project-branding.js";
 /* Read-only operational presentation. No provider actions or key material. */
 function clean(value, limit = 2048) {
   return String(value ?? "—").replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, "").slice(0, limit);
@@ -19,11 +20,17 @@ function runnerLabel(runner) { return ({ online: "온라인", offline: "오프�
 function currentPresence(options) { return options.status !== "error" && (!Number.isSafeInteger(options.now) || !Number.isSafeInteger(options.observedAt) || options.now >= options.observedAt && options.now - options.observedAt <= 120_000); }
 function publication(document, value, os, metadataKnown = true, appId) {
   if (value && (value.appId !== undefined && value.appId !== appId || value.platform !== undefined && value.platform !== os)) { value = null; metadataKnown = false; }
-  const row = node(document, "div", undefined, "project-ota-platform"); row.append(node(document, "span", platform(os), "project-platform-label"));
+  const row = node(document, "div", undefined, "project-ota-platform");
+  const label = node(document, "span", undefined, "project-platform-label");
+  const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg"); icon.setAttribute("class", "icon"); icon.setAttribute("aria-hidden", "true");
+  const use = document.createElementNS("http://www.w3.org/2000/svg", "use"); use.setAttribute("href", "/icons.svg#icon-platform-" + os); icon.append(use);
+  label.append(icon, node(document, "span", platform(os))); row.append(label);
   const info = node(document, "span", undefined, "project-publication-info");
   info.append(node(document, "strong", value ? `${value.channel} · 게시됨` : metadataKnown ? "게시 이력 없음" : "게시 상태 미확인"));
   if (value) info.append(node(document, "small", stamp(value.createdAt)));
-  info.append(applicationEvidence(document, value, os, appId));
+  const report = value?.telemetry;
+  const scoped = report && (report.appId === undefined || report.appId === appId) && (report.deploymentId === undefined || report.deploymentId === value?.id) && (report.platform === undefined || report.platform === os);
+  info.append(node(document, "small", scoped && isValidSdkTelemetry(report, os) && report.applicationRate !== null ? `SDK 적용 ${report.applicationRate.toFixed(1)}% · 보고 ${report.observedInstallations}개 설치` : "기기 보고 대기", "project-adoption-preview"));
   row.append(info); return row;
 }
 export function isValidSdkIssueResolution(report) {
@@ -67,8 +74,8 @@ function projectAttention(app, summary, status, options) {
   const runner = appScoped && fresh && summary?.automation?.enabled === true && ["offline", "unseen", "unregistered", "revoked"].includes(summary?.runner?.status);
   return { problems, resolved, runner, unknown, fresh, attention: problems.length > 0 || runner };
 }
-function projectLink(document, label, path) {
-  const link = node(document, "a", label, "project-attention-link"); link.setAttribute("href", path); link.setAttribute("data-project-path", path); return link;
+function projectLink(document, label, path, issue = true) {
+  const link = node(document, "a", label, "project-attention-link"); link.setAttribute("href", path); link.setAttribute("data-project-path", path); if (issue) link.setAttribute("data-project-issue", ""); return link;
 }
 export function renderProjectRows(document, state, summaries, options = {}) {
   const target = document.getElementById("project-list"); if (!target) return;
@@ -88,14 +95,31 @@ export function renderProjectRows(document, state, summaries, options = {}) {
   const rows = visible.map(({ app, summary, attention }) => {
     const selected = state?.selectedApplication?.id === app.id;
     const row = node(document, "article", undefined, "project-card project-operation-row" + (selected ? " selected" : "")); row.id = "project-card-" + app.id; row.setAttribute("data-select-application", app.id); row.setAttribute("data-selected", String(selected));
-    const identity = node(document, "button", undefined, "project-row-identity project-open"); identity.type = "button"; identity.setAttribute("data-select-application", app.id); identity.setAttribute("aria-pressed", String(selected)); identity.setAttribute("aria-label", `${clean(app.name)} 앱 개요`); identity.append(node(document, "span", clean(app.name).trim().slice(0, 1).toUpperCase() || "F", "project-avatar"));
+    const identity = node(document, "button", undefined, "project-row-identity project-open"); identity.type = "button"; identity.setAttribute("data-select-application", app.id); identity.setAttribute("aria-pressed", String(selected)); identity.setAttribute("aria-label", `${clean(app.name)} 앱 개요`);
+    const avatar = node(document, "span", clean(app.name).trim().slice(0, 1).toUpperCase() || "F", "project-avatar");
+    const branding = options.branding ?? projectBranding;
+    const repositoryKey = summary?.github ? `${summary.github.owner}/${summary.github.repository}`.toLowerCase() : "";
+    const iconSrc = Object.hasOwn(branding, repositoryKey) ? branding[repositoryKey] : null;
+    if (typeof iconSrc === "string" && /^\/project-icons\/[a-zA-Z0-9_-][a-zA-Z0-9_.-]{0,95}\.(?:png|webp|jpg)$/.test(iconSrc) && !iconSrc.includes("..")) {
+      const icon = node(document, "img", undefined, "project-app-icon"); icon.setAttribute("src", iconSrc); icon.setAttribute("alt", ""); icon.setAttribute("width", "64"); icon.setAttribute("height", "64"); icon.setAttribute("decoding", "async");
+      icon.addEventListener("error", () => avatar.replaceChildren(node(document, "span", clean(app.name).trim().slice(0, 1).toUpperCase() || "F")), { once: true });
+      avatar.replaceChildren(icon);
+    }
+    identity.append(avatar);
     const names = node(document, "span", undefined, "project-row-names"); names.append(node(document, "strong", app.name), node(document, "span", repository(summary, app), "project-row-repository"));
     if (summary?.github?.ref || summary?.rootDirectory && summary.rootDirectory !== ".") names.append(node(document, "small", [summary.github?.ref, summary.rootDirectory && summary.rootDirectory !== "." ? summary.rootDirectory : null].filter(Boolean).join(" · ")));
     identity.append(names); row.append(identity);
     const ota = node(document, "span", undefined, "project-row-ota"); ota.append(publication(document, summary?.ota?.ios, "ios", Boolean(summary), app.id), publication(document, summary?.ota?.android, "android", Boolean(summary), app.id)); row.append(ota);
-    const runner = node(document, "span", undefined, "project-row-runner"); runner.append(node(document, "strong", attention.fresh ? runnerLabel(summary?.runner) : "현재 연결 미확인", "project-runner-status " + (attention.fresh && summary?.runner?.status === "online" ? "runner-online" : "")));
-    runner.append(node(document, "small", Number.isSafeInteger(summary?.runner?.lastSeenAt) && summary.runner.lastSeenAt >= 0 ? `마지막 연결 ${stamp(summary.runner.lastSeenAt)}` : summary ? "PC Runner 연결 기준" : status === "error" ? "불러오지 못함" : "상태 확인 중")); row.append(runner);
-    const issues = node(document, "div", undefined, "project-row-attention");
+    const runner = node(document, "span", undefined, "project-row-runner"); runner.append(node(document, "strong", attention.fresh ? `Runner ${runnerLabel(summary?.runner)}` : "현재 연결 미확인", "project-runner-status " + (attention.fresh && summary?.runner?.status === "online" ? "runner-online" : attention.fresh && summary?.runner?.status === "offline" ? "runner-offline" : "")));
+    const runnerSeen = Number.isSafeInteger(summary?.runner?.lastSeenAt) && summary.runner.lastSeenAt >= 0 ? `마지막 연결 ${stamp(summary.runner.lastSeenAt)}` : summary ? "PC Runner 연결 기준" : status === "error" ? "불러오지 못함" : "상태 확인 중";
+    runner.setAttribute("title", runnerSeen); row.append(runner);
+    const evidence = node(document, "details", undefined, "project-card-evidence"); evidence.append(node(document, "summary", "기기 적용·재시작 보고"));
+    for (const os of ["ios", "android"]) {
+      const value = summary?.ota?.[os];
+      const scoped = value && (value.appId === undefined || value.appId === app.id) && (value.platform === undefined || value.platform === os);
+      const section = node(document, "section", undefined, "project-evidence-platform"); section.append(node(document, "strong", platform(os)), applicationEvidence(document, scoped ? value : null, os, app.id)); evidence.append(section);
+    }
+    const issues = node(document, "details", undefined, "project-row-attention");
     if (attention.problems.length) {
       issues.append(node(document, "span", "OTA 미복구 문제", "badge project-attention-badge"), node(document, "small", "최근 배포 또는 연결된 롤백 전 배포에서 같은 설치의 정상 복구가 확인되지 않은 문제입니다."));
       for (const { os, value, resolution, rollbackId } of attention.problems) {
@@ -115,8 +139,13 @@ export function renderProjectRows(document, state, summaries, options = {}) {
     }
     if (attention.runner) { issues.append(node(document, "span", "Runner 확인 필요", "badge project-attention-badge"), node(document, "small", `자동 배포 정책 켜짐 · Runner ${runnerLabel(summary.runner)}`), projectLink(document, "Runner 상태·로그", adminPath("runners", app.id))); }
     if (attention.unknown) issues.append(node(document, "span", "운영 상태 미확인", "badge project-unknown-badge"), node(document, "small", attention.fresh ? "기기 보고 또는 배포·Runner 정보의 확인이 필요합니다." : "현재 운영 정보가 미확인이거나 이전 확인 정보입니다."));
-    if (issues.children.length) row.append(issues);
+    if (issues.children.length) { const heading = node(document, "summary", attention.problems.length ? `OTA 미복구 ${attention.problems.length}개 플랫폼 · 상세 보기` : attention.runner ? "Runner 확인 필요 · 상태와 이력" : attention.resolved.length ? "해결된 OTA 이력 보기" : "기기 보고·운영 상태 안내"); const content = node(document, "div", undefined, "project-attention-content"); content.append(node(document, "p", runnerSeen, "subtle"), ...Array.from(issues.children)); issues.replaceChildren(heading, content); evidence.append(issues); }
+    if (attention.problems.length) evidence.firstElementChild.textContent = `OTA 미복구 ${attention.problems.length}개 플랫폼 · 기기 보고`;
+    row.append(evidence);
     if (status === "error" || status === "loading") row.append(node(document, "span", summary ? status === "error" ? "이전 확인 정보 · 현재 상태를 불러오지 못했습니다" : "이전 확인 정보 · 새로 확인 중" : status === "error" ? "운영 정보를 불러오지 못했습니다 · 상태 미확인" : "운영 정보 확인 중", "project-row-snapshot-note"));
+    const footer = node(document, "footer", undefined, "project-card-footer");
+    for (const [label, page] of [["앱 개요", "overview"], ["배포·이력 보기", "ota"]]) { const path = adminPath(page, app.id); if (path) footer.append(projectLink(document, label, path, false)); }
+    row.append(footer);
     return row;
   });
   if (!rows.length) rows.push(node(document, "p", apps.length ? "검색·상태 조건에 맞는 프로젝트가 없습니다. 이름·저장소·배포 채널 또는 상태 조건을 바꿔보세요." : "프로젝트를 등록해 GitHub 소스와 OTA 배포를 연결하세요.", "project-empty"));
@@ -278,18 +307,22 @@ export function renderWorkspaceStatus(document, result, options = {}) {
   const projects = Array.isArray(result?.projects) ? result.projects : null;
   const counts = node(document, "div", undefined, "workspace-operation-summary");
   for (const [label, value] of [["등록 프로젝트", projects?.length], ["최근 OTA 게시", projects ? projects.reduce((total, app) => total + Number(Boolean(app.ota?.ios)) + Number(Boolean(app.ota?.android)), 0) : null], ["PC Runner 온라인 앱", projects && currentPresence(options) ? projects.filter(app => app.runner?.status === "online").length : null]]) counts.append(overviewCard(document, label, value === null || value === undefined ? "미확인" : `${value}개`, label === "최근 OTA 게시" ? "앱별 iOS·Android 최근 게시 슬롯 · 적용 수 아님" : label === "PC Runner 온라인 앱" ? "Runner 연결 상태 · 배포 성공과 별도" : "현재 계정의 등록 앱"));
-  const quota = node(document, "section", undefined, "workspace-quota"); const title = node(document, "div", undefined, "section-top"); title.append(node(document, "h2", "D1 무료 일일 한도"), node(document, "span", "Cloudflare 계정 전체", "badge")); quota.append(title);
+  const infrastructure = document.getElementById("workspace-infrastructure");
+  const quota = node(document, "details", undefined, "workspace-quota"); quota.open = infrastructure?.firstElementChild?.open === true;
   const candidate = result?.usage;
   const usage = candidate?.scope === "account" && candidate.source === "cloudflare-graphql" && ["ready", "stale", "unconfigured", "error", "pending"].includes(candidate.status) ? candidate : null;
   const timeExpired = Number.isSafeInteger(options.now) && usage && (usage.day !== new Date(options.now).toISOString().slice(0, 10) || Number.isSafeInteger(usage.freshUntil) && options.now > usage.freshUntil);
   const status = (options.status === "error" || timeExpired) && usage?.status === "ready" ? "stale" : usage?.status ?? (options.status === "loading" ? "pending" : "unconfigured");
+  const title = node(document, "summary"); title.append(node(document, "strong", "Cloudflare 인프라 사용량"), node(document, "small", status === "ready" ? "최근 측정값" : status === "stale" ? "이전 측정값" : "사용량 확인 대기")); quota.append(title);
+  quota.append(node(document, "p", "아래 한도는 프로젝트 등록 수가 아니라, 연결한 Cloudflare 계정 전체의 D1 무료 일일 사용량 기준입니다.", "subtle"));
   const measured = usage && ["ready", "stale"].includes(status);
   const meters = node(document, "div", undefined, "workspace-quota-grid"); meters.append(usageMeter(document, "행 읽기 / 일", measured ? usage.rowsRead : null, 5_000_000, status === "ready"), usageMeter(document, "행 쓰기 / 일", measured ? usage.rowsWritten : null, 100_000, status === "ready")); quota.append(meters);
   const note = { ready: "Cloudflare GraphQL 측정값 · Flora 외 같은 계정의 D1 사용량도 포함", stale: "이전 측정값 · 현재 사용량 갱신 대기, 실제 남은 한도와 다를 수 있습니다", unconfigured: "사용량 조회 연결 미설정 · 무료 한도를 0으로 간주하지 않습니다", error: "사용량 조회 실패 · 현재 남은 한도 미확인", pending: "사용량 조회 대기 · 현재 남은 한도 미확인" }[status];
   quota.append(node(document, "p", note, "subtle quota-status-note"));
   if (usage?.collectedBy === "pc-runner") quota.append(node(document, "p", "PC Runner가 조회한 Cloudflare 계정 지표 · 10분 간격", "subtle"));
   quota.append(node(document, "p", `집계일 ${usage?.day && /^\d{4}-\d{2}-\d{2}$/.test(usage.day) ? usage.day + " UTC" : "미확인"} · 일일 초기화 ${Number.isSafeInteger(usage?.resetAt) && usage.resetAt >= 0 ? stamp(usage.resetAt) : "미확인"}`, "subtle"), node(document, "p", `측정 시각 ${Number.isSafeInteger(usage?.observedAt) && usage.observedAt >= 0 ? stamp(usage.observedAt) : "미확인"} · 자동 새로 조회 대신 캐시된 측정값을 표시합니다`, "subtle"));
-  const children = [counts, quota];
+  const children = [counts];
   if (options.status === "error") children.unshift(node(document, "p", "현재 운영 요약을 불러오지 못했습니다. 마지막 확인 정보가 있으면 보존해 표시합니다.", "project-row-snapshot-note"));
   target.replaceChildren(...children);
+  if (infrastructure) infrastructure.replaceChildren(quota);
 }

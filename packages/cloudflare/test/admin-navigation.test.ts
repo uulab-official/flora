@@ -114,8 +114,8 @@ test('optional measured usage and applied verification are admitted while invali
  const verified={...projectSummary(),ota:{ios:{...projectSummary().ota.ios,verification:{source:'operator-verification',environment:'ios-simulator',observedAt:at,applied:true,restarted:true,signatureVerified:true,assetsVerified:true,receiptDigest:'a'.repeat(64)}},android:null}};
  const usage={status:'ready',source:'cloudflare-graphql',scope:'account',day:'2030-03-17',rowsRead:42,rowsWritten:7,readLimit:5000000,writeLimit:100000,resetAt:at+86400000,observedAt:at,freshUntil:at+600000};let invalid=false;
  const s=await setup('/projects',url=>url==='/api/projects'?response({projects:[verified],observedAt:at,usage:{...usage,rowsRead:invalid?-1:42}}):undefined);
- assert.ok(s.document.getElementById('workspace-status').textContent.includes('42'));assert.match(s.document.getElementById('project-list').textContent,/적용·재시작 검증/);
- invalid=true;s.setTime(at+60000);await s.client.loadProjects();assert.ok(s.document.getElementById('workspace-status').textContent.includes('42'));assert.match(s.document.getElementById('project-summary-status').textContent,/이전/);s.client.close();
+ assert.ok(s.document.getElementById('workspace-infrastructure').textContent.includes('42'));assert.match(s.document.getElementById('project-list').textContent,/적용·재시작 검증/);
+ invalid=true;s.setTime(at+60000);await s.client.loadProjects();assert.ok(s.document.getElementById('workspace-infrastructure').textContent.includes('42'));assert.match(s.document.getElementById('project-summary-status').textContent,/이전/);s.client.close();
 });
 test('wrong-platform verification metadata cannot manufacture applied proof',async()=>{
  const invalid={...projectSummary(),ota:{ios:{...projectSummary().ota.ios,verification:{source:'operator-verification',environment:'android-emulator',observedAt:at,applied:true,restarted:true,signatureVerified:true,assetsVerified:true,receiptDigest:'a'.repeat(64)}},android:null}};
@@ -175,4 +175,11 @@ for(const mode of ['unresolved','resolved'] as const)test(mode+' deep link retai
  for(const suffix of ['/', '/extra', '?filter=issues'])assert.equal(parseAdminPath(path+suffix),null);
  const s=await setup(path,url=>url.endsWith('/telemetry?filter='+mode)?response({...devicePage('app_a'),filter:mode,installations:[]}):undefined);
  assert.equal(s.client.route().filter,mode);visiblePage(s,'ota-detail');assert.equal(s.calls.filter(c=>c.url.endsWith('/telemetry?filter='+mode)).length,1);s.client.close();
+});
+
+test('expanding a gallery report cannot bubble into selecting the app or issue another state read',async()=>{
+ const s=await setup('/projects');const card=new Element('article');card.setAttribute('data-select-application','app_a');
+ const summary={closest:(selector:string)=>selector==='[data-select-application]'?card:null};
+ const before=s.calls.length;await s.document.getElementById('project-list').dispatch('click',{target:summary});
+ assert.equal(s.client.route().page,'projects');assert.equal(s.calls.length,before);s.client.close();
 });

@@ -6,7 +6,7 @@ export interface ProjectSummary extends ProjectApplication {
   automation: null | { enabled: boolean; channel: string; platforms: string[]; updatedAt: number };
   runner: { status: "unregistered" | "unseen" | "online" | "offline" | "revoked" | "unknown"; registeredCount: number; activeCount: number; onlineCount: number; lastSeenAt: number | null };
 }
-export interface ViewOptions { status?: "loading" | "ready" | "error"; targetId?: string; error?: string; now?: number; observedAt?: number }
+export interface ViewOptions { status?: "loading" | "ready" | "error"; targetId?: string; error?: string; now?: number; observedAt?: number; branding?: Readonly<Record<string, string>> }
 export function renderProjectRows(document: Document, state: { applications?: ProjectApplication[]; selectedApplication?: ProjectApplication | null }, summaries: ProjectSummary[] | { projects: ProjectSummary[]; observedAt: number } | null, options?: ViewOptions): void;
 export function technicalDetails(document: Document, entries: Array<[string, unknown]>, label?: string): HTMLDetailsElement;
 export function renderOperationalOverview(document: Document, app: ProjectApplication | null, inputs?: { summary?: ProjectSummary | null; operations?: any; automation?: any; detection?: any; status?: ViewOptions["status"]; now?: number; observedAt?: number }): void;

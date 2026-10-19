@@ -1322,8 +1322,8 @@ export async function startClient(env) {
       return navigate(path);
     }
     if(event.defaultPrevented||event.ctrlKey||event.metaKey||event.shiftKey||event.altKey||event.button&&event.button!==0)return;
-    const card = event.target.closest?.("[data-select-application]") ?? event.target;
-    const id = card.getAttribute?.("data-select-application"); if (id && data?.applications?.some(app => app.id === id)) return navigate("overview", id);
+    const card = event.target.closest?.("button[data-select-application]");
+    const id = card?.getAttribute?.("data-select-application"); if (id && data?.applications?.some(app => app.id === id)) return navigate("overview", id);
   });
   document.getElementById("project-search")?.addEventListener("input", () => { if (data) renderProjectCards(document, projectView()); });
   document.getElementById("project-status-filter")?.addEventListener("change", () => { if (data) renderProjectCards(document, projectView()); });

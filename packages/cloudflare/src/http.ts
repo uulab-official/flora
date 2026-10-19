@@ -24,6 +24,8 @@ export function autoRollbackInstallationsRoute(path: string): string | null {
   return /^\/api\/apps\/([a-z][a-z0-9_-]{2,95})\/ota\/rollback-installations$/.exec(path)?.[1] ?? null;
 }
 const assets: Record<string, { kind: "public-asset" | "private-asset"; file: string }> = {
+  "/project-gallery.css": {kind:"private-asset",file:"/project-gallery.css"},
+  "/project-branding.js": {kind:"private-asset",file:"/project-branding.js"},
   "/onboarding-download.js": {kind:"private-asset",file:"/onboarding-download.js"},
   "/onboarding-files.js": {kind:"private-asset",file:"/onboarding-files.js"},
   "/onboarding.js": {kind:"private-asset",file:"/onboarding.js"}, "/onboarding-model.js": {kind:"private-asset",file:"/onboarding-model.js"}, "/onboarding.css": {kind:"private-asset",file:"/onboarding.css"},
@@ -42,7 +44,8 @@ export function routeRequest(request: Request, internal = false): Route {
   const management = managementRoute(path);
   const automation = automationManagementRoute(path), runner = automationRunnerRoute(path);
   const admin = parseAdminPath(path);
-  const asset = Object.hasOwn(assets, path) ? assets[path] : admin ? { kind: "private-asset" as const, file: "/index.html" } : undefined;
+  const icon = /^\/project-icons\/[a-zA-Z0-9_-][a-zA-Z0-9_.-]{0,95}\.(?:png|webp|jpg)$/.test(path) && !path.includes("..");
+  const asset = Object.hasOwn(assets, path) ? assets[path] : icon ? { kind: "private-asset" as const, file: path } : admin ? { kind: "private-asset" as const, file: "/index.html" } : undefined;
   if (/^\/api\/native-runner\/(?:pending|claim|heartbeat|credentials|complete|fail|presence)$/.test(path)) { kind = "native-runner"; method = "POST"; limit = 16384; }
   else if (/^\/api\/apps\/[a-z][a-z0-9_-]{2,95}\/native(?:\/(?:runners|jobs)(?:\/[a-z][a-z0-9_-]{2,95}\/(?:revoke|cancel))?)?$/.test(path)) {
     kind = "native-management"; if (!path.endsWith("/native")) { method = "POST"; limit = 16384; }

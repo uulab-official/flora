@@ -43,6 +43,42 @@ function project(id='app_a'):ProjectSummary { return {id,name:id==='app_a'?'Isso
 function state() {return {applications:[project(),project('app_b')],selectedApplication:project()};}
 const row=(document:Document,id='app_a')=>document.getElementById('project-card-'+id);
 
+test('gallery keeps complete device evidence behind a closed disclosure and direct app-scoped history links',()=>{
+ const document=new Document(),a=project();a.ota.android!.telemetry=telemetry();
+ renderProjectRows(asDom(document),state(),[a],{status:'ready'});
+ const card=row(document),details=card.children.find(n=>n.tagName==='details'&&n.className==='project-card-evidence');
+ assert.ok(details,'device evidence must be available without dominating the app gallery');
+ assert.equal(details.open,false);assert.ok(details.textContent.includes('다운로드 3'));assert.ok(details.textContent.includes('네트워크 연결 실패'));
+ const footer=card.children.find(n=>n.className==='project-card-footer');assert.ok(footer);
+ assert.ok(footer.children.some(n=>n.getAttribute('href')==='/apps/app_a/ota'));
+ assert.ok(!footer.textContent.includes('deploy_app_a'));
+});
+
+test('gallery accepts only installation-owned local icons for the matching repository',()=>{
+ const document=new Document(),a=project();
+ for(const icon of ['/project-icons/isso.png','https://tracker.invalid/icon.png','//tracker.invalid/icon.png','/project-icons/../auth.png','data:image/svg+xml,<svg/>']){
+  renderProjectRows(asDom(document),state(),[a],{status:'ready',branding:{'uulab-official/isso':icon}} as any);
+  const icons=allDescendants(row(document)).filter(n=>n.tagName==='img');
+  assert.equal(icons.length,icon==='/project-icons/isso.png'?1:0,icon);
+  if(icons.length)assert.equal(icons[0]!.getAttribute('src'),icon);
+  assert.equal(allDescendants(row(document,'app_b')).filter(n=>n.tagName==='img').length,0);
+ }
+});
+function allDescendants(value:Element):Element[]{return value.children.flatMap(n=>[n,...allDescendants(n)]);}
+
+test('Cloudflare quota is a closed infrastructure disclosure after the app gallery and keeps its measurement warning',()=>{
+ const document=new Document();renderWorkspaceStatus(asDom(document),{projects:[project()],observedAt:at,usage:usage('stale')});
+ const quota=document.getElementById('workspace-infrastructure').firstElementChild;
+ assert.equal(quota?.tagName,'details');assert.equal(quota?.open,false);
+ assert.match(quota?.firstElementChild?.textContent??'',/Cloudflare 인프라/);
+ assert.ok(quota?.textContent.includes('이전 측정값'));assert.ok(quota?.textContent.includes('1,250,000'));
+ assert.ok(!document.getElementById('workspace-status').textContent.includes('5,000,000'));
+ quota!.open=true;renderWorkspaceStatus(asDom(document),{projects:[project()],observedAt:at,usage:usage('stale')});
+ assert.equal(document.getElementById('workspace-infrastructure').firstElementChild?.open,true);
+ const html=readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
+ assert.ok(html.indexOf('id="workspace-infrastructure"')>html.indexOf('id="project-list"'));
+});
+
 test('project rows show scoped repositories, per-platform OTA channels and Runner states without exposing UUID labels',()=>{const document=new Document();renderProjectRows(asDom(document),state(),{projects:[project(),project('app_b')],observedAt:at},{status:'ready'});const first=row(document),second=row(document,'app_b');for(const value of ['Isso','uulab-official/isso','verification','android-qa','iOS','Android','온라인'])assert.ok(first.textContent.includes(value),value);for(const value of ['Promise','uulab-official/promise','production','오프라인'])assert.ok(second.textContent.includes(value),value);assert.ok(!first.textContent.includes('deploy_app_a'));assert.ok(!second.textContent.includes('android-qa'));assert.equal(first.getAttribute('data-select-application'),'app_a');assert.ok(second.textContent.includes('게시')||second.textContent.includes('없음'));});
 
 test('project search matches repositories and channels rather than opaque app IDs',()=>{const document=new Document();for(const [query,wanted,unwanted] of [['uulab-official/promise','app_b','app_a'],['android-qa','app_a','app_b']] as const){document.getElementById('project-search').value=query;renderProjectRows(asDom(document),state(),[project(),project('app_b')],{status:'ready'});assert.ok(document.getElementById('project-list').textContent.includes(wanted==='app_a'?'Isso':'Promise'));assert.ok(!document.getElementById('project-list').textContent.includes(unwanted==='app_a'?'Isso':'Promise'));}document.getElementById('project-search').value='app_a';renderProjectRows(asDom(document),state(),[project(),project('app_b')],{status:'ready'});assert.ok(!document.getElementById('project-list').textContent.includes('Isso'));});
@@ -69,10 +105,10 @@ test('foreign operations cannot prove another app has an empty deployment histor
 
 function usage(status: 'ready'|'stale'|'pending'|'error'|'unconfigured' = 'ready') { return {status,source:'cloudflare-graphql' as const,scope:'account' as const,day:'2030-03-17',rowsRead:1_250_000,rowsWritten:25_000,readLimit:5_000_000 as const,writeLimit:100_000 as const,resetAt:at+86_400_000,observedAt:at,freshUntil:at+300_000}; }
 function verification(environment: 'android-emulator'|'ios-simulator'|'physical-device'='android-emulator') {return {source:'operator-verification' as const,environment,observedAt:at,applied:true,restarted:true,signatureVerified:true,assetsVerified:true,receiptDigest:'c'.repeat(64)};}
-test('workspace summary shows account-wide D1 read/write quota, sample day and reset independently of app counts',()=>{const document=new Document();renderWorkspaceStatus(asDom(document),{projects:[project(),project('app_b')],observedAt:at,usage:usage()});const target=document.getElementById('workspace-status');for(const text of ['등록 프로젝트','최근 OTA 게시','PC Runner 온라인 앱','계정 전체','1,250,000 / 5,000,000','25,000 / 100,000','25.0%','2030-03-17 UTC','일일 초기화','측정 시각','KST'])assert.ok(target.textContent.includes(text),text);const progress=target.children.flatMap(n=>n.children.flatMap(c=>c.children.flatMap(m=>m.children))).filter(n=>n.tagName==='progress');assert.equal(progress.length,2);assert.equal(progress[0]?.getAttribute('value'),'1250000');assert.equal(progress[1]?.getAttribute('max'),'100000');});
-test('empty workspace is distinct from unavailable account usage and nullable counts never render as zero',()=>{const document=new Document();renderWorkspaceStatus(asDom(document),{projects:[],observedAt:at,usage:{...usage(),rowsRead:null,rowsWritten:null}});let text=document.getElementById('workspace-status').textContent;assert.ok(text.includes('등록 프로젝트0개'));assert.ok(text.includes('사용량 미확인'));assert.ok(!text.includes('0 / 5,000,000'));renderWorkspaceStatus(asDom(document),null,{status:'loading'});text=document.getElementById('workspace-status').textContent;assert.ok(text.includes('등록 프로젝트미확인'));assert.ok(text.includes('조회 대기'));assert.ok(!text.includes('등록 프로젝트0개'));});
-test('stale quota retains measured numbers and warns that remaining quota is not current',()=>{const document=new Document();renderWorkspaceStatus(asDom(document),{projects:[project()],observedAt:at,usage:usage('stale')});const text=document.getElementById('workspace-status').textContent;assert.ok(text.includes('1,250,000'));assert.ok(text.includes('이전 측정값'));assert.ok(text.includes('실제 남은 한도와 다를 수'));});
-test('wrong-scope, pending and failed usage do not expose measurements as current remaining quota',()=>{const document=new Document();for(const value of [{...usage(),scope:'application'},usage('pending'),usage('error'),usage('unconfigured')]){renderWorkspaceStatus(asDom(document),{projects:[],observedAt:at,usage:value as any});const text=document.getElementById('workspace-status').textContent;assert.ok(text.includes('사용량 미확인'));assert.ok(!text.includes('1,250,000'));assert.ok(!text.includes('3,750,000 남음'));}});
+test('workspace summary shows account-wide D1 read/write quota, sample day and reset independently of app counts',()=>{const document=new Document();renderWorkspaceStatus(asDom(document),{projects:[project(),project('app_b')],observedAt:at,usage:usage()});const target=document.getElementById('workspace-infrastructure');for(const text of ['등록 프로젝트','최근 OTA 게시','PC Runner 온라인 앱','계정 전체','1,250,000 / 5,000,000','25,000 / 100,000','25.0%','2030-03-17 UTC','일일 초기화','측정 시각','KST'])assert.ok(workspaceText(document).includes(text),text);const progress=target.children.flatMap(n=>n.children.flatMap(c=>c.children.flatMap(m=>m.children))).filter(n=>n.tagName==='progress');assert.equal(progress.length,2);assert.equal(progress[0]?.getAttribute('value'),'1250000');assert.equal(progress[1]?.getAttribute('max'),'100000');});
+test('empty workspace is distinct from unavailable account usage and nullable counts never render as zero',()=>{const document=new Document();renderWorkspaceStatus(asDom(document),{projects:[],observedAt:at,usage:{...usage(),rowsRead:null,rowsWritten:null}});let text=workspaceText(document);assert.ok(text.includes('등록 프로젝트0개'));assert.ok(text.includes('사용량 미확인'));assert.ok(!text.includes('0 / 5,000,000'));renderWorkspaceStatus(asDom(document),null,{status:'loading'});text=workspaceText(document);assert.ok(text.includes('등록 프로젝트미확인'));assert.ok(text.includes('조회 대기'));assert.ok(!text.includes('등록 프로젝트0개'));});
+test('stale quota retains measured numbers and warns that remaining quota is not current',()=>{const document=new Document();renderWorkspaceStatus(asDom(document),{projects:[project()],observedAt:at,usage:usage('stale')});const text=workspaceText(document);assert.ok(text.includes('1,250,000'));assert.ok(text.includes('이전 측정값'));assert.ok(text.includes('실제 남은 한도와 다를 수'));});
+test('wrong-scope, pending and failed usage do not expose measurements as current remaining quota',()=>{const document=new Document();for(const value of [{...usage(),scope:'application'},usage('pending'),usage('error'),usage('unconfigured')]){renderWorkspaceStatus(asDom(document),{projects:[],observedAt:at,usage:value as any});const text=workspaceText(document);assert.ok(text.includes('사용량 미확인'));assert.ok(!text.includes('1,250,000'));assert.ok(!text.includes('3,750,000 남음'));}});
 test('platform operator evidence explicitly names environment and never claims user adoption',()=>{const document=new Document();const verified=project();verified.ota.android!.verification=verification();renderProjectRows(asDom(document),state(),[verified],{status:'ready'});const text=row(document).textContent;assert.ok(text.includes('Android 에뮬레이터 · 적용·재시작 검증'));assert.ok(text.includes('운영자 검증'));assert.ok(text.includes('사용자 적용 보고 미수집'));assert.ok(text.includes('적용 검증 미확인'));assert.ok(!text.includes('c'.repeat(64)));assert.ok(!text.includes('사용자 적용 완료'));});
 test('foreign deployment binding, mismatched platform, failed signature or absent receipt cannot become verified application',()=>{const document=new Document();for(const evidence of [{...verification(),deploymentId:'other_deployment'},{...verification(),appId:'app_b'},verification('ios-simulator'),{...verification(),signatureVerified:false},{...verification(),receiptDigest:''}]){const app=project();app.ota.android!.verification=evidence;renderProjectRows(asDom(document),state(),[app],{status:'ready'});const text=row(document).textContent;assert.ok(!text.includes('적용·재시작 검증'));assert.ok(text.includes('적용 검증 미확인')||text.includes('적용 검증 미완료'));assert.ok(text.includes('사용자 적용 보고 미수집'));}});
 
@@ -81,12 +117,12 @@ test('expired or failed cached Runner presence stays unconfirmed across rows, ov
  for(const options of[{status:'ready' as const,now:at+120001,observedAt:at},{status:'error' as const,now:at,observedAt:at}]){
   renderProjectRows(asDom(document),state(),summary,options);assert.ok(row(document).textContent.includes('현재 연결 미확인'));assert.ok(!row(document).textContent.includes('온라인'));
   renderOperationalOverview(asDom(document),project(),{summary:project(),...options});assert.ok(document.getElementById('project-readiness').textContent.includes('현재 연결 미확인'));
-  renderWorkspaceStatus(asDom(document),summary,options);assert.ok(document.getElementById('workspace-status').textContent.includes('PC Runner 온라인 앱미확인'));
+  renderWorkspaceStatus(asDom(document),summary,options);assert.ok(workspaceText(document).includes('PC Runner 온라인 앱미확인'));
  }
 });
 test('previous-day account measurements never display current remaining quota',()=>{
  const document=new Document();renderWorkspaceStatus(asDom(document),{projects:[project()],observedAt:at,usage:{...usage(),day:'2030-01-01',collectedBy:'pc-runner'}},{status:'ready',now:at,observedAt:at});
- const text=document.getElementById('workspace-status').textContent;assert.ok(text.includes('이전 측정값'));assert.ok(text.includes('현재 남은 한도 미확인'));assert.ok(!text.includes('3,750,000 남음'));assert.ok(text.includes('PC Runner가 조회한 Cloudflare 계정 지표 · 10분 간격'));
+ const text=workspaceText(document);assert.ok(text.includes('이전 측정값'));assert.ok(text.includes('현재 남은 한도 미확인'));assert.ok(!text.includes('3,750,000 남음'));assert.ok(text.includes('PC Runner가 조회한 Cloudflare 계정 지표 · 10분 간격'));
 });
 
 function telemetry() { return {source:'sdk-self-report' as const,observedInstallations:4,downloadedInstallations:3,appliedInstallations:2,restartedInstallations:1,failedInstallations:1,rolledBackInstallations:0,applicationRate:50,lastReportedAt:at,environments:{physicalDevice:3,androidEmulator:1,iosSimulator:0,unknown:0},failures:[{stage:'download' as const,code:'NETWORK_UNAVAILABLE',installations:1,lastReportedAt:at}]}; }
@@ -187,24 +223,24 @@ test('project attention uses last unresolved issue state rather than cumulative 
  document.getElementById('project-status-filter').value='resolved';renderProjectRows(asDom(document),state(),[app]);assert.match(document.getElementById('project-filter-status').textContent,/0.*2/);
 });
 test('project issue links are scoped real anchors outside buttons and name remains selected overview control',()=>{
- const document=attentionDocument(),app=nativeIssueProject();renderProjectRows(asDom(document),state(),[app]);const outer=row(document);assert.equal(outer.tagName,'article');assert.equal(outer.getAttribute('data-selected'),'true');assert.equal(outer.getAttribute('aria-pressed'),null);const identity=outer.querySelectorAll('button[data-select-application]')[0]!;assert.equal(identity.getAttribute('aria-pressed'),'true');assert.equal(identity.getAttribute('aria-label'),'Isso 앱 개요');assert.equal(identity.querySelectorAll('a[data-project-path]').length,0);
- const links=outer.querySelectorAll('a[data-project-path]');assert.deepEqual(links.map(n=>[n.textContent,n.getAttribute('href')]),[['Android 문제 배포','/apps/app_a/ota/'+issueDeploymentId],['Android 미복구 기기 이력','/apps/app_a/ota/'+issueDeploymentId+'/unresolved']]);for(const link of links)assert.equal(link.getAttribute('href'),link.getAttribute('data-project-path'));
+ const document=attentionDocument(),app=nativeIssueProject();renderProjectRows(asDom(document),state(),[app]);const outer=row(document);assert.equal(outer.tagName,'article');assert.equal(outer.getAttribute('data-selected'),'true');assert.equal(outer.getAttribute('aria-pressed'),null);const identity=outer.querySelectorAll('button[data-select-application]')[0]!;assert.equal(identity.getAttribute('aria-pressed'),'true');assert.equal(identity.getAttribute('aria-label'),'Isso 앱 개요');assert.equal(identity.querySelectorAll('a[data-project-issue]').length,0);
+ const links=outer.querySelectorAll('a[data-project-issue]');assert.deepEqual(links.map(n=>[n.textContent,n.getAttribute('href')]),[['Android 문제 배포','/apps/app_a/ota/'+issueDeploymentId],['Android 미복구 기기 이력','/apps/app_a/ota/'+issueDeploymentId+'/unresolved']]);for(const link of links)assert.equal(link.getAttribute('href'),link.getAttribute('data-project-path'));
 });
 test('project status filter combines search and reports matching count against total without any IO',()=>{
  const document=attentionDocument('attention','promise');renderProjectRows(asDom(document),state(),[nativeIssueProject(),project('app_b')]);assert.equal(document.getElementById('project-list').children.length,1);assert.ok(document.getElementById('project-list').textContent.includes('Promise'));assert.match(document.getElementById('project-filter-status').textContent,/1.*2/);
  document.getElementById('project-status-filter').value='ota';renderProjectRows(asDom(document),state(),[nativeIssueProject(),project('app_b')]);assert.match(document.getElementById('project-filter-status').textContent,/0.*2/);assert.match(document.getElementById('project-list').textContent,/조건/);assert.equal(document.getElementById('project-total').textContent,'2개 프로젝트');
 });
 test('fresh enabled Runner problems include revoked while stale snapshots are unknown rather than offline',()=>{
- for(const runnerStatus of ['offline','unseen','unregistered','revoked'] as const){const app=project();app.runner.status=runnerStatus;const document=attentionDocument('runner');renderProjectRows(asDom(document),{applications:[app]},[app],{status:'ready',now:at,observedAt:at});assert.ok(row(document).textContent.includes('Runner 확인 필요'));assert.equal(row(document).querySelectorAll('a[data-project-path]')[0]!.getAttribute('href'),'/apps/app_a/runners');
+ for(const runnerStatus of ['offline','unseen','unregistered','revoked'] as const){const app=project();app.runner.status=runnerStatus;const document=attentionDocument('runner');renderProjectRows(asDom(document),{applications:[app]},[app],{status:'ready',now:at,observedAt:at});assert.ok(row(document).textContent.includes('Runner 확인 필요'));assert.equal(row(document).querySelectorAll('a[data-project-issue]')[0]!.getAttribute('href'),'/apps/app_a/runners');
  document.getElementById('project-status-filter').value='unknown';renderProjectRows(asDom(document),{applications:[app]},[app],{status:'ready',now:at+120001,observedAt:at});assert.ok(row(document).textContent.includes('운영 상태 미확인'));assert.ok(!row(document).textContent.includes('Runner 확인 필요'));assert.ok(!row(document).textContent.includes('오프라인'));
  app.automation!.enabled=false;document.getElementById('project-status-filter').value='runner';renderProjectRows(asDom(document),{applications:[app]},[app],{status:'ready'});assert.match(document.getElementById('project-filter-status').textContent,/0.*1/);}
 });
 test('stale retained OTA problems remain navigable alongside unknown operational freshness',()=>{
- const document=attentionDocument('ota'),app=nativeIssueProject();renderProjectRows(asDom(document),state(),[app],{status:'error',now:at,observedAt:at});assert.ok(row(document).textContent.includes('OTA 미복구 문제'));assert.ok(row(document).textContent.includes('운영 상태 미확인'));assert.equal(row(document).querySelectorAll('a[data-project-path]').length,2);
+ const document=attentionDocument('ota'),app=nativeIssueProject();renderProjectRows(asDom(document),state(),[app],{status:'error',now:at,observedAt:at});assert.ok(row(document).textContent.includes('OTA 미복구 문제'));assert.ok(row(document).textContent.includes('운영 상태 미확인'));assert.equal(row(document).querySelectorAll('a[data-project-issue]').length,2);
  document.getElementById('project-status-filter').value='unknown';renderProjectRows(asDom(document),state(),[app],{status:'loading'});assert.ok(row(document).textContent.includes('운영 상태 미확인'));
 });
 test('malformed telemetry and deployment identity never create issue links or leak foreign summary content',()=>{
- for(const changed of [{id:'invalid'}, {appId:'app_b'}, {platform:'ios'}, {telemetry:{...telemetry(),applicationRate:100}}]){const document=attentionDocument('unknown'),app=nativeIssueProject();Object.assign(app.ota.android!,changed);renderProjectRows(asDom(document),{applications:[app]},[app]);assert.ok(row(document).textContent.includes('운영 상태 미확인'));assert.ok(!row(document).textContent.includes('OTA 미복구 문제'));assert.equal(row(document).querySelectorAll('a[data-project-path]').length,0);}
+ for(const changed of [{id:'invalid'}, {appId:'app_b'}, {platform:'ios'}, {telemetry:{...telemetry(),applicationRate:100}}]){const document=attentionDocument('unknown'),app=nativeIssueProject();Object.assign(app.ota.android!,changed);renderProjectRows(asDom(document),{applications:[app]},[app]);assert.ok(row(document).textContent.includes('운영 상태 미확인'));assert.ok(!row(document).textContent.includes('OTA 미복구 문제'));assert.equal(row(document).querySelectorAll('a[data-project-issue]').length,0);}
  const document=attentionDocument('ota');renderProjectRows(asDom(document),{applications:[project()]},[nativeIssueProject(),{...project('app_b'),name:'FOREIGN_REPOSITORY'}]);assert.ok(!row(document).textContent.includes('FOREIGN_REPOSITORY'));
 });
 
@@ -213,20 +249,20 @@ test('unknown filter handles missing reports, absent summaries and unknown Runne
  const document=attentionDocument('attention');renderProjectRows(asDom(document),{applications:[]},[]);assert.match(document.getElementById('project-filter-status').textContent,/0.*0/);assert.match(document.getElementById('project-list').textContent,/프로젝트를 등록/);
 });
 test('malformed app identity cannot create Runner navigation and foreign platform metadata is not presented as local OTA',()=>{
- const document=attentionDocument('unknown'),bad={...project('invalid/app')};bad.runner.status='offline';renderProjectRows(asDom(document),{applications:[bad]},[bad]);assert.ok(row(document,bad.id).textContent.includes('운영 상태 미확인'));assert.equal(row(document,bad.id).querySelectorAll('a[data-project-path]').length,0);
+ const document=attentionDocument('unknown'),bad={...project('invalid/app')};bad.runner.status='offline';renderProjectRows(asDom(document),{applications:[bad]},[bad]);assert.ok(row(document,bad.id).textContent.includes('운영 상태 미확인'));assert.equal(row(document,bad.id).querySelectorAll('a[data-project-issue]').length,0);
  const app=nativeIssueProject();Object.assign(app.ota.android!,{appId:'app_b',channel:'FOREIGN_PRIVATE_CHANNEL'});renderProjectRows(asDom(document),{applications:[app]},[app]);assert.ok(!row(document).textContent.includes('FOREIGN_PRIVATE_CHANNEL'));assert.ok(!row(document).textContent.includes('네이티브 자동 복구 1'));
 });
 
 test('missing or malformed resolution stays unknown and never infers a current failure or recovery from cumulative counters',()=>{
  for(const resolution of [undefined,{}, {unresolvedInstallations:-1,resolvedInstallations:0,unknownInstallations:0},{unresolvedInstallations:0,resolvedInstallations:0,unknownInstallations:1},{unresolvedInstallations:1,resolvedInstallations:1,unknownInstallations:0},{unresolvedInstallations:0,resolvedInstallations:1.5,unknownInstallations:0}]) {
-  const app=nativeIssueProject();app.ota.android!.telemetry!.issueResolution=resolution as any;const document=attentionDocument('unknown');renderProjectRows(asDom(document),{applications:[app]},[app]);assert.ok(row(document).textContent.includes('운영 상태 미확인'));assert.ok(row(document).textContent.includes('네이티브 자동 복구 1'));assert.equal(row(document).querySelectorAll('a[data-project-path]').length,0);
+  const app=nativeIssueProject();app.ota.android!.telemetry!.issueResolution=resolution as any;const document=attentionDocument('unknown');renderProjectRows(asDom(document),{applications:[app]},[app]);assert.ok(row(document).textContent.includes('운영 상태 미확인'));assert.ok(row(document).textContent.includes('네이티브 자동 복구 1'));assert.equal(row(document).querySelectorAll('a[data-project-issue]').length,0);
   for(const filter of ['ota','resolved','attention']){document.getElementById('project-status-filter').value=filter;renderProjectRows(asDom(document),{applications:[app]},[app]);assert.match(document.getElementById('project-filter-status').textContent,/0.*1/);}
  }
 });
 test('mixed platform unresolved and resolved rows offer both scoped histories and combine resolved filter with search',()=>{
  const app=nativeIssueProject();app.ota.ios={...app.ota.android!,id:'c877e6bc-902e-487b-985d-82f179f9ad64',telemetry:{...telemetry(),environments:{physicalDevice:3,iosSimulator:1,androidEmulator:0,unknown:0},recoveredInstallations:1,issueResolution:{unresolvedInstallations:0,resolvedInstallations:1,unknownInstallations:0}}};
  const document=attentionDocument('resolved','isso');renderProjectRows(asDom(document),state(),[app,project('app_b')]);const text=row(document).textContent;assert.ok(text.includes('Android · 미복구 1개 설치'));assert.ok(text.includes('iOS · 해결됨 1개 설치'));
- const links=row(document).querySelectorAll('a[data-project-path]');assert.ok(links.some(n=>n.getAttribute('href')==='/apps/app_a/ota/'+app.ota.ios!.id+'/resolved'));assert.ok(links.some(n=>n.getAttribute('href')==='/apps/app_a/ota/'+issueDeploymentId+'/unresolved'));
+ const links=row(document).querySelectorAll('a[data-project-issue]');assert.ok(links.some(n=>n.getAttribute('href')==='/apps/app_a/ota/'+app.ota.ios!.id+'/resolved'));assert.ok(links.some(n=>n.getAttribute('href')==='/apps/app_a/ota/'+issueDeploymentId+'/unresolved'));
  document.getElementById('project-search').value='promise';renderProjectRows(asDom(document),state(),[app,project('app_b')]);assert.match(document.getElementById('project-filter-status').textContent,/0.*2/);
 });
 test('legacy issue with unknown chronology remains conservatively unresolved and explicitly uncertain',()=>{
@@ -241,7 +277,7 @@ test('resolution classification cannot hide an existing issue or claim recovery 
  const base={...telemetry(),issueResolution:{unresolvedInstallations:1,resolvedInstallations:0,unknownInstallations:0}};assert.equal(isValidSdkIssueResolution(base),true);
  const invalid=[{...base,issueResolution:{unresolvedInstallations:0,resolvedInstallations:0,unknownInstallations:0}}, {...base,rolledBackInstallations:2}, {...base,appliedInstallations:0,issueResolution:{unresolvedInstallations:0,resolvedInstallations:1,unknownInstallations:0}}, {...base,restartedInstallations:0,issueResolution:{unresolvedInstallations:0,resolvedInstallations:1,unknownInstallations:0}}, {...base,failedInstallations:NaN}];
  for(const report of invalid)assert.equal(isValidSdkIssueResolution(report),false);
- for(const report of invalid.slice(0,4)) {const app=nativeIssueProject();app.ota.android!.telemetry=report;const document=attentionDocument('unknown');renderProjectRows(asDom(document),{applications:[app]},[app]);assert.ok(row(document).textContent.includes('운영 상태 미확인'));assert.ok(!row(document).textContent.includes('OTA 해결됨'));assert.equal(row(document).querySelectorAll('a[data-project-path]').length,0);}
+ for(const report of invalid.slice(0,4)) {const app=nativeIssueProject();app.ota.android!.telemetry=report;const document=attentionDocument('unknown');renderProjectRows(asDom(document),{applications:[app]},[app]);assert.ok(row(document).textContent.includes('운영 상태 미확인'));assert.ok(!row(document).textContent.includes('OTA 해결됨'));assert.equal(row(document).querySelectorAll('a[data-project-issue]').length,0);}
  assert.equal(isValidSdkIssueResolution({...base,failedInstallations:1,rolledBackInstallations:1}),true,'overlapping cumulative failure and fallback do not require two issue installations');
 });
 
@@ -258,7 +294,7 @@ test('latest rollback displays linked original resolution and keeps unresolved s
  const report=app.ota.android.rollbackIssue!.telemetry!;report.issueResolution={unresolvedInstallations:0,resolvedInstallations:1,rollbackResolvedInstallations:1,unknownInstallations:0};
  renderProjectRows(asDom(document),{applications:[app]},[app]);assert.match(document.getElementById('project-filter-status').textContent,/0.*1/);
  document.getElementById('project-status-filter').value='resolved';renderProjectRows(asDom(document),{applications:[app]},[app]);assert.match(row(document).textContent,/롤백으로 해결됨 1개/);
- const links=row(document).querySelectorAll('a[data-project-path]');assert.ok(links.some(n=>n.getAttribute('href')==='/apps/app_a/ota/'+original+'/resolved'));assert.ok(links.some(n=>n.getAttribute('href')==='/apps/app_a/ota/'+rollback));
+ const links=row(document).querySelectorAll('a[data-project-issue]');assert.ok(links.some(n=>n.getAttribute('href')==='/apps/app_a/ota/'+original+'/resolved'));assert.ok(links.some(n=>n.getAttribute('href')==='/apps/app_a/ota/'+rollback));
  app.ota.android.rollbackIssue!.deploymentId=rollback;renderProjectRows(asDom(document),{applications:[app]},[app]);assert.match(document.getElementById('project-filter-status').textContent,/0.*1/);
  document.getElementById('project-status-filter').value='unknown';renderProjectRows(asDom(document),{applications:[app]},[app]);assert.match(row(document).textContent,/운영 상태 미확인/);assert.ok(!row(document).textContent.includes('롤백으로 해결됨'));
 });
@@ -270,7 +306,7 @@ test('rollback and original issue links have distinct names and scopes without c
   app.ota.android={...app.ota.android!,id:rollback,telemetry:{...telemetry(),issueResolution:resolution},rollback:{fromDeploymentId:original,targetDeploymentId:'a877e6bc-902e-487b-985d-82f179f9ad64',reason:'복구',requestedAt:10},rollbackIssue:{deploymentId:original,telemetry:{...telemetry(),issueResolution:{...resolution,...(status==='resolved'?{rollbackResolvedInstallations:1}:{})}}}};
   const document=attentionDocument(status==='resolved'?'resolved':'ota');renderProjectRows(asDom(document),{applications:[app]},[app]);
   const suffix=status==='resolved'?'해결된 기기 이력':'미복구 기기 이력';
-  const links=row(document).querySelectorAll('a[data-project-path]');
+  const links=row(document).querySelectorAll('a[data-project-issue]');
   for(const [label,target] of [['Android 롤백 배포의 '+suffix,rollback],['Android 원래 문제의 '+suffix,original]])assert.equal(links.find(n=>n.textContent===label)?.getAttribute('href'),'/apps/app_a/ota/'+target+'/'+status);
   assert.equal(links.filter(n=>n.textContent==='Android '+suffix).length,0);
   if(status==='unresolved')for(const [label,target] of [['Android 문제가 발생한 롤백 배포',rollback],['Android 원래 문제 배포',original]])assert.equal(links.find(n=>n.textContent===label)?.getAttribute('href'),'/apps/app_a/ota/'+target);
@@ -288,8 +324,8 @@ for(const name of ['Isso','Promise','Reward'])for(const os of ['ios','android'] 
  for(const unresolved of [false,true,false]){
   source.issueResolution={unresolvedInstallations:unresolved?1:0,resolvedInstallations:unresolved?0:1,rollbackResolvedInstallations:unresolved?0:1,unknownInstallations:0};
   document.getElementById('project-status-filter').value=unresolved?'ota':'resolved';renderProjectRows(asDom(document),{applications:[app]},[app]);
-  assert.equal(row(document,app.id).querySelectorAll('a[data-project-path]').filter(n=>n.getAttribute('href')===`/apps/${app.id}/ota/${original}/${unresolved?'unresolved':'resolved'}`).length,1);
-  assert.ok(!row(document,app.id).querySelectorAll('a[data-project-path]').some(n=>n.getAttribute('href')?.includes(immediate)),'root issue is not replaced with its immediate descendant');
+  assert.equal(row(document,app.id).querySelectorAll('a[data-project-issue]').filter(n=>n.getAttribute('href')===`/apps/${app.id}/ota/${original}/${unresolved?'unresolved':'resolved'}`).length,1);
+  assert.ok(!row(document,app.id).querySelectorAll('a[data-project-issue]').some(n=>n.getAttribute('href')?.includes(immediate)),'root issue is not replaced with its immediate descendant');
   document.getElementById('project-status-filter').value=unresolved?'resolved':'ota';renderProjectRows(asDom(document),{applications:[app]},[app]);assert.match(document.getElementById('project-filter-status').textContent,/0.*1/);
  }
 });
@@ -298,10 +334,12 @@ test('transitive root metadata requires bounded chain depth and scoped evidence 
  const app=nativeIssueProject(),original=app.ota.android!.id,immediate='d877e6bc-902e-487b-985d-82f179f9ad64',latest='e877e6bc-902e-487b-985d-82f179f9ad64';
  const source={...app.ota.android!.telemetry!,appId:app.id,deploymentId:original,platform:'android'};
  app.ota.android={...app.ota.android!,id:latest,telemetry:{...telemetry(),failedInstallations:0,recoveredInstallations:0,failures:[],issueResolution:{unresolvedInstallations:0,resolvedInstallations:0,unknownInstallations:0}},rollback:{fromDeploymentId:immediate,targetDeploymentId:original,reason:'이전 번들 복구',requestedAt:at-1},rollbackIssue:{deploymentId:original,telemetry:source,depth:2}};
- const document=attentionDocument('ota');renderProjectRows(asDom(document),{applications:[app]},[app]);assert.ok(row(document).querySelectorAll('a[data-project-path]').some(n=>n.getAttribute('href')===`/apps/app_a/ota/${original}/unresolved`),'validated root can also be the reused bundle target in a transitive chain');
+ const document=attentionDocument('ota');renderProjectRows(asDom(document),{applications:[app]},[app]);assert.ok(row(document).querySelectorAll('a[data-project-issue]').some(n=>n.getAttribute('href')===`/apps/app_a/ota/${original}/unresolved`),'validated root can also be the reused bundle target in a transitive chain');
  const valid=app.ota.android.rollbackIssue!;
  const {depth: _depth,...withoutDepth}=valid;
  for(const origin of [null,withoutDepth,{...valid,depth:1},{...valid,depth:0},{...valid,depth:33},{...valid,depth:2.5},{...valid,deploymentId:latest},{...valid,deploymentId:immediate},{...valid,deploymentId:'https://foreign.test'}, {...valid,telemetry:{...source,appId:'app_b'}},{...valid,telemetry:{...source,deploymentId:immediate}},{...valid,telemetry:{...source,platform:'ios'}}]){
-  app.ota.android.rollbackIssue=origin;document.getElementById('project-status-filter').value='unknown';renderProjectRows(asDom(document),{applications:[app]},[app]);assert.match(row(document).textContent,/운영 상태 미확인/);assert.equal(row(document).querySelectorAll('a[data-project-path]').length,0);
+  app.ota.android.rollbackIssue=origin;document.getElementById('project-status-filter').value='unknown';renderProjectRows(asDom(document),{applications:[app]},[app]);assert.match(row(document).textContent,/운영 상태 미확인/);assert.equal(row(document).querySelectorAll('a[data-project-issue]').length,0);
  }
 });
+
+function workspaceText(document:Document):string{return document.getElementById('workspace-status').textContent+document.getElementById('workspace-infrastructure').textContent;}
