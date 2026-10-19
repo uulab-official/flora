@@ -77,6 +77,18 @@ function projectAttention(app, summary, status, options) {
 function projectLink(document, label, path, issue = true) {
   const link = node(document, "a", label, "project-attention-link"); link.setAttribute("href", path); link.setAttribute("data-project-path", path); if (issue) link.setAttribute("data-project-issue", ""); return link;
 }
+function projectAvatar(document, app, summary, branding = projectBranding) {
+  const avatar = node(document, "span", clean(app.name).trim().slice(0, 1).toUpperCase() || "F", "project-avatar");
+  const repositoryKey = summary?.github ? `${summary.github.owner}/${summary.github.repository}`.toLowerCase() : "";
+  const iconSrc = Object.hasOwn(branding, repositoryKey) ? branding[repositoryKey] : null;
+  if (typeof iconSrc === "string" && /^\/project-icons\/[a-zA-Z0-9_-][a-zA-Z0-9_.-]{0,95}\.(?:png|webp|jpg)$/.test(iconSrc) && !iconSrc.includes("..")) {
+    const icon = node(document, "img", undefined, "project-app-icon"); icon.setAttribute("src", iconSrc); icon.setAttribute("alt", ""); icon.setAttribute("width", "64"); icon.setAttribute("height", "64"); icon.setAttribute("decoding", "async");
+    icon.addEventListener("error", () => avatar.replaceChildren(node(document, "span", clean(app.name).trim().slice(0, 1).toUpperCase() || "F")), { once: true });
+    avatar.replaceChildren(icon);
+  }
+
+  return avatar;
+}
 export function renderProjectRows(document, state, summaries, options = {}) {
   const target = document.getElementById("project-list"); if (!target) return;
   const apps = Array.isArray(state?.applications) ? state.applications : [];
@@ -96,16 +108,7 @@ export function renderProjectRows(document, state, summaries, options = {}) {
     const selected = state?.selectedApplication?.id === app.id;
     const row = node(document, "article", undefined, "project-card project-operation-row" + (selected ? " selected" : "")); row.id = "project-card-" + app.id; row.setAttribute("data-select-application", app.id); row.setAttribute("data-selected", String(selected));
     const identity = node(document, "button", undefined, "project-row-identity project-open"); identity.type = "button"; identity.setAttribute("data-select-application", app.id); identity.setAttribute("aria-pressed", String(selected)); identity.setAttribute("aria-label", `${clean(app.name)} 앱 개요`);
-    const avatar = node(document, "span", clean(app.name).trim().slice(0, 1).toUpperCase() || "F", "project-avatar");
-    const branding = options.branding ?? projectBranding;
-    const repositoryKey = summary?.github ? `${summary.github.owner}/${summary.github.repository}`.toLowerCase() : "";
-    const iconSrc = Object.hasOwn(branding, repositoryKey) ? branding[repositoryKey] : null;
-    if (typeof iconSrc === "string" && /^\/project-icons\/[a-zA-Z0-9_-][a-zA-Z0-9_.-]{0,95}\.(?:png|webp|jpg)$/.test(iconSrc) && !iconSrc.includes("..")) {
-      const icon = node(document, "img", undefined, "project-app-icon"); icon.setAttribute("src", iconSrc); icon.setAttribute("alt", ""); icon.setAttribute("width", "64"); icon.setAttribute("height", "64"); icon.setAttribute("decoding", "async");
-      icon.addEventListener("error", () => avatar.replaceChildren(node(document, "span", clean(app.name).trim().slice(0, 1).toUpperCase() || "F")), { once: true });
-      avatar.replaceChildren(icon);
-    }
-    identity.append(avatar);
+    identity.append(projectAvatar(document, app, summary, options.branding ?? projectBranding));
     const names = node(document, "span", undefined, "project-row-names"); names.append(node(document, "strong", app.name), node(document, "span", repository(summary, app), "project-row-repository"));
     if (summary?.github?.ref || summary?.rootDirectory && summary.rootDirectory !== ".") names.append(node(document, "small", [summary.github?.ref, summary.rootDirectory && summary.rootDirectory !== "." ? summary.rootDirectory : null].filter(Boolean).join(" · ")));
     identity.append(names); row.append(identity);
@@ -161,34 +164,72 @@ export function renderOperationalOverview(document, app, inputs = {}) {
   if (!app) { target.replaceChildren(node(document, "p", "프로젝트를 선택하세요.", "subtle")); return; }
   const summary = inputs.summary?.id === app.id ? inputs.summary : null;
   const candidateOperations = inputs.operations;
-  const operations = candidateOperations && (!candidateOperations.connection || candidateOperations.connection.appId === app.id) && [candidateOperations.detections, candidateOperations.deployments].every(values => !Array.isArray(values) || values.every(value => value.appId === app.id)) ? candidateOperations : null; const connection = operations?.connection?.appId === app.id ? operations.connection : summary?.github;
-  const candidateDetection = Object.prototype.hasOwnProperty.call(inputs, "detection") ? inputs.detection : detectionFor(operations); const detection = candidateDetection?.appId === app.id ? candidateDetection : null;
+  const operations = candidateOperations && (!candidateOperations.connection || candidateOperations.connection.appId === app.id) && [candidateOperations.detections, candidateOperations.deployments].every(values => !Array.isArray(values) || values.every(value => value.appId === app.id)) ? candidateOperations : null;
+  const connection = operations?.connection?.appId === app.id ? operations.connection : summary?.github;
+  const candidateDetection = Object.hasOwn(inputs, "detection") ? inputs.detection : detectionFor(operations);
+  const detection = candidateDetection?.appId === app.id ? candidateDetection : null;
   const automation = inputs.automation && Array.isArray(inputs.automation.jobs) && Array.isArray(inputs.automation.runners) && inputs.automation.jobs.every(job => job.appId === app.id) && (!inputs.automation.policy || inputs.automation.policy.appId === app.id) ? inputs.automation : null;
   const policy = automation ? automation.policy : summary?.automation;
-  const grid = node(document, "div", undefined, "operational-overview-grid");
-  grid.append(overviewCard(document, "GitHub 저장소", connection ? `${connection.owner}/${connection.repository}` : repository(summary, app), connection ? `브랜치 / ref · ${connection.ref}` : "현재 연결 확인 필요"));
-  grid.append(overviewCard(document, "앱 Runtime", detection?.runtimeVersion || "현재 소스 미확인", detection ? `${detection.framework} · 소스 읽기 확인` : "소스 읽기 미검증 · 현재 연결의 소스를 동기화하세요"));
-  grid.append(overviewCard(document, "자동 배포 정책", policy ? policy.enabled ? `${policy.channel} · 켜짐` : "꺼짐" : "정책 미확인", policy?.enabled ? (policy.platforms ?? [policy.platform]).map(platform).join(" + ") : "GitHub push 정책 기준"));
   let runner = summary?.runner;
   if (Array.isArray(automation?.runners)) {
     const active = automation.runners.filter(value => value.revokedAt === null && value.appIds?.includes(app.id));
     runner = { status: !active.length ? "unregistered" : active.some(value => value.presence?.status === "online") ? "online" : active.some(value => value.presence?.status === "offline") ? "offline" : "unseen" };
   }
-  grid.append(overviewCard(document, "PC Runner", currentPresence(inputs) ? runnerLabel(runner) : "현재 연결 미확인", "온라인은 연결 상태이며 빌드·게시 성공과 별도입니다"));
+  const header = node(document, "header", undefined, "overview-app-header");
+  const identity = node(document, "div", undefined, "overview-app-identity");
+  identity.append(projectAvatar(document, app, connection ? { github: connection } : summary, inputs.branding ?? projectBranding));
+  const names = node(document, "div", undefined, "overview-app-names"); names.append(node(document, "h2", app.name), node(document, "p", connection ? `${connection.owner}/${connection.repository}` : repository(summary, app), "overview-repository"));
+  names.append(node(document, "small", connection ? `브랜치 · ${connection.ref}` : "GitHub 연결 확인 필요")); identity.append(names); header.append(identity);
+  const actions = node(document, "nav", undefined, "overview-primary-actions"); actions.setAttribute("aria-label", "선택한 앱 운영 바로가기");
+  for (const [label, page] of [["OTA 배포 보기", "ota"], ["Runner 상태·로그", "runners"]]) { const path = adminPath(page, app.id); if (path) actions.append(projectLink(document, label, path, false)); } header.append(actions);
+  const context = node(document, "details", undefined, "overview-context"); context.append(node(document, "summary", "연결·자동 배포 설정"));
+  const grid = node(document, "div", undefined, "operational-overview-grid");
+  grid.append(overviewCard(document, "GitHub 저장소", connection ? `${connection.owner}/${connection.repository}` : repository(summary, app), connection ? `브랜치 / ref · ${connection.ref}` : "현재 연결 확인 필요"));
+  grid.append(overviewCard(document, "앱 Runtime", detection?.runtimeVersion || "현재 소스 미확인", detection ? `${detection.framework} · 소스 읽기 확인` : "소스 읽기 미검증 · 현재 연결의 소스를 동기화하세요"));
+  grid.append(overviewCard(document, "자동 배포 정책", policy ? policy.enabled ? `${policy.channel} · 켜짐` : "꺼짐" : "정책 미확인", policy?.enabled ? (policy.platforms ?? [policy.platform]).map(platform).join(" + ") : "GitHub push 정책 기준"));
+  const fresh = (inputs.status ?? "ready") === "ready" && currentPresence(inputs);
+  grid.append(overviewCard(document, "PC Runner", fresh ? runnerLabel(runner) : "현재 연결 미확인", "온라인은 연결 상태이며 빌드·게시 성공과 별도입니다")); context.append(grid);
+  const strip = node(document, "div", undefined, "overview-operation-strip");
+  strip.append(node(document, "span", fresh ? `Runner ${runnerLabel(runner)}` : "Runner 현재 연결 미확인", "overview-runner " + (fresh && runner?.status === "online" ? "is-online" : fresh && runner?.status === "offline" ? "is-offline" : "")), node(document, "span", policy ? policy.enabled ? `자동 배포 · ${policy.channel}` : "자동 배포 꺼짐" : "자동 배포 정책 미확인"), node(document, "span", detection?.runtimeVersion ? `Runtime · ${detection.runtimeVersion}` : "현재 소스 미확인"));
+  const attention = projectAttention(app, summary, inputs.status ?? "ready", inputs);
+  const issuePanel = node(document, "section", undefined, "overview-issues"); issuePanel.setAttribute("aria-label", "이 앱의 OTA 문제와 복구");
+  if (attention.problems.length) issuePanel.append(node(document, "h3", "미복구 OTA 문제", "overview-issue-heading"));
+  else if (attention.resolved.length) issuePanel.append(node(document, "h3", "이전 OTA 문제 복구 확인", "overview-recovery-heading"));
+  for (const [label, entries, page] of [["미복구", attention.problems, "ota-unresolved"], ["해결됨", attention.resolved, "ota-resolved"]]) for (const entry of entries) {
+    const count = label === "미복구" ? entry.resolution.unresolvedInstallations : entry.resolution.resolvedInstallations;
+    const issue = node(document, "div", undefined, "overview-issue-row"); issue.append(node(document, "span", `${platform(entry.os)} · ${label} ${count}개 설치`, label === "미복구" ? "issue-unresolved" : "issue-resolved"));
+    const path = adminPath(page, app.id, entry.value.id); if (path) issue.append(projectLink(document, `${platform(entry.os)} ${label} 기기 이력`, path)); issuePanel.append(issue);
+  }
+  if (attention.resolved.length) issuePanel.append(node(document, "p", "마지막 문제 이후의 정상 적용·재시작을 확인했습니다. 이전 실패 이력은 보존합니다.", "subtle"));
+  const releases = node(document, "div", undefined, "overview-releases");
   for (const os of ["ios", "android"]) {
-    const value = summary?.ota?.[os] ?? operations?.deployments?.find(item => item.appId === app.id && item.platform === os);
-    const sourcePublication = value && (operations?.deployments?.find(item => item.appId === app.id && item.id === value.id) ?? value);
+    const raw = summary?.ota?.[os] ?? operations?.deployments?.find(item => item.appId === app.id && item.platform === os);
+    const scoped = !raw || (raw.appId === undefined || raw.appId === app.id) && (raw.platform === undefined || raw.platform === os);
+    const value = scoped ? raw : null;
+    const known = scoped && (Boolean(summary) || Array.isArray(operations?.deployments));
+    const sourcePublication = value && (operations?.deployments?.find(item => item.id === value.id && item.platform === os) ?? value);
     const current = Boolean(sourcePublication && detection && sourcePublication.detectionId === detection.id && sourcePublication.commitSha === detection.commitSha && sourcePublication.runtimeVersion === detection.runtimeVersion && (!policy || sourcePublication.channel === policy.channel));
-    const otaCard = overviewCard(document, `${platform(os)} 최근 OTA 게시`, value ? `${value.channel} · ${stamp(value.createdAt)}` : summary || Array.isArray(operations?.deployments) ? "게시 이력 없음" : "게시 상태 미확인", value ? current ? "현재 소스 게시 확인 · 기기 적용은 별도" : "최근 게시 이력 · 현재 소스 게시는 " + (inputs.automation ? "확인된 게시 없음" : "상태 확인 필요") : "다운로드·적용 이력은 별도 검증");
-    otaCard.append(applicationEvidence(document, value, os, app.id, true)); grid.append(otaCard);
+    const card = node(document, "section", undefined, "overview-release");
+    card.append(node(document, "h3", `${platform(os)} 최근 OTA 게시`), node(document, "strong", value ? `${value.channel} · ${stamp(value.createdAt)}` : known ? "게시 이력 없음" : "게시 상태 미확인", "overview-release-name"));
+    card.append(node(document, "p", value ? current ? "현재 소스 게시 확인 · 기기 적용은 별도" : "최근 게시 이력 · 현재 소스 게시는 " + (inputs.automation ? "확인된 게시 없음" : "상태 확인 필요") : "다운로드·적용 이력은 별도 검증", "subtle"));
+    const candidate = value?.telemetry;
+    const report = candidate && (candidate.appId === undefined || candidate.appId === app.id) && (candidate.deploymentId === undefined || candidate.deploymentId === value?.id) && (candidate.platform === undefined || candidate.platform === os) && isValidSdkTelemetry(candidate, os) ? candidate : null;
+    const rate = node(document, "div", undefined, "overview-application-rate"); rate.append(node(document, "strong", report?.applicationRate !== null && report?.applicationRate !== undefined ? `${report.applicationRate.toFixed(1)}%` : "미확인"), node(document, "span", "SDK 보고 설치 기준 적용률")); card.append(rate);
+    card.append(node(document, "p", report ? `보고 ${report.observedInstallations}개 설치 · 전체 설치 기기 수와 다름` : "기기 보고 대기 · 적용 성공을 추정하지 않습니다", "subtle"));
+    const stages = node(document, "dl", undefined, "overview-stage-counts");
+    for (const [label, key] of [["다운로드", "downloadedInstallations"], ["적용", "appliedInstallations"], ["재시작", "restartedInstallations"]]) { const item = node(document, "div"); item.append(node(document, "dt", label), node(document, "dd", report ? `${report[key]}개` : "—")); stages.append(item); } card.append(stages);
+    const evidence = node(document, "details", undefined, "overview-release-evidence"); evidence.append(node(document, "summary", "실패·복구 및 전체 기기 보고"), applicationEvidence(document, value, os, app.id, true)); card.append(evidence);
+    const path = value && adminPath("ota-detail", app.id, value.id); if (path) card.append(projectLink(document, `${platform(os)} 배포 상세·기기 이력`, path, false)); releases.append(card);
   }
   const technical = [["프로젝트 ID", app.id], ["앱 폴더", summary?.rootDirectory ?? app.rootDirectory], ["고정 소스 Commit", detection?.commitSha ?? "미확인"], ["GitHub 연결 버전", connection?.version ?? "미확인"]];
   for (const os of ["ios", "android"]) {
     const currentJob = detection && automation?.policy && automation.jobs.find(job => job.appId === app.id && job.platform === os && job.state === "succeeded" && job.deploymentId && job.detectionId === detection.id && job.commitSha === detection.commitSha && job.runtimeVersion === detection.runtimeVersion && job.channel === automation.policy.channel);
     if (currentJob) technical.push([`${platform(os)} 현재 소스 게시 ID`, currentJob.deploymentId]);
   }
-  const details = technicalDetails(document, technical);
-  const children = [grid, node(document, "p", "OTA 게시됨은 기기의 다운로드·설치·재시작 완료를 의미하지 않습니다.", "subtle publication-scope-note"), details];
+  const children = [header, strip];
+  if (issuePanel.children.length) children.push(issuePanel);
+  children.push(releases, node(document, "p", "OTA 게시됨은 기기의 다운로드·설치·재시작 완료를 의미하지 않습니다.", "subtle publication-scope-note"), context, technicalDetails(document, technical));
+  if (inputs.status === "loading" && summary) children.unshift(node(document, "p", "운영 정보 새로 확인 중 · 표시된 배포·기기 보고는 마지막 확인 이력입니다.", "project-row-snapshot-note"));
   if (inputs.status === "error") children.unshift(node(document, "p", "현재 운영 정보를 불러오지 못했습니다. 표시된 이력은 마지막 확인 정보입니다.", "project-row-snapshot-note"));
   target.replaceChildren(...children);
 }

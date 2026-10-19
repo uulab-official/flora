@@ -343,3 +343,38 @@ test('transitive root metadata requires bounded chain depth and scoped evidence 
 });
 
 function workspaceText(document:Document):string{return document.getElementById('workspace-status').textContent+document.getElementById('workspace-infrastructure').textContent;}
+
+test('app overview presents two platform panels and retains detailed reports behind disclosures',()=>{
+ const document=new Document(),app=project();app.ota.android!.id=issueDeploymentId;app.ota.android!.telemetry=telemetry();
+ renderOperationalOverview(asDom(document),app,{summary:app,status:'ready',now:at,observedAt:at});
+ const root=document.getElementById('project-readiness'),panels=allDescendants(root).filter(n=>n.className==='overview-release');
+ assert.equal(panels.length,2);const details=allDescendants(panels[1]!).find(n=>n.tagName==='details');assert.ok(details);assert.equal(details.open,false);
+ assert.ok(details.textContent.includes('다운로드 3'));assert.ok(details.textContent.includes('네트워크 연결 실패'));
+ const links=allDescendants(root).filter(n=>n.tagName==='a');assert.ok(links.some(n=>n.getAttribute('href')==='/apps/app_a/ota/'+issueDeploymentId));
+ assert.ok(links.some(n=>n.getAttribute('href')==='/apps/app_a/runners'));
+});
+
+test('overview publication headers reject foreign app and platform bindings as unknown rather than empty or published',()=>{
+ for(const binding of [{appId:'app_b'},{platform:'ios'}]){
+  const document=new Document(),app=project();Object.assign(app.ota.android!,binding,{channel:'FOREIGN_PRIVATE_CHANNEL'});
+  renderOperationalOverview(asDom(document),app,{summary:app,status:'ready'});
+  const text=document.getElementById('project-readiness').textContent;assert.ok(!text.includes('FOREIGN_PRIVATE_CHANNEL'));assert.ok(text.includes('게시 상태 미확인'));
+ }
+});
+
+test('overview keeps unresolved and recovered installation links distinct for the selected app',()=>{
+ const document=new Document(),app=nativeIssueProject();
+ renderOperationalOverview(asDom(document),app,{summary:app,status:'ready',now:at,observedAt:at});
+ const root=document.getElementById('project-readiness'),links=allDescendants(root).filter(n=>n.tagName==='a');
+ assert.ok(links.some(n=>n.getAttribute('href')==='/apps/app_a/ota/'+issueDeploymentId+'/unresolved'));
+ assert.match(root.textContent,/미복구/);assert.ok(!root.textContent.includes('정상 운영'));
+});
+
+test('overview refresh retains evidence but does not present cached Runner presence as current',()=>{
+ const document=new Document(),app=project();app.runner.status='online';
+ renderOperationalOverview(asDom(document),app,{summary:app,status:'loading',now:at,observedAt:at});
+ const root=document.getElementById('project-readiness');
+ assert.ok(!root.textContent.includes('Runner 온라인'));assert.match(root.textContent,/새로 확인 중/);assert.match(root.textContent,/현재 연결 미확인/);assert.match(root.textContent,/최근 게시 이력/);
+ renderOperationalOverview(asDom(document),app,{summary:app,status:'ready',now:at,observedAt:at});
+ assert.match(root.textContent,/Runner 온라인/);assert.ok(!root.textContent.includes('새로 확인 중'));
+});

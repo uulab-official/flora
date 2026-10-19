@@ -1326,6 +1326,13 @@ export async function startClient(env) {
     const id = card?.getAttribute?.("data-select-application"); if (id && data?.applications?.some(app => app.id === id)) return navigate("overview", id);
   });
   document.getElementById("project-search")?.addEventListener("input", () => { if (data) renderProjectCards(document, projectView()); });
+  document.getElementById("page-overview")?.addEventListener("click", event => {
+    const link = event.target.closest?.("a[data-project-path]");
+    if (!link || event.defaultPrevented || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || event.button && event.button !== 0) return;
+    const path = link.getAttribute("data-project-path"), route = parseAdminPath(path); event.preventDefault();
+    if (currentRoute.page !== "overview" || !route?.appId || route.appId !== selectedAppId || link.getAttribute("href") !== path) return;
+    return navigate(path);
+  });
   document.getElementById("project-status-filter")?.addEventListener("change", () => { if (data) renderProjectCards(document, projectView()); });
   document.getElementById("project-register-open")?.addEventListener("click", () => navigate("register").then(() => node("application-name").focus()));
   document.getElementById("registration-close")?.addEventListener("click", () => navigate("projects"));

@@ -9,7 +9,7 @@ export interface ProjectSummary extends ProjectApplication {
 export interface ViewOptions { status?: "loading" | "ready" | "error"; targetId?: string; error?: string; now?: number; observedAt?: number; branding?: Readonly<Record<string, string>> }
 export function renderProjectRows(document: Document, state: { applications?: ProjectApplication[]; selectedApplication?: ProjectApplication | null }, summaries: ProjectSummary[] | { projects: ProjectSummary[]; observedAt: number } | null, options?: ViewOptions): void;
 export function technicalDetails(document: Document, entries: Array<[string, unknown]>, label?: string): HTMLDetailsElement;
-export function renderOperationalOverview(document: Document, app: ProjectApplication | null, inputs?: { summary?: ProjectSummary | null; operations?: any; automation?: any; detection?: any; status?: ViewOptions["status"]; now?: number; observedAt?: number }): void;
+export function renderOperationalOverview(document: Document, app: ProjectApplication | null, inputs?: { summary?: ProjectSummary | null; operations?: any; automation?: any; detection?: any; status?: ViewOptions["status"]; now?: number; observedAt?: number; branding?: Readonly<Record<string, string>> }): void;
 export function renderCompactOtaHistory(document: Document, appId: string, deployments: any[] | null, options?: ViewOptions): void;
 export function renderCompactAutomationJobs(document: Document, appId: string, state: any, options?: ViewOptions): void;
 

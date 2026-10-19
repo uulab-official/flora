@@ -271,3 +271,79 @@ details.workspace-quota { margin-top: 20px; padding: 0 18px; background: #fff; b
   .project-toolbar .project-attention-select { flex:1 1 100%; }
   .project-toolbar > .button { flex:1 1 100%; }
 }
+
+/* App overview: the same light gallery language, with platform evidence in focus. */
+.overview-shell-heading { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+.app-overview-shell .project-readiness { margin:0; padding:0; border:0; background:transparent; }
+.overview-app-header { display:flex; align-items:center; justify-content:space-between; gap:24px; padding:24px; background:#fff; border:1px solid var(--line); border-radius:12px 12px 0 0; }
+.overview-app-identity { display:flex; align-items:center; gap:16px; min-width:0; }
+.overview-app-identity .project-avatar { display:flex; align-items:center; justify-content:center; flex:0 0 64px; width:64px; height:64px; border-radius:14px; overflow:hidden; background:var(--accent-soft); font-size:25px; font-weight:650; color:var(--accent); }
+.overview-app-names { min-width:0; }
+.overview-app-names h2 { font-size:24px; line-height:1.35; letter-spacing:-.6px; margin:0 0 5px; }
+.overview-app-names .overview-repository { font-size:14px; margin:0 0 4px; overflow-wrap:anywhere; }
+.overview-app-names small { color:var(--muted); font-size:12px; overflow-wrap:anywhere; }
+.overview-primary-actions { display:flex; align-items:center; gap:10px; flex-wrap:wrap; flex:none; }
+.overview-primary-actions > a { display:inline-flex; align-items:center; min-height:40px; padding:10px 14px; border:1px solid var(--line); border-radius:7px; text-decoration:none; font-size:13px; color:var(--ink); font-weight:600; background:#fff; }
+.overview-primary-actions > a:first-child { color:#fff; border-color:var(--accent); background:var(--accent); box-shadow:0 3px 9px #6539e825; }
+.overview-primary-actions > a:hover { border-color:var(--accent); }
+.overview-primary-actions > a:first-child:hover { background:var(--accent-hover); }
+.overview-operation-strip { display:flex; align-items:center; flex-wrap:wrap; gap:10px 24px; border:1px solid var(--line); border-top:0; border-radius:0 0 12px 12px; background:#fff; padding:14px 24px; margin-bottom:22px; color:var(--muted); font-size:12px; overflow-wrap:anywhere; }
+.overview-runner { display:inline-flex; align-items:center; gap:7px; }
+.overview-runner::before { content:""; width:6px; height:6px; border-radius:50%; background:#8c93a7; flex:none; }
+.overview-runner.is-online { color:#176144; }
+.overview-runner.is-online::before { background:#258357; }
+.overview-runner.is-offline { color:#845717; }
+.overview-runner.is-offline::before { background:#b77824; }
+.overview-issues { padding:16px 20px; border:1px solid #d7e9e2; background:#f5fbf8; border-radius:10px; margin-bottom:22px; }
+.overview-issues:has(.issue-unresolved) { background:#fff9f2; border-color:#f1d9b5; }
+.overview-issues h3 { font-size:14px; margin:0 0 8px; }
+.overview-recovery-heading { color:#176144; }
+.overview-issue-heading { color:#845717; }
+.overview-issue-row { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; padding:5px 0; font-size:13px; }
+.overview-issue-row .issue-unresolved { color:#845717; font-weight:600; }
+.overview-issue-row .issue-resolved { color:#176144; font-weight:600; }
+.overview-issue-row a { font-size:12px; min-height:32px; display:inline-flex; align-items:center; }
+.overview-issues > .subtle { margin:8px 0 0; }
+.overview-releases { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:20px; }
+.overview-release { padding:24px; border:1px solid var(--line); border-radius:12px; background:#fff; min-width:0; }
+.overview-release h3 { font-size:15px; font-weight:650; margin:0 0 12px; }
+.overview-release-name { display:block; color:var(--muted); font-size:12px; line-height:1.7; font-weight:500; overflow-wrap:anywhere; }
+.overview-release > .subtle { margin:5px 0; font-size:11px; }
+.overview-application-rate { display:flex; flex-direction:column; gap:4px; margin:24px 0 6px; }
+.overview-application-rate strong { font-size:38px; line-height:1.2; letter-spacing:-1.5px; color:var(--ink); font-weight:700; }
+.overview-application-rate span { color:var(--muted); font-size:12px; }
+.overview-stage-counts { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin:20px 0 18px; padding:16px 0; border-block:1px solid #edf0f7; }
+.overview-stage-counts dt { font-size:12px; color:var(--muted); margin-bottom:6px; }
+.overview-stage-counts dd { margin:0; font-size:18px; font-weight:650; }
+.overview-release-evidence > summary { font-size:12px; min-height:36px; color:var(--muted); }
+.overview-release-evidence .application-report { margin:10px 0; }
+.overview-release > a { display:inline-flex; align-items:center; min-height:40px; margin-top:12px; font-size:13px; font-weight:600; }
+.app-overview-shell .publication-scope-note { font-size:11px; margin:14px 0 22px; }
+.overview-context { padding:12px 20px; border:1px solid var(--line); border-radius:10px; background:#fff; }
+.overview-context > summary { font-size:13px; min-height:36px; }
+.overview-context .operational-overview-grid { margin:6px 0 8px; }
+.overview-context .overview-operation-card { background:var(--soft); border:0; }
+.app-overview-shell .technical-details { padding:8px 20px; margin-top:12px; border:1px solid var(--line); border-radius:10px; background:#fff; }
+#page-overview .overview-actions { margin-top:20px; gap:10px; }
+#page-overview .overview-actions .button { min-height:40px; font-size:12px; }
+@media (max-width:1099px) {
+  .overview-app-header { align-items:flex-start; flex-wrap:wrap; }
+  .overview-primary-actions { margin-left:80px; }
+}
+@media (max-width:760px) {
+  .overview-releases { grid-template-columns:1fr; gap:16px; }
+  .overview-app-header { padding:20px; gap:18px; }
+  .overview-app-names h2 { font-size:22px; }
+  .overview-app-names .overview-repository { font-size:12px; }
+  .overview-app-names small { font-size:11px; }
+  .overview-primary-actions { margin-left:0; width:100%; gap:8px; }
+  .overview-primary-actions > a { flex:1; justify-content:center; font-size:12px; padding-inline:10px; }
+  .overview-operation-strip { padding:14px 20px; gap:10px; align-items:flex-start; flex-direction:column; }
+  .overview-release { padding:20px; }
+  .overview-issues { padding:14px 18px; }
+  .overview-issue-row { align-items:flex-start; flex-direction:column; gap:2px; }
+  .overview-context .operational-overview-grid { grid-template-columns:1fr; }
+  .app-overview-shell .technical-details .fact-row { align-items:flex-start; flex-direction:column; gap:5px; }
+  .app-overview-shell .technical-details .fact-value { text-align:left; }
+  #page-overview .overview-actions .button { flex:1 1 140px; }
+}

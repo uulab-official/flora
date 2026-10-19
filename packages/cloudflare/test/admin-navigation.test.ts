@@ -183,3 +183,13 @@ test('expanding a gallery report cannot bubble into selecting the app or issue a
  const before=s.calls.length;await s.document.getElementById('project-list').dispatch('click',{target:summary});
  assert.equal(s.client.route().page,'projects');assert.equal(s.calls.length,before);s.client.close();
 });
+
+test('overview shortcuts keep SPA navigation and modified clicks while rejecting foreign app paths',async()=>{
+ for(const mode of ['same','modified','foreign']){
+  const s=await setup('/apps/app_a');const link=new Element('a'),path=mode==='foreign'?'/apps/app_b/ota':'/apps/app_a/ota';link.setAttribute('href',path);link.setAttribute('data-project-path',path);
+  const before=s.calls.filter(c=>c.url.startsWith('/api/state')).length;let prevented=false;
+  await s.document.getElementById('page-overview').dispatch('click',{target:link,metaKey:mode==='modified',preventDefault(){prevented=true;}});
+  assert.equal(s.client.route().page,mode==='same'?'ota':'overview');assert.equal(s.client.route().appId,'app_a');
+  assert.equal(prevented,mode!=='modified');assert.equal(s.calls.filter(c=>c.url.startsWith('/api/state')).length,before);s.client.close();
+ }
+});
