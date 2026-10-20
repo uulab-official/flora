@@ -28,7 +28,8 @@ export function createRunnerClient(options:{origin:string;token:string;claimPlat
   invariant(deadline>startedAt,"LEASE_EXPIRED");const signal=AbortSignal.timeout(deadline-startedAt);
   for(let attempt=0;;attempt++){
    let response:Response|undefined,raw:unknown,failure:RunnerHttpFailure|undefined;
-   // Only rejection before receiving an HTTP response is a transport failure.
+   // A failed request is transport-unavailable. After headers, only a presence
+   // probe's interrupted body can use that path; mutation replies stay uncertain.
    try{response=await request(url,{method:"POST",redirect:"error",signal,headers:new Headers(headers),body:body instanceof Uint8Array?new Uint8Array(body):body});}
    catch{failure=new RunnerHttpFailure(0,"RUNNER_TRANSPORT_UNAVAILABLE");}
    if(response){
@@ -37,13 +38,18 @@ export function createRunnerClient(options:{origin:string;token:string;claimPlat
      if(response.status===204)raw=null;
      else{
       invariant(response.body,"RUNNER_RESPONSE_INVALID");const reader=response.body.getReader(),chunks:Uint8Array[]=[];let size=0;
-      try{for(;;){const part=await reader.read();if(part.done)break;size+=part.value.length;invariant(size<=1048576,"RUNNER_RESPONSE_INVALID");chunks.push(part.value);}}finally{void reader.cancel().catch(()=>{});}
+      try{for(;;){const part=await reader.read().catch(()=>{
+       if(path==="/api/runner/presence"&&response?.ok)throw new RunnerHttpFailure(0,"RUNNER_TRANSPORT_UNAVAILABLE");
+       throw new Error("RUNNER_RESPONSE_INVALID");
+      });if(part.done)break;size+=part.value.length;invariant(size<=1048576,"RUNNER_RESPONSE_INVALID");chunks.push(part.value);}}finally{void reader.cancel().catch(()=>{});}
       raw=JSON.parse(Buffer.concat(chunks).toString("utf8"));
      }
-    }catch{
-     // Invalid successful bodies must never enter the daemon's HTTP-0 retry path.
-     if(response.ok)throw new Error("RUNNER_RESPONSE_INVALID");
-     failure=new RunnerHttpFailure(response.status,"RUNNER_REQUEST_REJECTED");
+    }catch(error){
+     if(path==="/api/runner/presence"&&response.ok&&error instanceof RunnerHttpFailure&&error.status===0&&error.message==="RUNNER_TRANSPORT_UNAVAILABLE")failure=error;
+     // Completed malformed bodies and all uncertain mutation responses still
+     // fail closed. No publication, claim or checkpoint is replayed here.
+     else if(response.ok)throw new Error("RUNNER_RESPONSE_INVALID");
+     else failure=new RunnerHttpFailure(response.status,"RUNNER_REQUEST_REJECTED");
     }
     if(!failure&&!response.ok){const code=typeof (raw as {error?:unknown})?.error==="string"&&/^[A-Z][A-Z0-9_]{1,95}$/.test((raw as {error:string}).error)?(raw as {error:string}).error:"RUNNER_REQUEST_REJECTED";failure=new RunnerHttpFailure(response.status,code);}
    }
