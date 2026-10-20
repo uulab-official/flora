@@ -1,3 +1,4 @@
+import type {MutationSubmit,ReadScope} from "./contracts.js";
 import type { D1Database, D1PreparedStatement, D1Result } from "@cloudflare/workers-types";
 import { canonicalJson, freeze } from "@app-ops/config";
 import { DomainError, ensure, id, integer, object, safeJson, text } from "@app-ops/core";
@@ -40,13 +41,13 @@ export interface D1OperationsStore extends OperationsStore {
 }
 /** All mutation batches share the auth store's synchronous submission fence. */
 export function createD1OperationsStore(db: D1Database, owner: string, applications: ApplicationStore,
-  verify: () => Promise<void>, beforeCommit: () => void, externalAssets?:ExternalOTAAssets): D1OperationsStore {
+  verify: () => Promise<void>, beforeCommit: () => void, externalAssets?:ExternalOTAAssets,mutate?:MutationSubmit): D1OperationsStore {
   const insert = (table: string, columns: string[], fields: (string | number | null)[], suffix = "", extra: (string | number | null)[] = []) =>
     db.prepare(`INSERT INTO ${table}(${columns.join(",")},stored_bytes) SELECT ${fields.map(() => "?").join(",")},? ${suffix}`)
       .bind(...fields, charge(fields), ...extra);
   async function submit(statements: D1PreparedStatement[]) {
     beforeCommit();
-    try { return await db.batch<Row>(statements); }
+    try { return await (mutate?mutate(()=>db.batch<Row>(statements)):db.batch<Row>(statements)); }
     catch (error) {
       if (error instanceof Error && /flora capacity exceeded|connection version conflict|detection connection mismatch|deployment provenance mismatch|incomplete asset|deployment timestamp conflict|rollback provenance mismatch|UNIQUE constraint failed/.test(error.message)) throw new DomainError("CONFLICT");
       throw error;

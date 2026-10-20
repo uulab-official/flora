@@ -5,7 +5,7 @@ import { applicationId, parseApplicationRegistration, parseSettingsUpdate, asser
 import type { ApplicationRegistration, ApplicationStore, ManagedApplication, BaselineEvidence, HeadObservation, InventorySnapshot, ReportAssessment, VerificationRecord } from "@app-ops/dogfood";
 import { createD1AutomationStore } from "./automation-store.js";
 import { createD1OperationsStore } from "./operations-store.js";
-import type { BaselineSummary, FloraConfig, HostedStore, Page, SnapshotSummary } from "./contracts.js";
+import type { BaselineSummary, FloraConfig, HostedStore, Page, SnapshotSummary, ReadScope, MutationSubmit } from "./contracts.js";
 
 type Row = Record<string, string | number | null>;
 const PAGE_SIZE = 20;
@@ -41,19 +41,19 @@ function summary(row: Row): BaselineSummary {
     platform: row.platform as BaselineSummary["platform"], node: String(row.node), exitCode: row.exit_code === null ? null : Number(row.exit_code),
     evidenceDigest: String(row.evidence_digest), logTruncated: row.log_truncated === 1 });
 }
-interface Cursor { kind: "inventory" | "baseline"; owner: string; snapshot: string | null; app?: string; time: number; id: string }
+interface Cursor { kind: "inventory" | "baseline"; owner: string; snapshot: string | null; app?: string; scope?: string; time: number; id: string }
 function encodeCursor(value: Cursor): string {
   return btoa(String.fromCharCode(...encoder.encode(canonicalJson(value)))).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
 }
-function decodeCursor(value: string | null, kind: Cursor["kind"], owner: string, snapshot: string | null, app?: string): Cursor | null {
+function decodeCursor(value: string | null, kind: Cursor["kind"], owner: string, snapshot: string | null, app?: string, scope?: string): Cursor | null {
   if (value === null) return null;
   ensure(typeof value === "string" && value.length > 0 && value.length <= 512 && /^[A-Za-z0-9_-]+$/.test(value));
   try {
     const encoded = value.replaceAll("-", "+").replaceAll("_", "/");
     const binary = atob(encoded + "=".repeat((4 - encoded.length % 4) % 4));
     const decoded: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(Uint8Array.from(binary, c => c.charCodeAt(0))));
-    const cursor = object(decoded, ["kind", "owner", "snapshot", "time", "id", ...(app === undefined ? [] : ["app"])]);
-    ensure(cursor.kind === kind && cursor.owner === owner && cursor.snapshot === snapshot && cursor.app === app);
+    const cursor = object(decoded, ["kind", "owner", "snapshot", "time", "id", ...(app === undefined ? [] : ["app"]), ...(scope === undefined ? [] : ["scope"])]);
+    ensure(cursor.kind === kind && cursor.owner === owner && cursor.snapshot === snapshot && cursor.app === app && cursor.scope === scope);
     integer(cursor.time); text(cursor.id, 96);
     const result = cursor as unknown as Cursor;
     ensure(encodeCursor(result) === value);
@@ -74,16 +74,22 @@ function writeError(error: unknown): never {
 }
 
 /** D1 owns facts only. The caller's synchronous hook guards submission, not D1 completion. */
-export function createD1ImportStore(db: D1Database, config: FloraConfig, beforeCommit: () => void, externalAssets?:import("./external-assets.js").ExternalOTAAssets): HostedStore {
+export function createD1ImportStore(db: D1Database, config: FloraConfig, beforeCommit: () => void, externalAssets?:import("./external-assets.js").ExternalOTAAssets, scope?:ReadScope, mutate?:MutationSubmit,readFence?:()=>void): HostedStore {
   // Capture immutable authority so a caller cannot switch the owner between awaited operations.
   const identity = { ...config };
   const owner = text(identity.ownerId, 256);
-  const verify = () => verifyD1Identity(db, identity);
-  const findInventory = (id: string) => db.prepare("SELECT data FROM inventory_snapshots WHERE owner_id=? AND id=?").bind(owner, id).first<Row>();
+  const visible=scope?Object.freeze([...scope.appIds]):undefined;
+  const scopeKey=scope?JSON.stringify([scope.subject,scope.permissionRevision,visible]):undefined;
+  const scopeSql=visible?" AND a.id IN(SELECT value FROM json_each(?))":"";
+  const scopeBinds=visible?[JSON.stringify(visible)]:[];
+  const allow=(appId:string)=>ensure(!visible||visible.includes(appId),"NOT_FOUND");
+  const verify = async () => {readFence?.();await verifyD1Identity(db, identity);readFence?.();};
+  const repositoryScope=visible?" AND EXISTS(SELECT 1 FROM applications a WHERE a.owner_id=inventory_snapshots.owner_id AND a.repository_id=inventory_snapshots.repository_id AND a.root_directory=inventory_snapshots.root_directory"+scopeSql+")":"";
+  const findInventory = (id: string) => db.prepare("SELECT data FROM inventory_snapshots WHERE owner_id=? AND id=?"+repositoryScope).bind(owner, id,...scopeBinds).first<Row>();
   async function submit(statements: D1PreparedStatement[]): Promise<D1Result<Row>[]> {
     // No await, callback, or asynchronous validation between this hook and submission.
     beforeCommit();
-    try { return await db.batch<Row>(statements); }
+    try { return await (mutate?mutate(()=>db.batch<Row>(statements)):db.batch<Row>(statements)); }
     catch (error) { return writeError(error); }
   }
   const appColumns = "a.id,a.name,a.repository_id,a.root_directory,a.created_at,s.version,s.values_json,s.updated_at";
@@ -94,7 +100,7 @@ export function createD1ImportStore(db: D1Database, config: FloraConfig, beforeC
   const appQuery = `SELECT ${appColumns} FROM applications a JOIN application_settings s ON s.owner_id=a.owner_id AND s.app_id=a.id
     AND s.version=(SELECT max(version) FROM application_settings WHERE owner_id=a.owner_id AND app_id=a.id) WHERE a.owner_id=?`;
   async function getApp(appId: string) {
-    applicationId(appId); await verify();
+    applicationId(appId); allow(appId); await verify();
     const row = await db.prepare(appQuery + " AND a.id=?").bind(owner, appId).first<Row>();
     return row ? managed(row) : null;
   }
@@ -113,6 +119,7 @@ export function createD1ImportStore(db: D1Database, config: FloraConfig, beforeC
   }
   const applications: ApplicationStore = {
     async registerApplication(input, now) {
+      ensure(!scope,"PERMISSION_DENIED");
       const value = parseApplicationRegistration(input); integer(now); await verify();
       const lookup = () => db.prepare(appQuery + " AND a.repository_id=? AND a.root_directory=?").bind(owner, value.repositoryId, value.rootDirectory);
       const check = (row: Row) => { ensure(row.name === value.name, "CONFLICT"); return managed(row); };
@@ -122,14 +129,14 @@ export function createD1ImportStore(db: D1Database, config: FloraConfig, beforeC
     },
     async listApplications() {
       await verify();
-      const rows = await db.prepare("SELECT id,name,created_at FROM applications WHERE owner_id=? ORDER BY created_at,id LIMIT 100").bind(owner).all<Row>();
+      const rows = await db.prepare("SELECT a.id,a.name,a.created_at FROM applications a WHERE a.owner_id=?"+scopeSql+" ORDER BY a.created_at,a.id LIMIT 100").bind(owner,...scopeBinds).all<Row>();
       return rows.results.map(row => freeze({ id: String(row.id), name: String(row.name), createdAt: Number(row.created_at) }));
     },
     getApplication: getApp,
     async getApplicationForSnapshot(snapshotId) {
       text(snapshotId, 96); await verify();
-      const row = await db.prepare(appQuery + " AND EXISTS(SELECT 1 FROM inventory_snapshots i WHERE i.owner_id=a.owner_id AND i.repository_id=a.repository_id AND i.root_directory=a.root_directory AND i.id=?)")
-        .bind(owner, snapshotId).first<Row>();
+      const row = await db.prepare(appQuery + scopeSql + " AND EXISTS(SELECT 1 FROM inventory_snapshots i WHERE i.owner_id=a.owner_id AND i.repository_id=a.repository_id AND i.root_directory=a.root_directory AND i.id=?)")
+        .bind(owner, ...scopeBinds, snapshotId).first<Row>();
       return row ? managed(row) : null;
     },
     async updateApplicationSettings(appId, input, now) {
@@ -148,9 +155,9 @@ export function createD1ImportStore(db: D1Database, config: FloraConfig, beforeC
       ensure((results[0]?.meta.changes ?? 0) > 0, "CONFLICT"); const row = results[1]?.results[0]; ensure(row, "CONFLICT"); return managed(row);
     },
   };
-  const operations = createD1OperationsStore(db, owner, applications, verify, beforeCommit,externalAssets);
+  const operations = createD1OperationsStore(db, owner, applications, verify, beforeCommit,externalAssets,mutate);
   return {
-    automation: createD1AutomationStore(db, owner, applications, operations, verify, beforeCommit),
+    automation: createD1AutomationStore(db, owner, applications, operations, verify, beforeCommit,mutate,scope),
     operations,
     applications,
     async saveInventory(snapshot) {
@@ -181,8 +188,10 @@ export function createD1ImportStore(db: D1Database, config: FloraConfig, beforeC
       const insert = db.prepare(`INSERT INTO inventory_snapshots(owner_id,id,digest,repository_id,root_directory,commit_sha,imported_at,data,stored_bytes)
         SELECT ?,?,?,?,?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM inventory_snapshots WHERE owner_id=? AND digest=?)
         ON CONFLICT(owner_id,digest) DO NOTHING`).bind(...fields, size, owner, owned.digest);
-      const result = await submit([...registrationStatements(registration, owned.importedAt), insert, lookup()]);
-      const saved = result[3]?.results[0]; ensure(saved, "CONFLICT");
+      if(scope){const matching=await db.prepare(appQuery+scopeSql+" AND a.repository_id=? AND a.root_directory=?").bind(owner,...scopeBinds,owned.repository.id,owned.rootDirectory).first<Row>();ensure(matching,"NOT_FOUND");}
+      const registrations=scope?[]:registrationStatements(registration, owned.importedAt);
+      const result = await submit([...registrations, insert, lookup()]);
+      const saved = result[registrations.length+1]?.results[0]; ensure(saved, "CONFLICT");
       const receipt = inventory(saved);
       ensure(receipt.digest === owned.digest && receipt.repository.id === owned.repository.id && receipt.rootDirectory === owned.rootDirectory, "IDEMPOTENCY_CONFLICT");
       return receipt;
@@ -249,32 +258,32 @@ export function createD1ImportStore(db: D1Database, config: FloraConfig, beforeC
     },
     async pageInventory(cursor, appId) {
       await verify();
-      const cursorOwner = await sha256(owner);
+      const cursorOwner = await sha256(owner), cursorScope=scopeKey?await sha256(scopeKey):undefined;
       const app = appId === undefined ? null : await getApp(appId);
       if (appId !== undefined) ensure(app, "NOT_FOUND");
-      const after = decodeCursor(cursor, "inventory", cursorOwner, null, appId);
+      const after = decodeCursor(cursor, "inventory", cursorOwner, null, appId, cursorScope);
       const query = db.prepare(`SELECT id,digest,commit_sha,imported_at FROM inventory_snapshots WHERE owner_id=?
-        ${app ? "AND repository_id=? AND root_directory=?" : ""}
+        ${app ? "AND repository_id=? AND root_directory=?" : ""} ${repositoryScope}
         ${after ? "AND (imported_at<? OR (imported_at=? AND id<?))" : ""} ORDER BY imported_at DESC,id DESC LIMIT 21`);
-      const binds = [owner, ...(app ? [app.repositoryId, app.rootDirectory] : []), ...(after ? [after.time, after.time, after.id] : [])];
+      const binds = [owner, ...(app ? [app.repositoryId, app.rootDirectory] : []), ...scopeBinds, ...(after ? [after.time, after.time, after.id] : [])];
       const rows = await query.bind(...binds).all<Row>();
       return page<SnapshotSummary>(rows.results, row => ({ id: String(row.id), digest: String(row.digest), commitSha: String(row.commit_sha), importedAt: Number(row.imported_at) }),
-        { kind: "inventory", owner: cursorOwner, snapshot: null, ...(appId === undefined ? {} : { app: appId }) }, "imported_at");
+        { kind: "inventory", owner: cursorOwner, snapshot: null, ...(cursorScope?{scope:cursorScope}:{}), ...(appId === undefined ? {} : { app: appId }) }, "imported_at");
     },
     async pageBaselines(snapshotId, cursor, appId) {
       text(snapshotId, 96);
       await verify();
-      const cursorOwner = await sha256(owner);
-      if (appId !== undefined) ensure((await applications.getApplicationForSnapshot(snapshotId))?.id === applicationId(appId), "NOT_FOUND");
-      const after = decodeCursor(cursor, "baseline", cursorOwner, snapshotId, appId);
+      const cursorOwner = await sha256(owner), cursorScope=scopeKey?await sha256(scopeKey):undefined;
+      if (appId !== undefined || scope) {const app=await applications.getApplicationForSnapshot(snapshotId);ensure(app&&(appId===undefined||app.id===applicationId(appId)), "NOT_FOUND");}
+      const after = decodeCursor(cursor, "baseline", cursorOwner, snapshotId, appId, cursorScope);
       const query = db.prepare(`SELECT ${summaryColumns} FROM baseline_imports WHERE owner_id=? AND snapshot_id=?
         ${after ? "AND (created_at<? OR (created_at=? AND id<?))" : ""} ORDER BY created_at DESC,id DESC LIMIT 21`);
       const rows = await (after ? query.bind(owner, snapshotId, after.time, after.time, after.id) : query.bind(owner, snapshotId)).all<Row>();
-      return page(rows.results, summary, { kind: "baseline", owner: cursorOwner, snapshot: snapshotId, ...(appId === undefined ? {} : { app: appId }) }, "created_at");
+      return page(rows.results, summary, { kind: "baseline", owner: cursorOwner, snapshot: snapshotId, ...(cursorScope?{scope:cursorScope}:{}), ...(appId === undefined ? {} : { app: appId }) }, "created_at");
     },
     async getSafeLog(recordId, appId) {
-      text(recordId, 96); await verify();
-      const row = await db.prepare(`SELECT id,safe_log,log_truncated FROM baseline_imports WHERE owner_id=? AND id=? ${appId === undefined ? "" : "AND EXISTS(SELECT 1 FROM inventory_snapshots i JOIN applications a ON a.owner_id=i.owner_id AND a.repository_id=i.repository_id AND a.root_directory=i.root_directory WHERE i.owner_id=baseline_imports.owner_id AND i.id=baseline_imports.snapshot_id AND a.id=?)"}`).bind(owner, recordId, ...(appId === undefined ? [] : [applicationId(appId)])).first<Row>();
+      text(recordId, 96); if(appId)allow(appId);await verify();
+      const row = await db.prepare(`SELECT id,safe_log,log_truncated FROM baseline_imports WHERE owner_id=? AND id=? ${visible?"AND EXISTS(SELECT 1 FROM inventory_snapshots i JOIN applications a ON a.owner_id=i.owner_id AND a.repository_id=i.repository_id AND a.root_directory=i.root_directory WHERE i.owner_id=baseline_imports.owner_id AND i.id=baseline_imports.snapshot_id"+scopeSql+")":""} ${appId === undefined ? "" : "AND EXISTS(SELECT 1 FROM inventory_snapshots i JOIN applications a ON a.owner_id=i.owner_id AND a.repository_id=i.repository_id AND a.root_directory=i.root_directory WHERE i.owner_id=baseline_imports.owner_id AND i.id=baseline_imports.snapshot_id AND a.id=?)"}`).bind(owner, recordId,...scopeBinds, ...(appId === undefined ? [] : [applicationId(appId)])).first<Row>();
       return row ? { id: String(row.id), safeLog: String(row.safe_log), logTruncated: row.log_truncated === 1 } : null;
     },
   };

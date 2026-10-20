@@ -73,6 +73,10 @@ export interface HostedReadStore {
   getSafeLog(recordId: string, appId?: string): Promise<SafeLog | null>;
 }
 export type HostedStore = ImportStore & HostedReadStore;
+/** Request-local server authority; never parse this from a client's body. */
+export interface ReadScope {appIds:readonly string[];permissionRevision:number;subject:string}
+/** The caller persists an intent, submits once and settles the factual result. */
+export type MutationSubmit = <T>(submit:()=>Promise<T>)=>Promise<T>;
 export interface HostedState {
   applications?: ApplicationSummary[];
   selectedApplication?: ManagedApplication | null;

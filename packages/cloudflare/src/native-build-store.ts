@@ -54,7 +54,7 @@ export class NativeBuildStore {
     const rows = (table: string) => this.storage.sql.exec<{ data: string }>(`SELECT data FROM ${table} WHERE app_id=? ORDER BY rowid DESC LIMIT 100`, appId).toArray().map(row => JSON.parse(row.data));
     return { appId, jobs: rows('flora_native_jobs'), runners: rows('flora_native_runners').map(value => summary(value)), events: rows('flora_native_events'), credentialUses: rows('flora_native_credential_uses') };
   }
-  async enroll(appId: string, input: unknown, ownerEpoch: number, fence: Fence) {
+  async enroll(appId: string, input: unknown, ownerEpoch: number, fence: Fence,committed?:(runner:NativeRunnerCredential)=>void) {
     nativeId(appId); nativeInteger(ownerEpoch, 0); const value = nativeObject(input, ['name', 'platform']), platform = nativePlatform(value.platform);
     nativeCheck(typeof value.name === 'string' && value.name.trim().length > 0 && value.name.length <= 80 && !/[\x00-\x1f\x7f]/.test(value.name));
     const id = 'native_runner_' + crypto.randomUUID(), raw = crypto.getRandomValues(new Uint8Array(32));
@@ -64,7 +64,7 @@ export class NativeBuildStore {
     return this.storage.transactionSync(() => {
       fence(); nativeCheck(this.storage.sql.exec<{ count: number }>('SELECT count(*) AS count FROM flora_native_runners').one().count < 20, 409, 'NATIVE_CAPACITY');
       this.storage.sql.exec('INSERT INTO flora_native_runners VALUES(?,?,?,?,?)', id, appId, platform, ownerEpoch, JSON.stringify(runner));
-      return { runner: summary(runner), token };
+      committed?.(runner);return { runner: summary(runner), token };
     });
   }
   async authorize(token: string, ownerEpoch: number, fence: Fence): Promise<NativeAuthority> {
@@ -118,7 +118,7 @@ export class NativeBuildStore {
       && lease.expiresAt <= job.lease.expiresAt && job.lease.expiresAt > now && job.claimedAt !== null && job.claimedAt + attemptMs > now, 409, 'NATIVE_LEASE_STALE');
     return job;
   }
-  async enqueue(appId: string, input: unknown, source: NativeSource, fence: Fence): Promise<NativeJob> {
+  async enqueue(appId: string, input: unknown, source: NativeSource, fence: Fence,committed?:(job:NativeJob)=>void): Promise<NativeJob> {
     nativeId(appId); const selection = parseNativeJobInput(input); this.vault.assertNativePins(appId, selection); fence();
     const configDigest = await hash(JSON.stringify({ appId, ...selection, source })); fence(); this.vault.assertNativePins(appId, selection);
     return this.storage.transactionSync(() => {
@@ -129,7 +129,7 @@ export class NativeBuildStore {
         && this.storage.sql.exec<{ count: number }>('SELECT count(*) AS count FROM flora_native_jobs WHERE app_id=?', appId).one().count < 100, 409, 'NATIVE_CAPACITY');
       const now = Date.now(), job: NativeJob = { ...selection, appId, id: 'native_job_' + crypto.randomUUID(), source: copy(source), configDigest,
         createdAt: now, updatedAt: now, state: 'queued', lease: null, claimedAt: null, code: null, artifact: null, artifactVerification: null };
-      this.storage.sql.exec('INSERT INTO flora_native_jobs VALUES(?,?,?,?)', job.id, appId, job.requestKey, JSON.stringify(job)); this.event(job, 'queued'); return copy(job);
+      this.storage.sql.exec('INSERT INTO flora_native_jobs VALUES(?,?,?,?)', job.id, appId, job.requestKey, JSON.stringify(job)); this.event(job, 'queued'); committed?.(job);return copy(job);
     });
   }
   claim(authority: NativeAuthority, input: unknown, fence: Fence) {

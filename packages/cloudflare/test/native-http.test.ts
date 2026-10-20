@@ -24,7 +24,7 @@ async function harness(t: TestContext) {
   // These endpoints return bounded JSON. Drain each Miniflare response before
   // issuing another request; retain independent bodies for caller assertions.
   const complete = async (pending: ReturnType<typeof runtime.fetch>) => { const response = await pending; return new Response(await response.arrayBuffer(), { status: response.status, statusText: response.statusText, headers: [...response.headers.entries()] }); };
-  const call = (path: string, input?: unknown, headers: Record<string, string> = {}) => complete(runtime.fetch(origin + path, { method: input === undefined ? 'GET' : 'POST', headers: { Cookie: cookie, ...(input === undefined ? {} : { Origin: origin, 'Content-Type': 'application/json', 'X-Flora-CSRF': csrf }), ...headers }, ...(input === undefined ? {} : { body: JSON.stringify(input) }) }));
+  const call = (path: string, input?: unknown, headers: Record<string, string> = {}) => complete(runtime.fetch(origin + path, { method: input === undefined ? 'GET' : 'POST', headers: { Connection: 'close', Cookie: cookie, ...(input === undefined ? {} : { Origin: origin, 'Content-Type': 'application/json', 'X-Flora-CSRF': csrf }), ...headers }, ...(input === undefined ? {} : { body: JSON.stringify(input) }) }));
   const machine = (token: string, action: string, input: unknown) => complete(runtime.fetch(origin + '/api/native-runner/' + action, { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify(input) }));
   const apps: string[] = [];
   for (const repository of ['expo-one', 'rn-two']) {

@@ -77,11 +77,11 @@ export function routeRequest(request: Request, internal = false): Route {
   else if (internal && path === "/_internal/session-check") kind = "internal";
   else if (["/api/auth/session", "/api/auth/options"].includes(path)) { /* GET, no query */ }
   else if (["/api/auth/login", "/api/auth/enroll", "/api/auth/recover", "/api/auth/logout", "/api/auth/reauth", "/api/auth/member/password"].includes(path)) { method = "POST"; limit = BODY_LIMITS.auth; }
-  else if (path === "/api/apps") { kind = "hosted"; if (request.method === "POST") { method = "POST"; limit = 16384; } }
+  else if (path === "/api/apps") { kind = "hosted"; query=request.method==="GET"?["appCursor"]:[]; if (request.method === "POST") { method = "POST"; limit = 16384; } }
   else if (/^\/api\/apps\/[a-z][a-z0-9_-]{2,95}\/settings$/.test(path)) { kind = "hosted"; method = "POST"; limit = 65536; }
   else if (/^\/api\/apps\/[a-z][a-z0-9_-]{2,95}\/ota\/verification$/.test(path)) { kind = "hosted"; method = "POST"; limit = BODY_LIMITS.auth; }
-  else if (path === "/api/projects") kind = "hosted";
-  else if (path === "/api/state") { kind = "hosted"; query = ["snapshotId", "snapshotCursor", "historyCursor", "appId"]; }
+  else if (path === "/api/projects") {kind = "hosted";query=["appCursor"];}
+  else if (path === "/api/state") { kind = "hosted"; query = ["snapshotId", "snapshotCursor", "historyCursor", "appId", "appCursor"]; }
   else if (/^\/api\/baselines\/[a-z][a-z0-9_-]{2,95}\/log$/.test(path)) { kind = "hosted"; query = ["appId"]; }
   else if (["/api/sources", "/api/baselines", "/api/head"].includes(path)) {
     kind = "hosted"; method = "POST";

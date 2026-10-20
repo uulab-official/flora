@@ -22,10 +22,9 @@ export class OrgPolicy {
   const appScoped=!action.startsWith('org.')&&action!=='runner.organization';
   if(appScoped){orgAssert(appId!==undefined,400,'INVALID_REQUEST');orgId(appId);}
   if(principal.role==='owner')return;
-  if(action==='org.manage'||action==='runner.organization')orgAssert(false);
   if(action==='org.self')return;
-  const access=this.store.storage.sql.exec<{active:number}>('SELECT active FROM flora_org_app_access WHERE membership_id=? AND app_id=?',principal.membershipId,appId!).toArray()[0];
-  orgAssert(access?.active===1,404,'NOT_FOUND');
+  if(appId!==undefined){orgId(appId);const access=this.store.storage.sql.exec<{active:number}>('SELECT active FROM flora_org_app_access WHERE membership_id=? AND app_id=?',principal.membershipId,appId).toArray()[0];orgAssert(access?.active===1,404,'NOT_FOUND');}
+  if(action==='org.manage'||action==='runner.organization')orgAssert(false);
   if(action==='app.read'||action==='credential.read')return;
   if(action==='app.deploy'||action==='runner.request')orgAssert(principal.role==='admin'||principal.role==='deployer');
   else orgAssert(principal.role==='admin');
@@ -36,7 +35,7 @@ export class OrgPolicy {
   this.require(captured,action,appId,Date.now());
   return ()=>this.require(captured,action,appId,Date.now());
  }
- visibleApps(principal:OrgPrincipal,cursor:string|null,limit:number):OrgPage<string> {
+ visibleApps(principal:OrgPrincipal,cursor:string|null,limit:number,filter=''):OrgPage<string> {
   this.require(principal,'org.self',undefined,Date.now());safeInteger(limit);orgAssert(limit<=50,400,'INVALID_REQUEST');
   // Owner's unbounded app listing remains in the existing owner-scoped D1 API.
   if(principal.role==='owner')return {items:[],nextCursor:null};
@@ -44,12 +43,12 @@ export class OrgPolicy {
   if(cursor!==null){
    orgAssert(typeof cursor==='string'&&cursor.length<=2048,400,'INVALID_REQUEST');let parsed:Record<string,unknown>;
    try{parsed=JSON.parse(atob(cursor))}catch{orgAssert(false,400,'INVALID_REQUEST')}
-   orgAssert(parsed&&typeof parsed==='object'&&!Array.isArray(parsed)&&Object.keys(parsed).length===5,400,'INVALID_REQUEST');
-   orgAssert(parsed.v===1&&parsed.organizationId===principal.organizationId&&parsed.userId===principal.userId&&parsed.revision===principal.membershipRevision,403,'MEMBERSHIP_CHANGED');
+   orgAssert(parsed&&typeof parsed==='object'&&!Array.isArray(parsed)&&Object.keys(parsed).length===(filter?6:5),400,'INVALID_REQUEST');
+   orgAssert(parsed.v===1&&parsed.organizationId===principal.organizationId&&parsed.userId===principal.userId&&parsed.revision===principal.membershipRevision&&parsed.filter===(filter||undefined),403,'MEMBERSHIP_CHANGED');
    orgId(parsed.after);after=parsed.after;
   }
   const rows=this.store.storage.sql.exec<{app_id:string}>('SELECT app_id FROM flora_org_app_access WHERE membership_id=? AND active=1 AND app_id>? ORDER BY app_id LIMIT ?',principal.membershipId,after,limit+1).toArray();
   const items=rows.slice(0,limit).map(r=>r.app_id);
-  return {items,nextCursor:rows.length>limit?btoa(JSON.stringify({v:1,organizationId:principal.organizationId,userId:principal.userId,revision:principal.membershipRevision,after:items.at(-1)})):null};
+  return {items,nextCursor:rows.length>limit?btoa(JSON.stringify({v:1,organizationId:principal.organizationId,userId:principal.userId,revision:principal.membershipRevision,...(filter?{filter}:{}),after:items.at(-1)})):null};
  }
 }

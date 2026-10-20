@@ -13,6 +13,11 @@ export class OrgFixture {
   private heldFence: (()=>void)|undefined;
   private grant: import("../../src/contracts.js").AuthGrant|undefined;
   private pointQueries=0;
+  private dbGate:'read'|'batch-after'|null=null;
+  private dbHeld=false;
+  private dbRelease:(()=>void)|undefined;
+  private batches=0;
+  private queries:string[]=[];
   private holdHash=false;
   private hashesUntilHold=1;
   private releaseHeavy:(()=>void)|undefined;
@@ -20,6 +25,18 @@ export class OrgFixture {
   private releaseHash:(()=>void)|undefined;
   constructor(private ctx: DurableObjectState, env: FloraEnv) {
     this.env = {...env, ASSETS: {fetch: async () => new Response('fixture')} as unknown as FloraEnv['ASSETS']};
+    const db=env.FLORA_DB;
+    const pause=async(kind:'read'|'batch-after')=>{if(this.dbGate!==kind)return;this.dbGate=null;this.dbHeld=true;await new Promise<void>(resolve=>{this.dbRelease=resolve;});};
+    const statement=(value:any):any=>new Proxy(value,{get:(target,key)=>{
+      if(key==='bind')return (...args:any[])=>statement(target.bind(...args));
+      const method=target[key];if(typeof method!=='function')return method;
+      return async(...args:any[])=>{const result=await method.apply(target,args);if(key==='first'||key==='all')await pause('read');return result;};
+    }});
+    this.env.FLORA_DB=new Proxy(db,{get:(target,key)=>{
+      if(key==='prepare')return (sql:string)=>{this.queries.push(sql);return statement(target.prepare(sql));};
+      if(key==='batch')return async(values:any[])=>{this.batches++;const result=await target.batch(values);await pause('batch-after');return result;};
+      const value=(target as any)[key];return typeof value==='function'?value.bind(target):value;
+    }});
     const exec=ctx.storage.sql.exec.bind(ctx.storage.sql);
     ctx.storage.sql.exec=((query:string,...args:any[])=>{if(/FROM flora_org_(?:users|memberships|app_access|sessions)\b/.test(query))this.pointQueries++;return exec(query,...args);}) as typeof ctx.storage.sql.exec;
     const digest=crypto.subtle.digest.bind(crypto.subtle);
@@ -35,6 +52,9 @@ export class OrgFixture {
     if (path !== '/__test/control') return this.authority.fetch(request);
     const body = await request.json() as any;
     if(body.now!==undefined)clock=body.now;
+    if(body.action==='db-gate'){this.dbGate=body.kind;this.batches=0;this.queries=[];return Response.json({ok:true});}
+    if(body.action==='db-state')return Response.json({held:this.dbHeld,batches:this.batches,queries:this.queries});
+    if(body.action==='db-release'){this.dbRelease?.();this.dbRelease=undefined;this.dbHeld=false;return Response.json({ok:true});}
     if(body.heavy==='take')this.releaseHeavy=this.authority.tryHeavy('kdf')??undefined;
     if(body.heavy==='release'){this.releaseHeavy?.();this.releaseHeavy=undefined;}
     if(body.holdHash||body.holdHashAt){this.holdHash=true;this.hashesUntilHold=body.holdHashAt??1;}
@@ -47,6 +67,7 @@ export class OrgFixture {
         Object.assign(this.env, body.env ?? {}); this.authority = new FloraAuth(this.ctx, this.env);
         await this.authority.fetch(new Request(this.env.FLORA_ORIGIN + '/api/auth/session'));
       }
+      if(body.action==='capture-management-grant'){this.pointQueries=0;const queries=this.queries.length;this.grant=await this.authority.requireSession(new Request(this.env.FLORA_ORIGIN+body.path,{headers:body.headers}));return Response.json({pointQueries:this.pointQueries,d1Reads:this.queries.length-queries});}
       if(body.action==='capture-grant'){this.grant=await this.authority.requireSession(new Request(this.env.FLORA_ORIGIN+'/api/auth/session',{headers:body.headers}));return Response.json({ok:true});}
       if(body.action==='assert-grant'){this.authority.assertCurrent(body.forged?{...this.grant!}:this.grant!);return Response.json({ok:true});}
       // Access only an actual production store instantiated by the real authority.

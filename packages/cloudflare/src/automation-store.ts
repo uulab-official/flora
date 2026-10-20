@@ -1,3 +1,4 @@
+import type {MutationSubmit,ReadScope} from "./contracts.js";
 import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types";
 import { canonicalJson, freeze } from "@app-ops/config";
 import { DomainError, ensure, id, integer } from "@app-ops/core";
@@ -16,13 +17,13 @@ const summary = ({ tokenHash: _secret, ...runner }: RunnerCredential): RunnerSum
 function charge(fields: unknown[]) { const bytes = encoder.encode(canonicalJson(fields)).byteLength; ensure(bytes <= 524288, "INPUT_TOO_LARGE"); return bytes; }
 const transitionColumns = ["owner_id", "app_id", "job_id", "version", "now", "kind", "authority_json", "lease_json", "data"];
 export function createD1AutomationStore(db: D1Database, owner: string, applications: ApplicationStore, operations: D1OperationsStore,
-  verify: () => Promise<void>, beforeCommit: () => void): AutomationStore {
+  verify: () => Promise<void>, beforeCommit: () => void,mutate?:MutationSubmit,scope?:ReadScope): AutomationStore {
   function insert(table: string, columns: string[], fields: (string | number | null)[], suffix = "", extra: (string | number | null)[] = []) {
     return db.prepare(`INSERT INTO ${table}(${columns.join(",")},stored_bytes) SELECT ${fields.map(() => "?").join(",")},? ${suffix}`).bind(...fields, charge(fields), ...extra);
   }
   async function submit(statements: D1PreparedStatement[]) {
     beforeCommit();
-    try { return await db.batch<Row>(statements); }
+    try { return await (mutate?mutate(()=>db.batch<Row>(statements)):db.batch<Row>(statements)); }
     catch (error) {
       if (error instanceof Error) {
         if (/runner authority/.test(error.message)) throw new DomainError("PERMISSION_DENIED");
@@ -97,7 +98,7 @@ export function createD1AutomationStore(db: D1Database, owner: string, applicati
     async listRunners(appId) {
       applicationId(appId); await verify(); const result = await db.prepare(`SELECT data FROM automation_runners r WHERE owner_id=? AND version=(SELECT max(version) FROM automation_runners WHERE owner_id=r.owner_id AND id=r.id)
         AND EXISTS(SELECT 1 FROM json_each(r.data,'$.appIds') WHERE value=?) ORDER BY id LIMIT 100`).bind(owner, appId).all<Row>();
-      return result.results.map(row => summary(read<RunnerCredential>(row)));
+      return result.results.map(row => {const runner=summary(read<RunnerCredential>(row));return scope?{...runner,appIds:[appId]}:runner;});
     },
     async revokeRunner(runnerId, now) {
       id(runnerId); integer(now); await verify(); const row = await runnerQuery(runnerId).first<Row>(); ensure(row, "NOT_FOUND"); const runner = read<RunnerCredential>(row);

@@ -6,9 +6,12 @@ import { MemberAuth } from "./org/member-auth.js";
 import { OrgPolicy } from "./org/policy.js";
 import { OrgFailure } from "./org/types.js";
 import type { OrgPrincipal, OrgAction } from "./org/types.js";
+import {managementRequirement} from "./org/route-policy.js";
+import type {ManagementRequirement} from "./org/route-policy.js";
+import {OrgAudit} from "./org/audit.js";
 import { OrgStore } from "./org/store.js";
 import { readConfig } from "./config.js";
-import type { AuthGrant, FloraConfig, FloraEnv } from "./contracts.js";
+import type { AuthGrant, FloraConfig, FloraEnv, ReadScope, MutationSubmit } from "./contracts.js";
 import { createPasswordVerifier, verifyPassword } from "./auth/password.js";
 import { AuthFailure, AuthState } from "./auth-state.js";
 import { listProjectSummaries, ProjectSummaryCache } from "./project-summary.js";
@@ -82,6 +85,8 @@ export class FloraAuth extends DurableObject<FloraEnv> {
   private orgPolicy: OrgPolicy | undefined;
   private memberAuth: MemberAuth | undefined;
   private invitations: InvitationService | undefined;
+  private readonly requirements=new WeakMap<AuthGrant,ManagementRequirement>();
+  private readonly readScopes=new WeakMap<AuthGrant,{scope:ReadScope;nextCursor:string|null}>();
   private readonly principals = new WeakMap<AuthGrant, OrgPrincipal>();
   private connections: ManagedConnections | undefined;
   private ci: ManagedCI | undefined;
@@ -214,13 +219,14 @@ export class FloraAuth extends DurableObject<FloraEnv> {
     return config;
   }
 
-  private importStore(config: FloraConfig, beforeCommit: () => void, readFence = beforeCommit, upload?: () => ExternalAssetUploadContext | undefined) {
+  private importStore(config: FloraConfig, beforeCommit: () => void, readFence = beforeCommit, upload?: () => ExternalAssetUploadContext | undefined, scope?:ReadScope, mutate?:MutationSubmit) {
     let external: ExternalOTAAssets | undefined;
     if (this.assetBlobsRequired) {
       const unavailable = async (): Promise<never> => { throw new HttpFailure(503, "ASSET_STORAGE_UNAVAILABLE"); };
       external = this.githubAssetBlobs?.scope(config, readFence, upload) ?? this.assetBlobs?.scope(config, readFence) ?? { put: unavailable, get: unavailable };
     }
-    return createD1ImportStore(this.env.FLORA_DB, config, beforeCommit, external);
+    if(external&&mutate){const underlying=external;external={...underlying,put:(asset,bytes)=>mutate(()=>underlying.put(asset,bytes)),get:underlying.get.bind(underlying)};}
+    return createD1ImportStore(this.env.FLORA_DB, config, beforeCommit, external,scope,mutate,scope?readFence:undefined);
   }
 
   tryHeavy(kind: "kdf" | "import"): (() => void) | null {
@@ -242,10 +248,8 @@ export class FloraAuth extends DurableObject<FloraEnv> {
       if (member) {
         if (member.csrfHash !== csrfHash) throw new AuthFailure(401, "UNAUTHENTICATED");
         if (!["GET", "HEAD"].includes(request.method) && request.headers.get("X-Flora-CSRF") !== encode(rawCsrf)) throw new AuthFailure(403, "FORBIDDEN");
-        // Fail closed until each management route is explicitly scoped in Task 5.
-        if (!["/api/auth/session", "/api/auth/logout", "/api/auth/reauth", "/api/auth/member/password", "/_internal/session-check"].includes(new URL(request.url).pathname) && !organizationRoute(new URL(request.url).pathname)) throw new AuthFailure(403, "FORBIDDEN");
         const grant = Object.freeze({ownerId:config.ownerId,sessionHash,epoch:member.principal.ownerEpoch,expiresAt:member.principal.expiresAt});
-        this.grants.add(grant);this.principals.set(grant,member.principal);return grant;
+        this.grants.add(grant);this.principals.set(grant,member.principal);this.admitManagement(grant,request);return grant;
       }
       // If new organization auth is unavailable, a known member hash must not
       // fall through to the old authority (including a corrupt dual-source row).
@@ -267,7 +271,7 @@ export class FloraAuth extends DurableObject<FloraEnv> {
           this.org = undefined; this.orgPolicy = undefined; this.memberAuth = undefined;
         }
       }
-      return grant;
+      this.admitManagement(grant,request);return grant;
     } catch (error) { throw error instanceof AuthFailure ? error : error instanceof OrgFailure ? new AuthFailure(error.status, error.code, error.retryAfter) : new AuthFailure(503, "AUTH_UNAVAILABLE"); }
   }
 
@@ -283,10 +287,46 @@ export class FloraAuth extends DurableObject<FloraEnv> {
       } else this.state!.assertCurrent(grant, Date.now());
       if (principal) {
         if (!this.orgPolicy) throw new OrgFailure(503, "ORG_ACCESS_NOT_ACTIVE");
-        this.orgPolicy.require(principal, "org.self", undefined, Date.now());
+        const requirement=this.requirements.get(grant);
+        this.orgPolicy.require(principal,requirement?.action??'org.self',requirement?.appId,Date.now());
       }
     } catch (error) { throw error instanceof AuthFailure ? error : error instanceof OrgFailure ? new AuthFailure(error.status, error.code, error.retryAfter) : new AuthFailure(503, "AUTH_UNAVAILABLE"); }
   }
+
+  private admitManagement(grant:AuthGrant,request:Request):void {
+    const url=new URL(request.url),path=url.pathname,principal=this.principals.get(grant);
+    if(!principal||path.startsWith('/api/auth/')||organizationRoute(path)||path==='/_internal/session-check'||!path.startsWith('/api/'))return;
+    let requirement=managementRequirement(request.method,path);
+    const appId=url.searchParams.get('appId')??undefined;
+    if(['/api/sources','/api/baselines','/api/head'].includes(path)&&request.method==='POST'&&appId)requirement={action:'app.deploy',appId,ownerOnly:false};
+    if(request.method==='GET'&&(/^\/api\/baselines\/[a-z][a-z0-9_-]{2,95}\/log$/.test(path)||path==='/api/state'))requirement={action:appId?'app.read':'org.self',...(appId?{appId}:{}),ownerOnly:false};
+    this.requirements.set(grant,requirement);this.assertCurrent(grant);
+    if(principal.role!=='owner'){
+      const page=requirement.appId?{items:[requirement.appId],nextCursor:null}:this.orgPolicy!.visibleApps(principal,url.searchParams.get('appCursor'),25,JSON.stringify([request.method,path]));
+      this.readScopes.set(grant,{scope:{appIds:Object.freeze(page.items),permissionRevision:principal.membershipRevision,subject:JSON.stringify([principal.organizationId,principal.userId,path])},nextCursor:page.nextCursor});
+    }
+  }
+  private mutationSubmit(grant:AuthGrant):MutationSubmit|undefined {
+    const principal=this.principals.get(grant),requirement=this.requirements.get(grant),store=this.org;
+    if(!principal||!requirement||!store)return undefined;
+    return async submit=>{
+      const audit=new OrgAudit(this.ctx.storage,store),intent=audit.begin({actor:{kind:'human',id:principal.userId},action:requirement.action,...(requirement.appId?{appId:requirement.appId}:{}),membershipRevision:principal.membershipRevision},Date.now(),()=>this.assertCurrent(grant));
+      let submitted=false,settled=false;
+      try{await this.ctx.storage.sync();this.assertCurrent(grant);submitted=true;const result=await submit();audit.settle(intent.id,'completed',{},Date.now());settled=true;await this.ctx.storage.sync();return result;}
+      catch(error){if(!settled)audit.settle(intent.id,submitted?'unknown':'rejected',{},Date.now());throw error;}
+    };
+  }
+  /** Only call inside the same storage transaction as the local mutation. */
+  private recordLocal(grant:AuthGrant,refs:Record<string,string>={}):void {
+    const principal=this.principals.get(grant),requirement=this.requirements.get(grant);
+    if(!this.org||!principal||!requirement)return;
+    this.assertCurrent(grant);
+    this.org.appendAudit('operation_'+crypto.randomUUID(),'completed',{actor:{kind:'human',id:principal.userId},action:requirement.action,...(requirement.appId?{appId:requirement.appId}:{}),membershipRevision:principal.membershipRevision,refs},Date.now());
+  }
+  private localMutation<T>(grant:AuthGrant,mutate:()=>T,refs:Record<string,string>={}):T {
+    return this.ctx.storage.transactionSync(()=>{this.assertCurrent(grant);const result=mutate();this.recordLocal(grant,refs);return result;});
+  }
+  private managedStore(grant:AuthGrant){return this.importStore(this.config(),()=>this.assertCurrent(grant),undefined,undefined,this.readScopes.get(grant)?.scope,this.mutationSubmit(grant));}
 
   requireCapability(grant: AuthGrant, action: OrgAction, appId?: string): () => void {
     const check = () => {
@@ -678,27 +718,31 @@ export class FloraAuth extends DurableObject<FloraEnv> {
         const expensive = request.method === "POST" && !path.endsWith("/cancel") && !path.endsWith("/revoke"), release = expensive ? this.tryHeavy("import") : null;
         if (expensive && !release) throw new AuthFailure(409, "BUSY", 1);
         try {
-          const appId = path.split("/")[3]!, store = this.importStore(this.config(), fence);
+          const appId = path.split("/")[3]!, store = this.managedStore(grant);
           const app = await store.applications?.getApplication(appId); ensure(app && store.operations, "NOT_FOUND"); fence();
           if (!this.native) throw new AuthFailure(503, "VAULT_UNAVAILABLE");
-          if (request.method === "GET") return json(this.native.list(appId, fence));
+          if (request.method === "GET") {
+            const view=this.native.list(appId,fence),role=this.principals.get(grant)?.role;
+            if(role==='viewer'||role==='deployer'){const {credentialUses:_uses,...safe}=view;return json({...safe,jobs:safe.jobs.map(({credentials,...job})=>role==='deployer'?{...job,credentials}:job)});}
+            return json(view);
+          }
           const input = parseJson(await readBody(request, route.limit)); fence();
-          if (path.endsWith("/runners")) return json(await this.native.enroll(appId, input, grant.epoch, fence), 201);
+          if (path.endsWith("/runners")) return json(await this.native.enroll(appId, input, grant.epoch, fence,runner=>this.recordLocal(grant,{runnerId:runner.id})), 201);
           if (path.endsWith("/jobs")) {
             const selected = parseNativeJobInput(input), connection = await store.operations.getGitHubConnection(appId); fence(); ensure(connection, "PROVIDER_UNCONFIGURED");
             const head = await this.connections!.branchHead(connection, fence); ensure(head === selected.commitSha, "CONFIG_CONFLICT");
             const current = await store.operations.getGitHubConnection(appId); fence(); ensure(current && canonicalJson(current) === canonicalJson(connection), "CONFIG_CONFLICT");
             const source = { owner: connection.owner, repository: connection.repository, ref: connection.ref, rootDirectory: app.rootDirectory,
               installationId: connection.installationId, connectionVersion: connection.version };
-            return json(await this.native.enqueue(appId, selected, source, fence), 201);
+            return json(await this.native.enqueue(appId, selected, source, fence,job=>this.recordLocal(grant,{jobId:job.id})), 201);
           }
           nativeObject(input, []);
           const target = path.split("/")[6]!;
-          if (path.endsWith("/cancel")) return json(this.native.cancel(appId, target, fence));
-          if (path.endsWith("/revoke")) return json(this.native.revoke(appId, target, fence));
+          if (path.endsWith("/cancel")) return json(this.localMutation(grant,()=>this.native!.cancel(appId,target,fence),{jobId:target}));
+          if (path.endsWith("/revoke")) return json(this.localMutation(grant,()=>this.native!.revoke(appId,target,fence),{runnerId:target}));
           throw new HttpFailure(404, "NOT_FOUND");
         } catch (error) {
-          if (error instanceof AuthFailure || error instanceof HttpFailure) throw error;
+          if (error instanceof AuthFailure || error instanceof HttpFailure || error instanceof OrgFailure) throw error;
           if (error instanceof NativeBuildError || error instanceof CredentialVaultError) return json({ error: error.code }, error.status);
           return hostedFailure(error);
         } finally { release?.(); }
@@ -724,7 +768,7 @@ export class FloraAuth extends DurableObject<FloraEnv> {
           if (action === "fail") return json(this.native.fail(authority, lease, raw.code, fence));
           throw new HttpFailure(404, "NOT_FOUND");
         } catch (error) {
-          if (error instanceof AuthFailure || error instanceof HttpFailure) throw error;
+          if (error instanceof AuthFailure || error instanceof HttpFailure || error instanceof OrgFailure) throw error;
           if (error instanceof NativeBuildError || error instanceof CredentialVaultError) return json({ error: error.code }, error.status);
           return hostedFailure(error);
         } finally { release?.(); this.nativeBodies--; }
@@ -735,19 +779,23 @@ export class FloraAuth extends DurableObject<FloraEnv> {
         if (request.method === "POST" && !release) throw new AuthFailure(409, "BUSY", 1);
         try {
           const appId = route.path.split("/")[3]!;
-          const store = this.importStore(this.config(), fence);
+          const store = this.managedStore(grant);
           ensure(store.applications && await store.applications.getApplication(appId), "NOT_FOUND"); fence();
           if (!this.vault) throw new AuthFailure(503, "VAULT_UNAVAILABLE");
-          if (request.method === "GET") return json(await this.vault.list(appId, fence));
+          if (request.method === "GET") {
+            const view=await this.vault.list(appId,fence),role=this.principals.get(grant)?.role;
+            if(role==='viewer'||role==='deployer')return json({appId,configured:view.configured,credentials:view.credentials.map(c=>({kind:c.kind,configured:c.activeVersion!==null,expiresAt:c.expiresAt}))});
+            return json(role==='admin'?{...view,history:view.history.map(event=>({...event,actor:event.actor===grant.ownerId||event.actor.includes('@')?'legacy_owner':event.actor}))}:view);
+          }
           const input = parseJson(await readBody(request, route.limit)); fence();
           if (route.path.endsWith("/disable")) {
             const value = object(input, ["kind", "expectedVersion"]);
             if (!Number.isSafeInteger(value.expectedVersion) || (value.expectedVersion as number) < 0) throw new AuthFailure(400, "INVALID_CREDENTIAL_INPUT");
-            return json(await this.vault.disable(appId, parseCredentialKind(value.kind), value.expectedVersion as number, grant.ownerId, fence));
+            return json(await this.vault.disable(appId, parseCredentialKind(value.kind), value.expectedVersion as number, this.principals.get(grant)?.authSource==='member'?this.principals.get(grant)!.userId:grant.ownerId, fence,version=>this.recordLocal(grant,{credentialVersion:String(version)})));
           }
-          return json(await this.vault.import(appId, input, grant.ownerId, fence), 201);
+          return json(await this.vault.import(appId, input, this.principals.get(grant)?.authSource==='member'?this.principals.get(grant)!.userId:grant.ownerId, fence,version=>this.recordLocal(grant,{credentialVersion:String(version)})), 201);
         } catch (error) {
-          if (error instanceof AuthFailure || error instanceof HttpFailure) throw error;
+          if (error instanceof AuthFailure || error instanceof HttpFailure || error instanceof OrgFailure) throw error;
           if (error instanceof CredentialVaultError) return json({ error: error.code }, error.status);
           if (error instanceof CredentialValidationError) return json({ error: error.code }, 400);
           return hostedFailure(error);
@@ -777,12 +825,13 @@ export class FloraAuth extends DurableObject<FloraEnv> {
           }
           const appId = /^\/api\/apps\/([a-z][a-z0-9_-]{2,95})\/signing-key$/.exec(path)![1]!;
           if (Object.keys(input).length !== 0) throw new AuthFailure(400, "INVALID_INPUT");
-          const store = this.importStore(this.config(), fence);
+          const store = this.managedStore(grant);
           ensure(store.applications && await store.applications.getApplication(appId), "NOT_FOUND"); fence();
           const prior = this.connections!.signingKey(appId);
-          const key = prior ?? this.connections!.saveSigningKey(await createManagedSigningKey(appId, Date.now()), fence);
+          let key=prior;
+          if(!key){const generated=await createManagedSigningKey(appId,Date.now());fence();key=this.localMutation(grant,()=>this.connections!.saveSigningKey(generated,fence));}
           fence(); return json(publicSigningKey(key), prior ? 200 : 201);
-        } catch (error) { if (error instanceof AuthFailure) throw error; return hostedFailure(error); }
+        } catch (error) { if (error instanceof AuthFailure || error instanceof OrgFailure) throw error; return hostedFailure(error); }
         finally { release?.(); }
       }
       if (route.kind === "ci-binding") {
@@ -793,8 +842,8 @@ export class FloraAuth extends DurableObject<FloraEnv> {
         try {
           const update = request.method === "POST" ? parseCIBindingUpdate(await this.body(request)) : null;
           // Revocation remains available without GitHub or D1 availability.
-          if (update && !update.enabled) return json({ binding: this.ci!.disable(appId, update, Date.now(), fence) });
-          const config = this.config(), store = this.importStore(config, fence);
+          if (update && !update.enabled) return json({ binding: this.localMutation(grant,()=>this.ci!.disable(appId, update, Date.now(), fence)) });
+          const config = this.config(), store = this.managedStore(grant);
           ensure(store.applications && store.operations && store.automation && await store.applications.getApplication(appId), "NOT_FOUND");
           if (request.method === "GET") {
             fence();
@@ -817,15 +866,15 @@ export class FloraAuth extends DurableObject<FloraEnv> {
           const service = createAutomationService({ applications: store.applications, operations: store.operations, automation: store.automation }, { publicOrigin: config.origin });
           let enrollment: RunnerEnrollment | null = null;
           const credential = prior ? await store.automation.getRunnerCredential(prior.runnerId) : null;
-          if (!credential || credential.revokedAt !== null) enrollment = await service.enrollRunner({ name: "GitHub Actions CI", appIds: [appId] });
+          if (!credential || credential.revokedAt !== null) {this.requireCapability(grant,'runner.organization');enrollment = await service.enrollRunner({ name: "GitHub Actions CI", appIds: [appId] });}
           fence(); const current = await store.operations.getGitHubConnection(appId); ensure(current && canonicalJson(current) === canonicalJson(connection), "CONFIG_CONFLICT");
-          return json({ binding: this.ci!.configure(appId, update, connection, enrollment, Date.now(), fence) });
-        } catch (error) { if (error instanceof AuthFailure) throw error; return hostedFailure(error); }
+          return json({ binding: this.localMutation(grant,()=>this.ci!.configure(appId, update, connection, enrollment, Date.now(), fence)) });
+        } catch (error) { if (error instanceof AuthFailure || error instanceof OrgFailure) throw error; return hostedFailure(error); }
         finally { release?.(); if (request.method==="POST") this.projectSummaryCache.invalidate(); }
       }
       if (route.kind === "runner" || route.kind === "hook" || route.kind === "ci-token") {
         try { return await this.automationRequest(request, route.kind); }
-        catch (error) { if (error instanceof AuthFailure) throw error; return hostedFailure(error); }
+        catch (error) { if (error instanceof AuthFailure || error instanceof OrgFailure) throw error; return hostedFailure(error); }
       }
       if (route.kind === "internal") {
         const grant = await this.requireSession(request); this.assertCurrent(grant);
@@ -850,7 +899,7 @@ export class FloraAuth extends DurableObject<FloraEnv> {
               const config = this.config(), fence = () => this.assertCurrent(grant);
               const installationHash = await this.sdkTelemetry.resolveInstallation(this.env.FLORA_DB, config, installationAppId, input.deploymentId as string, input.installationRef as string, fence, Date.now());
               fence();
-              const state = this.autoRollback.setInstallation(grant.ownerId, installationAppId, installationHash, input.enabled, Date.now());
+              const state = this.localMutation(grant,()=>this.autoRollback!.setInstallation(grant.ownerId, installationAppId, installationHash, input.enabled as boolean, Date.now()));
               return json({ enabled: input.enabled, eligibleInstallations: state.eligibleInstallations, policyVersion: state.policy?.version ?? null });
             } finally { this.policyBodies--; }
           }
@@ -865,9 +914,9 @@ export class FloraAuth extends DurableObject<FloraEnv> {
             fence();
             // Existing policy disable never waits for D1 or the publication lock.
             if (input && !input.enabled && this.autoRollback.get(grant.ownerId, policyAppId).policy) {
-              return json(this.autoRollback.save(grant.ownerId, policyAppId, input, Date.now()));
+              return json(this.localMutation(grant,()=>this.autoRollback!.save(grant.ownerId, policyAppId, input, Date.now())));
             }
-            const store = this.importStore(config, fence);
+            const store = this.managedStore(grant);
             const application = await store.applications?.getApplication(policyAppId);
             ensure(application && store.operations, "NOT_FOUND"); fence();
             if (request.method === "GET") return json(this.autoRollback.get(grant.ownerId, policyAppId));
@@ -878,7 +927,7 @@ export class FloraAuth extends DurableObject<FloraEnv> {
               if (!target || !this.healthyRollbackTarget(grant.ownerId, policyAppId, targetId)) throw new HttpFailure(409, "AUTO_ROLLBACK_TARGET_UNHEALTHY");
               if (target.appId !== policyAppId || target.platform !== platform || target.channel !== input.channel) throw new HttpFailure(409, "AUTO_ROLLBACK_TARGET_SCOPE_MISMATCH");
             }
-            fence(); return json(this.autoRollback.save(grant.ownerId, policyAppId, input, Date.now()));
+            fence(); return json(this.localMutation(grant,()=>this.autoRollback!.save(grant.ownerId, policyAppId, input, Date.now())));
             } finally { this.policyBodies--; }
           }
           const telemetryJourney=telemetryJourneyRoute(path);
@@ -905,7 +954,7 @@ export class FloraAuth extends DurableObject<FloraEnv> {
           if (path === "/api/projects") {
             this.assertCurrent(grant);
             const presence = new Map(this.ctx.storage.sql.exec<{ runner_id: string; last_seen_at: number }>("SELECT runner_id,last_seen_at FROM flora_runner_presence ORDER BY runner_id LIMIT 100").toArray().map(row => [row.runner_id, row.last_seen_at]));
-            const result = await listProjectSummaries(this.env.FLORA_DB, this.config(), () => this.assertCurrent(grant), Date.now(), presence, this.projectSummaryCache);
+            const result = await listProjectSummaries(this.env.FLORA_DB, this.config(), () => this.assertCurrent(grant), Date.now(), presence, this.projectSummaryCache,this.readScopes.get(grant)?.scope);
             if (this.otaVerification) {
               const targets = result.projects.flatMap(project=>[project.ota.ios,project.ota.android].filter(deployment=>deployment!==null).map(deployment=>({appId:project.id,deploymentId:deployment!.id})));
               const proofs = this.otaVerification.latest(grant.ownerId,targets,()=>this.assertCurrent(grant));
@@ -921,9 +970,9 @@ export class FloraAuth extends DurableObject<FloraEnv> {
             }
             this.assertCurrent(grant);
             const {rollbackLineages:_rollbackLineages,...publicResult}=result;
-            return json({...publicResult,usage:this.usageCache?.snapshot(this.env.FLORA_USAGE_REPORTER_ID?this.env.FLORA_CLOUDFLARE_ACCOUNT_ID:undefined,Date.now())});
+            return json({...publicResult,...(this.readScopes.has(grant)?{nextCursor:this.readScopes.get(grant)!.nextCursor}:{usage:this.usageCache?.snapshot(this.env.FLORA_USAGE_REPORTER_ID?this.env.FLORA_CLOUDFLARE_ACCOUNT_ID:undefined,Date.now())})});
           }
-          const store = this.importStore(this.config(), () => this.assertCurrent(grant));
+          const store = this.managedStore(grant);
           const credentials = this.connections!.credentials();
           const github = credentials ? createGitHubResolver({ credentials }) : undefined;
           const source = credentials ? createGitHubAutomationSourceProvider({ credentials }) : undefined;
@@ -957,9 +1006,11 @@ export class FloraAuth extends DurableObject<FloraEnv> {
             return json({ ...state, runners: state.runners.map(runner => ({ ...runner, presence: this.runnerPresence(runner.id, runner.revokedAt, Date.now()) })) });
           }
           if (response.status === 200 && action === "revoke") this.ctx.storage.sql.exec("DELETE FROM flora_runner_presence WHERE runner_id=?", automationRoute!.runnerId!);
+          const next=this.readScopes.get(grant)?.nextCursor;
+          if(next)response.headers.set('X-Flora-Next-Cursor',next);
           return response;
         } catch (error) {
-          if (error instanceof AuthFailure) throw error;
+          if (error instanceof AuthFailure || error instanceof OrgFailure) throw error;
           return hostedFailure(error);
         } finally { release?.(); if (request.method==="POST") this.projectSummaryCache.invalidate(); }
       }

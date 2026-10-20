@@ -1,5 +1,5 @@
 import type { D1Database } from "@cloudflare/workers-types";
-import type { FloraConfig } from "./contracts.js";
+import type { FloraConfig,ReadScope } from "./contracts.js";
 import type { OTAVerificationSummary } from "./ota-verification.js";
 import { sdkRollbackChainProjection } from "./sdk-telemetry.js";
 import type { SDKTelemetrySummary, SDKRollbackLineage, SDKRollbackChain } from "./sdk-telemetry.js";
@@ -26,26 +26,26 @@ export class ProjectSummaryCache {
   private version = Symbol();
   get revision(): symbol { return this.version; }
   invalidate(): void { this.entry=undefined; this.version=Symbol(); }
-  private identity(config: FloraConfig): string { return JSON.stringify([config.ownerId,config.origin,config.dbIdentity]); }
-  read(config: FloraConfig,now: number): CacheValue | undefined {
+  private identity(config: FloraConfig,scope?:ReadScope): string { return JSON.stringify([config.ownerId,config.origin,config.dbIdentity,scope]); }
+  read(config: FloraConfig,now: number,scope?:ReadScope): CacheValue | undefined {
     const entry=this.entry;
-    return entry && entry.identity===this.identity(config) && now>=entry.observedAt && now-entry.observedAt<60000 ? entry.value : undefined;
+    return entry && entry.identity===this.identity(config,scope) && now>=entry.observedAt && now-entry.observedAt<60000 ? entry.value : undefined;
   }
-  retain(config: FloraConfig,now: number,revision: symbol,value: CacheValue): void {
+  retain(config: FloraConfig,now: number,revision: symbol,value: CacheValue,scope?:ReadScope): void {
     // An awaited read admitted before a mutation cannot refill its old cache.
-    if (revision===this.version) this.entry={identity:this.identity(config),observedAt:now,value};
+    if (revision===this.version) this.entry={identity:this.identity(config,scope),observedAt:now,value};
   }
 }
 const deployment = (alias: string) => `CASE WHEN ${alias}.id IS NULL THEN NULL ELSE json_object('id',${alias}.id,'channel',${alias}.channel,'runtimeVersion',${alias}.runtime_version,'createdAt',${alias}.created_at,'commitSha',json_extract(${alias}.data,'$.commitSha')) END`;
 
 /** Read-only owner projection. Fixed bounded query count; no credentials, assets, logs or provider calls. */
 export async function listProjectSummaries(db: D1Database, config: FloraConfig, fence: () => void, observedAt: number,
-  presence: ReadonlyMap<string, number>, cache?: ProjectSummaryCache): Promise<ProjectList> {
+  presence: ReadonlyMap<string, number>, cache?: ProjectSummaryCache,scope?:ReadScope): Promise<ProjectList> {
   fence();
   const identity = await db.prepare("SELECT owner_id,origin,db_identity FROM flora_deployment WHERE singleton=1").first<{ owner_id: string; origin: string; db_identity: string }>();
   fence();
   if (!identity || identity.owner_id !== config.ownerId || identity.origin !== config.origin || identity.db_identity !== config.dbIdentity) throw new Error("PROJECT_STORE_IDENTITY_MISMATCH");
-  const revision=cache?.revision, cached=cache?.read(config,observedAt);
+  const revision=cache?.revision, cached=cache?.read(config,observedAt,scope);
   if (cached && "failure" in cached) throw cached.failure;
   let projection: Projection;
   if (cached && "projection" in cached) projection=cached.projection;
@@ -65,17 +65,17 @@ export async function listProjectSummaries(db: D1Database, config: FloraConfig, 
       LEFT JOIN ota_deployments i ON i.owner_id=a.owner_id AND i.app_id=a.id AND i.id=(SELECT id FROM ota_deployments WHERE owner_id=a.owner_id AND app_id=a.id AND platform='ios' ORDER BY created_at DESC,rowid DESC LIMIT 1)
       LEFT JOIN ota_deployments d ON d.owner_id=a.owner_id AND d.app_id=a.id AND d.id=(SELECT id FROM ota_deployments WHERE owner_id=a.owner_id AND app_id=a.id AND platform='android' ORDER BY created_at DESC,rowid DESC LIMIT 1)
       LEFT JOIN automation_policies p ON p.owner_id=a.owner_id AND p.app_id=a.id AND p.version=(SELECT max(version) FROM automation_policies WHERE owner_id=a.owner_id AND app_id=a.id)
-      WHERE a.owner_id=? ORDER BY a.created_at DESC,a.id DESC LIMIT 100`).bind(config.ownerId),
+      WHERE a.owner_id=? ${scope?"AND a.id IN(SELECT value FROM json_each(?))":""} ORDER BY a.created_at DESC,a.id DESC LIMIT 100`).bind(config.ownerId,...(scope?[JSON.stringify(scope.appIds)]:[])),
     db.prepare(`SELECT r.id,json_extract(r.data,'$.appIds') app_ids,json_extract(r.data,'$.revokedAt') revoked_at FROM automation_runners r
-      WHERE r.owner_id=? AND r.version=(SELECT max(version) FROM automation_runners WHERE owner_id=r.owner_id AND id=r.id) ORDER BY r.id LIMIT 100`).bind(config.ownerId),
+      WHERE r.owner_id=? ${scope?"AND EXISTS(SELECT 1 FROM json_each(r.data,'$.appIds') WHERE value IN(SELECT value FROM json_each(?)))":""} AND r.version=(SELECT max(version) FROM automation_runners WHERE owner_id=r.owner_id AND id=r.id) ORDER BY r.id LIMIT 100`).bind(config.ownerId,...(scope?[JSON.stringify(scope.appIds)]:[])),
   ]);
   fence();
   if (results.length !== 2 || results.some(result => !result.success || !Array.isArray(result.results))) throw new Error("PROJECT_STORE_UNAVAILABLE");
   projection={rows:results[0]!.results as unknown as ProjectRow[],runners:results[1]!.results as unknown as RunnerProjection[]};
-  if (cache && revision) cache.retain(config,observedAt,revision,{projection});
+  if (cache && revision) cache.retain(config,observedAt,revision,{projection},scope);
   } catch (error) {
     fence(); // Never cache a revoked session or authority failure.
-    if (cache && revision) cache.retain(config,observedAt,revision,{failure:error});
+    if (cache && revision) cache.retain(config,observedAt,revision,{failure:error},scope);
     throw error;
   }
   }

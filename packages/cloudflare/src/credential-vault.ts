@@ -215,7 +215,7 @@ export class CredentialVault {
     await this.authenticate(rows, fence); fence();
     return view;
   }
-  async import(appId: string, input: unknown, actor: string, fence: Fence): Promise<CredentialView> {
+  async import(appId: string, input: unknown, actor: string, fence: Fence, committed?:(version:number)=>void): Promise<CredentialView> {
     checkIdentifier(appId); checkActor(actor); fence(); if (!this.ring) throw unavailable();
     const validated = await validateCredentialImport(input); fence();
     checkRevision(validated.expectedVersion);
@@ -239,10 +239,10 @@ export class CredentialVault {
       this.storage.sql.exec('INSERT INTO flora_credential_bindings VALUES(?,?,?,?,?) ON CONFLICT(app_id,kind) DO UPDATE SET revision=excluded.revision,active_version=excluded.active_version,last_version=excluded.last_version', appId, validated.kind, version, version, version);
       const event: CredentialHistory = { ...summary, id: crypto.randomUUID(), action: current ? 'rotated' : 'registered', actor };
       this.storage.sql.exec('INSERT INTO flora_credential_history VALUES(?,?,?,?,?,?)', event.id, appId, validated.kind, version, JSON.stringify(event), now);
-      return this.view(appId);
+      committed?.(version);return this.view(appId);
     });
   }
-  async disable(appId: string, kindInput: unknown, expectedVersion: unknown, actor: string, fence: Fence): Promise<CredentialView> {
+  async disable(appId: string, kindInput: unknown, expectedVersion: unknown, actor: string, fence: Fence, committed?:(version:number)=>void): Promise<CredentialView> {
     checkIdentifier(appId); checkActor(actor); checkRevision(expectedVersion); const kind = parseCredentialKind(kindInput);
     fence(); if (!this.ring) throw unavailable();
     const prior = this.binding(appId, kind); if (!prior) throw new CredentialVaultError(404, 'CREDENTIAL_NOT_FOUND');
@@ -256,7 +256,7 @@ export class CredentialVault {
       const now = Date.now(), event: CredentialHistory = { ...JSON.parse(row.data) as CredentialSummary, id: crypto.randomUUID(), action: 'disabled', actor, version: expectedVersion + 1, activeVersion: null, createdAt: now };
       this.storage.sql.exec('UPDATE flora_credential_bindings SET revision=?,active_version=NULL WHERE app_id=? AND kind=?', event.version, appId, kind);
       this.storage.sql.exec('INSERT INTO flora_credential_history VALUES(?,?,?,?,?,?)', event.id, appId, kind, event.version, JSON.stringify(event), now);
-      return this.view(appId);
+      committed?.(event.version);return this.view(appId);
     });
   }
 }
