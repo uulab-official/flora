@@ -85,3 +85,20 @@ node packages/ota-runner/dist/native-main.js --daemon \
 ## 검증 범위
 
 합성 계정·앱 3개·한 PC의 독립 private 환경 두 개는 조직/앱/토큰 격리의 로컬 증거입니다. 실제로 다른 PC 두 대, 제공자 권한, 실제 서명 빌드·기기 적용·스토어 제출은 각각 별도 증거가 필요합니다. EAS·GitHub Actions 없이 검증하며 기존 운영 설치나 제공자 권한을 자동으로 변경하지 않습니다.
+
+### 로컬 통합 검증을 재현하기
+
+Node 24.19.0과 pnpm 11.19.0을 사용합니다. 새 clone에서는 별도 저장소로 고정 설치를 먼저 수행합니다.
+
+```sh
+pnpm install --frozen-lockfile --ignore-scripts --store-dir /absolute/private/flora-pnpm-store
+pnpm check
+node --test scripts/org-access/preflight.test.mjs scripts/org-access/ui-qa.test.mjs \
+  scripts/local-runner/supervisor.test.mjs scripts/local-runner/health.test.mjs
+```
+
+`tests/organization-e2e.test.ts`는 로컬 workerd/D1과 실제 HTTP 인증으로 세 앱의 역할 범위, 독립 PC 두 개, 한 번만 가능한 수령, OTA/native 토큰 분리, 승인자 접근 회수, 재설정·재활성화를 검사합니다. 네이티브 키 전달은 합성 암호문과 실제 lease 검사를 사용하며 공급자의 빌드 성공을 대신하지 않습니다.
+
+`packages/cloudflare/test/org-preservation.test.ts`는 실제 전환·중지·재개 전후에 기존 DO/D1 업무 행의 해시를 비교합니다. 기존 Owner 인증, Vault 암호문, OTA 서명 자산과 원래 Runner 행을 포함합니다. 별도 설치의 같은 앱 ID와 Owner 이메일에도 다른 설치의 세션·토큰을 사용할 수 없는지 확인합니다. 공급자 내부 메타데이터는 업무 행 보존 비교에서 제외합니다.
+
+회수와 await 경계·응답 유실은 `org-service-authority`, `org-runner-registration`, `org-migration`, `org-runner-gate` 테스트가 추가로 검사합니다. UI 검증은 별도 합성 상태를 사용하며 운영 초대나 실제 비밀키를 만들지 않습니다. 이 검증을 통과해도 운영 서버의 팀 접근이 자동으로 활성화되지는 않습니다.

@@ -23,6 +23,7 @@ export class OrgFixture {
   private readyFailure=false;
   private loseOtaResponse=false;
   private patchedAccess=new WeakSet<object>();
+  private positiveReads=0;
   private pointQueries=0;
   private dbGate:'read'|'batch-after'|null=null;
   private dbHeld=false;
@@ -54,7 +55,7 @@ export class OrgFixture {
       const value=(target as any)[key];return typeof value==='function'?value.bind(target):value;
     }});
     const exec=ctx.storage.sql.exec.bind(ctx.storage.sql);
-    ctx.storage.sql.exec=((query:string,...args:any[])=>{if(/FROM flora_org_(?:users|memberships|app_access|sessions)\b/.test(query))this.pointQueries++;return exec(query,...args);}) as typeof ctx.storage.sql.exec;
+    ctx.storage.sql.exec=((query:string,...args:any[])=>{if(/FROM flora_org_runner_access\b/.test(query))this.positiveReads++;if(/FROM flora_org_(?:users|memberships|app_access|sessions)\b/.test(query))this.pointQueries++;return exec(query,...args);}) as typeof ctx.storage.sql.exec;
     const digest=crypto.subtle.digest.bind(crypto.subtle);
     crypto.subtle.digest=((...args:Parameters<typeof digest>)=>{if(this.holdHash&&--this.hashesUntilHold<=0){this.holdHash=false;this.hashHeld=true;return new Promise<void>(resolve=>{this.releaseHash=resolve;}).then(()=>digest(...args));}return digest(...args);}) as typeof crypto.subtle.digest;
     this.authority = new FloraAuth(ctx, this.env);
@@ -68,6 +69,7 @@ export class OrgFixture {
     if (path !== '/__test/control') return this.authority.fetch(request);
     const body = await request.json() as any;
     if(body.now!==undefined)clock=body.now;
+    if(body.action==='positive-reads'){const reads=this.positiveReads;this.positiveReads=0;return Response.json({reads});}
     if(body.action==='sync-hold'){this.syncHoldAt=body.at;this.syncCalls=0;return Response.json({ok:true});}
     if(body.action==='sync-state')return Response.json({held:this.syncHeld});
     if(body.action==='sync-release'){this.syncRelease?.();this.syncRelease=undefined;this.syncHeld=false;return Response.json({ok:true});}

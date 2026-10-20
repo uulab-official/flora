@@ -97,7 +97,7 @@ export class RunnerAccess {
   let apps:unknown,platforms:unknown;try{apps=JSON.parse(row.app_ids);platforms=JSON.parse(row.platforms);}catch{orgAssert(false,403,'RUNNER_ACCESS_DENIED');}
   orgAssert(Array.isArray(apps)&&apps.length>0&&apps.length<=100&&new Set(apps).size===apps.length&&apps.every(a=>typeof a==='string'&&/^[a-z][a-z0-9_-]{2,95}$/.test(a))&&Array.isArray(platforms)&&platforms.length>0&&platforms.length<=2&&new Set(platforms).size===platforms.length&&platforms.every(p=>p==='ios'||p==='android')&&(row.kind!=='native'||apps.length===1&&platforms.length===1),403,'RUNNER_ACCESS_DENIED');return {appIds:apps,platforms};
  }
- serviceScope(ref:RunnerAccessRef,now:number):{appIds:string[];platforms:('ios'|'android')[]} {const scope=this.scope(this.get(ref));for(const appId of scope.appIds)this.assertService(ref,appId,undefined,now);return scope;}
+ serviceScope(ref:RunnerAccessRef,now:number):{appIds:string[];platforms:('ios'|'android')[]} {safeInteger(now,0);const row=this.get(ref),scope=this.scope(row);orgAssert(row.state==='ready',403,'RUNNER_ACCESS_DENIED');if(row.owner_mode==='organization')return scope;orgAssert(row.owner_mode==='personal'&&scope.appIds.length===1,403,'RUNNER_ACCESS_DENIED');this.assertService(ref,scope.appIds[0]!,undefined,now);return scope;}
  assertService(ref:RunnerAccessRef,application:string,platform:string|undefined,now:number):void {
   safeInteger(now,0);const row=this.get(ref),scope=this.scope(row);orgAssert(row.state==='ready'&&scope.appIds.includes(application)&&(platform===undefined||scope.platforms.includes(platform as 'ios'|'android')),403,'RUNNER_ACCESS_DENIED');
   if(row.owner_mode==='organization')return;
