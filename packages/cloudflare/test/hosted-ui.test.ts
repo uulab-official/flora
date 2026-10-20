@@ -85,7 +85,7 @@ function credentials(document: Document, setup = false) {
 test("two_browser_sessions_revisit_same_imports", async () => {
   const data = state(); data.history.items = [record()]; const first = await controller(data); const second = await controller(data);
   for (const app of [first, second]) {
-    assert.equal(app.calls[0]!.url, "/api/auth/session"); assert.equal(app.calls[1]!.url, "/api/state"); assert.ok(app.document.text.includes(data.selected.repository.fullName)); assert.ok(app.document.text.includes("사용자 반입")); assert.ok(app.document.text.includes("최신 여부 알 수 없음")); assert.ok(app.document.text.includes("호스팅에서는 실행할 수 없음")); app.client.close();
+    assert.equal(app.calls[0]!.url, "/api/auth/session"); assert.equal(app.calls[1]!.url, "/api/me"); assert.equal(app.calls[2]!.url, "/api/state"); assert.ok(app.document.text.includes(data.selected.repository.fullName)); assert.ok(app.document.text.includes("사용자 반입")); assert.ok(app.document.text.includes("최신 여부 알 수 없음")); assert.ok(app.document.text.includes("호스팅에서는 실행할 수 없음")); app.client.close();
   }
   assert.notEqual(first.csrf, second.csrf);
 });
@@ -217,7 +217,7 @@ for (const kind of ["source", "baseline"] as const) for (const outcome of ["netw
   assert.equal(app.document.getElementById("login-link").hidden, true);
   assert.equal(app.document.getElementById("retry-button").hidden, false);
   const callsBeforeReload = app.calls.length; await app.document.getElementById("retry-button").dispatch("click");
-  assert.deepEqual(app.calls.slice(callsBeforeReload).map(call => [call.url, call.init.method]), [["/api/state?snapshotId=snapshot_a", "GET"]]);
+  assert.deepEqual(app.calls.slice(callsBeforeReload).map(call => [call.url, call.init.method]), [["/api/me","GET"],["/api/state?snapshotId=snapshot_a", "GET"]]);
   assert.equal(posts, 1); assert.equal(input.value, "");
   input.files = [file]; input.value = "original.json"; await input.dispatch("change");
   assert.equal(posts, 2); assert.equal(input.value, "");

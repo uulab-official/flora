@@ -34,3 +34,8 @@ export function storageIdentity(value:unknown):asserts value is string {orgAsser
 
 export interface RunnerAccessRef {kind:RunnerKind;runnerId:string}
 export interface RunnerRequest {id:string;appId:string;kind:RunnerKind;name:string;platforms:('ios'|'android')[];requesterUserId:string;approverUserId:string|null;state:'pending'|'approved'|'issuing'|'claimed'|'revoked'|'unknown';revision:number;requestedAt:number;expiresAt:number;claimExpiresAt:number|null;runnerId:string|null}
+
+/** Browser DTOs exclude storage identity, hashes, epochs and verifier material. */
+export interface OrgSelfView {organizationId:string;userId:string;membershipId:string;displayName:string;role:OrgRole;permissionRevision:number;appIds:string[];nextAppCursor:string|null;capabilities:OrgAction[]}
+export interface OrgDisplayView {id:string;name:string;mode:OrgMode;revision:number}
+export interface OrgMemberView {userId:string;membershipId:string;displayName:string;email:string;role:OrgRole;status:'active'|'disabled';revision:number;appIds:string[];hasMoreApps:boolean}

@@ -25,10 +25,13 @@ export function autoRollbackInstallationsRoute(path: string): string | null {
   return /^\/api\/apps\/([a-z][a-z0-9_-]{2,95})\/ota\/rollback-installations$/.exec(path)?.[1] ?? null;
 }
 const assets: Record<string, { kind: "public-asset" | "private-asset"; file: string }> = {
+  "/organization.js":{kind:"public-asset",file:"/organization.js"},"/organization.css":{kind:"public-asset",file:"/organization.css"},
+  "/join":{kind:"public-asset",file:"/join.html"},"/join.js":{kind:"public-asset",file:"/join.js"},"/join.css":{kind:"public-asset",file:"/join.css"},
+  "/account-security.js":{kind:"private-asset",file:"/account-security.js"},
   "/project-gallery.css": {kind:"private-asset",file:"/project-gallery.css"},
   "/project-branding.js": {kind:"private-asset",file:"/project-branding.js"},
   "/onboarding-download.js": {kind:"private-asset",file:"/onboarding-download.js"},
-  "/onboarding-files.js": {kind:"private-asset",file:"/onboarding-files.js"},
+  "/onboarding-files.js": {kind:"public-asset",file:"/onboarding-files.js"},
   "/onboarding.js": {kind:"private-asset",file:"/onboarding.js"}, "/onboarding-model.js": {kind:"private-asset",file:"/onboarding-model.js"}, "/onboarding.css": {kind:"private-asset",file:"/onboarding.css"},
   "/login": { kind: "public-asset", file: "/auth.html" }, "/setup": { kind: "public-asset", file: "/auth.html" },
   "/admin-routes.js": { kind: "public-asset", file: "/admin-routes.js" },

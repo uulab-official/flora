@@ -1,5 +1,7 @@
 /** Explicit console pages. This public module contains no application data. */
 export const ADMIN_PAGES = Object.freeze({
+  organization: {title:"조직 · 멤버",description:"팀원의 앱 접근과 승인된 PC를 관리하세요.",section:"page-organization",legacy:"account"},
+  security: {title:"계정 보안",description:"내 계정과 민감한 작업의 본인 확인을 관리하세요.",section:"page-security",legacy:"account"},
   onboarding: {title:"Flora 시작하기",description:"관리자 등록부터 GitHub · SDK · PC Runner · 첫 OTA까지 안내합니다.",section:"page-onboarding",legacy:"account"},
   projects: { title: "프로젝트", description: "앱의 소스부터 배포와 복구까지, 한곳에서.", section: "application-panel", legacy: "apps" },
   register: { title: "프로젝트 등록", description: "GitHub 저장소와 앱 폴더를 선택해 새 프로젝트를 연결하세요.", section: "page-register", legacy: "account" },
@@ -15,7 +17,7 @@ export const ADMIN_PAGES = Object.freeze({
   settings: { title: "작업실 설정", description: "현재 작업실과 소유자 계정을 확인하세요.", section: "view-account", legacy: "account" },
 });
 const appIdPattern = /^[a-z][a-z0-9_-]{2,95}$/;
-const globalPaths = Object.freeze({ onboarding: "/onboarding", projects: "/projects", register: "/projects/new", settings: "/settings" });
+const globalPaths = Object.freeze({ organization:"/organization/members", security:"/account/security", onboarding: "/onboarding", projects: "/projects", register: "/projects/new", settings: "/settings" });
 const appSegments = Object.freeze({ overview: "", source: "source", ota: "ota", runners: "runners", builds: "builds", credentials: "credentials", "app-settings": "settings", activity: "activity" });
 export function adminPath(page, appId = null, deploymentId = null) {
   if (["ota-detail", "ota-issues", "ota-unresolved", "ota-resolved"].includes(page)) return typeof appId === "string" && appIdPattern.test(appId) && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(deploymentId ?? "") ? `/apps/${appId}/ota/${deploymentId}${page === "ota-detail" ? "" : "/" + page.slice(4)}` : null;
