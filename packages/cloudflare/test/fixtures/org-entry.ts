@@ -4,6 +4,8 @@ import { OrgFailure } from '../../dist/org/types.js';
 import { FloraAuth } from '../../dist/auth-do.js';
 import type { FloraEnv } from '../../src/contracts.js';
 
+let clock:number|null=null;const realNow=Date.now.bind(Date);Date.now=()=>clock??realNow();
+
 /** Local-only SQL/failure controls. Never included by the production entry. */
 export class OrgFixture {
   private authority: FloraAuth;
@@ -11,16 +13,25 @@ export class OrgFixture {
   private heldFence: (()=>void)|undefined;
   private grant: import("../../src/contracts.js").AuthGrant|undefined;
   private pointQueries=0;
+  private holdHash=false;
+  private hashHeld=false;
+  private releaseHash:(()=>void)|undefined;
   constructor(private ctx: DurableObjectState, env: FloraEnv) {
     this.env = {...env, ASSETS: {fetch: async () => new Response('fixture')} as unknown as FloraEnv['ASSETS']};
     const exec=ctx.storage.sql.exec.bind(ctx.storage.sql);
     ctx.storage.sql.exec=((query:string,...args:any[])=>{if(/FROM flora_org_(?:users|memberships|app_access|sessions)\b/.test(query))this.pointQueries++;return exec(query,...args);}) as typeof ctx.storage.sql.exec;
+    const digest=crypto.subtle.digest.bind(crypto.subtle);
+    crypto.subtle.digest=((...args:Parameters<typeof digest>)=>{if(this.holdHash){this.holdHash=false;this.hashHeld=true;return new Promise<void>(resolve=>{this.releaseHash=resolve;}).then(()=>digest(...args));}return digest(...args);}) as typeof crypto.subtle.digest;
     this.authority = new FloraAuth(ctx, this.env);
   }
   async fetch(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname;
     if (path !== '/__test/control') return this.authority.fetch(request);
     const body = await request.json() as any;
+    if(body.now!==undefined)clock=body.now;
+    if(body.holdHash)this.holdHash=true;
+    if(body.action==='hash-state')return Response.json({held:this.hashHeld});
+    if(body.action==='release-hash'){this.releaseHash?.();this.releaseHash=undefined;this.hashHeld=false;return Response.json({ok:true});}
     await this.authority.fetch(new Request(this.env.FLORA_ORIGIN + '/api/auth/session'));
     try {
       if (body.action === 'sql') return Response.json(this.ctx.storage.sql.exec(body.sql, ...(body.args ?? [])).toArray());
@@ -43,6 +54,7 @@ export class OrgFixture {
         return Response.json({ok:true,pointQueries:this.pointQueries});
       }
       if (body.action === 'bootstrap') return Response.json(store.bootstrap(body.owner ?? {epoch:0,claimed:false}, body.now ?? 1_800_000_000_000));
+      if(body.action==='audit-raw'){store.atomic(()=>store.appendAudit('synthetic-event','completed',body.data,1_800_000_000_000));return Response.json({ok:true});}
       if (body.action === 'audit-begin') return Response.json(new OrgAudit(this.ctx.storage,store).begin(body.input,1_800_000_000_000,()=>{if(body.revoked)throw new OrgFailure(403,'MEMBERSHIP_CHANGED')}));
       if (body.action === 'audit-settle') {new OrgAudit(this.ctx.storage,store).settle(body.id,body.state,body.refs??{},1_800_000_000_000);return Response.json({ok:true});}
       if (body.action === 'access') { store.setAccess(body.actor, body.userId, body.input, body.now ?? 1_800_000_000_000); return Response.json({ok:true}); }

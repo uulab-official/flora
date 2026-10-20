@@ -1,28 +1,28 @@
 import {createOrgSchema} from './schema.js';
-import {OrgFailure,defaultOrgLimits,normalizeEmail,orgAssert,orgId,safeInteger,utf8Bytes} from './types.js';
+import {OrgFailure,defaultOrgLimits,normalizeOwnerEmail,orgAssert,orgId,safeInteger,utf8Bytes} from './types.js';
 import type {OrgBinding,OrgLimits,OrgStorage,OrgState,OrgMemberState,OrgPrincipal,MembershipInput,OrgRole} from './types.js';
 export type OrgStateRow = {id:string;owner_id:string;db_identity:string;origin:string;owner_email:string;display_name:string;mode:OrgState['mode'];revision:number;org_access_epoch:number;min_protocol:number;metadata_bytes:number;audit_bytes:number;safety_bytes:number}
 export class OrgStore {
  readonly limits:Readonly<OrgLimits>;
  constructor(readonly storage:OrgStorage,readonly binding:OrgBinding,limits:OrgLimits=defaultOrgLimits) {
-  orgId(binding.ownerId);orgId(binding.dbIdentity);normalizeEmail(binding.ownerEmail);
+  orgId(binding.ownerId);orgId(binding.dbIdentity);normalizeOwnerEmail(binding.ownerEmail);
   safeInteger(limits.metadataBytes);safeInteger(limits.auditBytes);this.limits=Object.freeze({...limits});
   this.atomic(()=>{createOrgSchema(storage);const row=this.storage.sql.exec<OrgStateRow>('SELECT * FROM flora_org_state WHERE singleton=1').toArray()[0];if(row)this.checkBinding(row);});
  }
  atomic<T>(action:()=>T):T {try{return this.storage.transactionSync(action)}catch(e){if(e instanceof OrgFailure)throw e;throw new OrgFailure(503,'ORG_ACCESS_NOT_ACTIVE')}}
  row():OrgStateRow {const row=this.storage.sql.exec<OrgStateRow>('SELECT * FROM flora_org_state WHERE singleton=1').toArray()[0];orgAssert(row,503,'ORG_ACCESS_NOT_ACTIVE');this.checkBinding(row);return row}
- private checkBinding(row:OrgStateRow):void {orgAssert(row.owner_id===this.binding.ownerId&&row.db_identity===this.binding.dbIdentity&&row.origin===this.binding.origin&&row.owner_email===normalizeEmail(this.binding.ownerEmail),503,'ORG_ACCESS_NOT_ACTIVE')}
+ private checkBinding(row:OrgStateRow):void {orgAssert(row.owner_id===this.binding.ownerId&&row.db_identity===this.binding.dbIdentity&&row.origin===this.binding.origin&&row.owner_email===normalizeOwnerEmail(this.binding.ownerEmail),503,'ORG_ACCESS_NOT_ACTIVE')}
  state():OrgState {const r=this.row();return {id:r.id,ownerId:r.owner_id,dbIdentity:r.db_identity,origin:r.origin,mode:r.mode,revision:r.revision,orgAccessEpoch:r.org_access_epoch,minProtocol:r.min_protocol}}
  bootstrap(owner:{epoch:number;claimed:boolean},now:number):OrgState {
   safeInteger(owner.epoch,0);safeInteger(now,0);
   return this.atomic(()=>{
    const old=this.storage.sql.exec<OrgStateRow>('SELECT * FROM flora_org_state WHERE singleton=1').toArray()[0];
-   if(old)this.checkBinding(old);else this.storage.sql.exec("INSERT INTO flora_org_state(singleton,id,owner_id,db_identity,origin,owner_email,display_name,schema_version,min_protocol,mode,revision,org_access_epoch) VALUES(1,?,?,?,?,?,?,1,1,'owner_only',1,1)",'org_'+crypto.randomUUID(),this.binding.ownerId,this.binding.dbIdentity,this.binding.origin,normalizeEmail(this.binding.ownerEmail),this.binding.workspaceName??'Flora');
+   if(old)this.checkBinding(old);else this.storage.sql.exec("INSERT INTO flora_org_state(singleton,id,owner_id,db_identity,origin,owner_email,display_name,schema_version,min_protocol,mode,revision,org_access_epoch) VALUES(1,?,?,?,?,?,?,1,1,'owner_only',1,1)",'org_'+crypto.randomUUID(),this.binding.ownerId,this.binding.dbIdentity,this.binding.origin,normalizeOwnerEmail(this.binding.ownerEmail),this.binding.workspaceName??'Flora');
    if(owner.claimed){
     orgAssert(owner.epoch>0,503,'ORG_ACCESS_NOT_ACTIVE');
     const existing=this.storage.sql.exec<{id:string}>("SELECT id FROM flora_org_users WHERE auth_source='legacy_owner'").toArray()[0];
     if(!existing){
-     const userId='user_'+crypto.randomUUID(),membershipId='membership_'+crypto.randomUUID(),email=normalizeEmail(this.binding.ownerEmail);
+     const userId='user_'+crypto.randomUUID(),membershipId='membership_'+crypto.randomUUID(),email=normalizeOwnerEmail(this.binding.ownerEmail);
      this.charge(utf8Bytes({id:userId,email,display_name:'Owner',auth_source:'legacy_owner',status:'active',auth_epoch:1})+utf8Bytes({id:membershipId,org_id:this.row().id,user_id:userId,role:'owner',status:'active',revision:1}));
      this.storage.sql.exec("INSERT INTO flora_org_users(id,email,display_name,auth_source,status,auth_epoch) VALUES(?,?,'Owner','legacy_owner','active',1)",userId,email);
      this.storage.sql.exec("INSERT INTO flora_org_memberships(id,org_id,user_id,role,status,revision) VALUES(?,?,?,'owner','active',1)",membershipId,this.row().id,userId);
@@ -68,7 +68,7 @@ export class OrgStore {
   });
  }
  appendAudit(operationId:string,phase:string,data:unknown,now:number,safety=false):void {
-  const bytes=utf8Bytes(data);orgAssert(bytes<=2048,409,'ORG_ACCESS_CAPACITY');this.charge(0,safety?0:bytes,safety?bytes:0);
-  this.storage.sql.exec('INSERT INTO flora_org_audit(operation_id,phase,data,created_at,safety) VALUES(?,?,?,?,?)',operationId,phase,JSON.stringify(data),now,safety?1:0);
+  const payload=JSON.stringify(data);const bytes=utf8Bytes({operation_id:operationId,phase,data:payload,created_at:now,safety:safety?1:0});orgAssert(bytes<=2048,409,'ORG_ACCESS_CAPACITY');this.charge(0,safety?0:bytes,safety?bytes:0);
+  this.storage.sql.exec('INSERT INTO flora_org_audit(operation_id,phase,data,created_at,safety) VALUES(?,?,?,?,?)',operationId,phase,payload,now,safety?1:0);
  }
 }

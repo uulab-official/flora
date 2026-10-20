@@ -1,8 +1,7 @@
 import {OrgStore} from './store.js';
-import {orgAssert,orgId,safeInteger} from './types.js';
+import {orgActions,orgAssert,orgId,safeInteger} from './types.js';
 import type {OrgAction,OrgPage,OrgPrincipal} from './types.js';
 import type {AuthGrant} from '../contracts.js';
-const actions:readonly string[]=['org.self','org.manage','app.read','app.deploy','app.manage','credential.read','credential.manage','runner.request','runner.approve','runner.organization'];
 /** Pure local authority: no D1, network, token issuance or cached access decisions. */
 export class OrgPolicy {
  constructor(private readonly store:OrgStore){}
@@ -14,7 +13,7 @@ export class OrgPolicy {
   return Object.freeze({organizationId:state.id,userId:owner.id,membershipId:member.membershipId,role:'owner',authSource:'legacy_owner',authEpoch:member.authEpoch,membershipRevision:member.membershipRevision,ownerEpoch:grant.epoch,sessionHash:grant.sessionHash,expiresAt:grant.expiresAt});
  }
  require(principal:OrgPrincipal,action:OrgAction,appId:string|undefined,now:number):void {
-  safeInteger(now,0);orgAssert(actions.includes(action));
+  safeInteger(now,0);orgAssert(orgActions.includes(action));
   const state=this.store.state();
   this.store.assertActor(principal,now);
   const epoch=this.store.storage.sql.exec<{epoch:number}>('SELECT epoch FROM flora_auth_meta WHERE id=1').one().epoch;

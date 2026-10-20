@@ -73,7 +73,7 @@ export function routeRequest(request: Request, internal = false): Route {
   else if (asset) { kind = asset.kind; if (path === "/login") query = ["returnTo"]; }
   else if (internal && path === "/_internal/session-check") kind = "internal";
   else if (["/api/auth/session", "/api/auth/options"].includes(path)) { /* GET, no query */ }
-  else if (["/api/auth/login", "/api/auth/enroll", "/api/auth/recover", "/api/auth/logout"].includes(path)) { method = "POST"; limit = BODY_LIMITS.auth; }
+  else if (["/api/auth/login", "/api/auth/enroll", "/api/auth/recover", "/api/auth/logout", "/api/auth/reauth", "/api/auth/member/password"].includes(path)) { method = "POST"; limit = BODY_LIMITS.auth; }
   else if (path === "/api/apps") { kind = "hosted"; if (request.method === "POST") { method = "POST"; limit = 16384; } }
   else if (/^\/api\/apps\/[a-z][a-z0-9_-]{2,95}\/settings$/.test(path)) { kind = "hosted"; method = "POST"; limit = 65536; }
   else if (/^\/api\/apps\/[a-z][a-z0-9_-]{2,95}\/ota\/verification$/.test(path)) { kind = "hosted"; method = "POST"; limit = BODY_LIMITS.auth; }

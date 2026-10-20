@@ -123,3 +123,22 @@ test('audit_intent_fence_and_single_settlement_are_durable',async t=>{
  assert.deepEqual((await h.sql('SELECT phase FROM flora_org_audit ORDER BY sequence')).map(e=>e.phase),['pending','completed']);
  assert.equal((await h.control({action:'audit-settle',id:intent.id,state:'rejected'})).status,409);
 });
+
+test('existing_unicode_owner_email_keeps_legacy_identity_and_org_bootstrap',async t=>{
+ const h=await createOrgFixture(t,{FLORA_OWNER_EMAIL:'소유자@example.test'});
+ const response=await h.control({action:'bootstrap',owner:{epoch:1,claimed:true}});assert.equal(response.status,200);
+ assert.deepEqual((await h.sql("SELECT email,auth_source FROM flora_org_users WHERE auth_source='legacy_owner'"))[0],{email:'소유자@example.test',auth_source:'legacy_owner'});
+ assert.deepEqual(await h.sql('SELECT * FROM flora_org_passwords'),[]);
+});
+
+
+test('audit_rejects_unknown_actor_or_action_before_immutable_write',async t=>{
+ const h=await createOrgFixture(t);await h.control({action:'bootstrap'});
+ for(const input of [{actor:{kind:'unknown',id:'synthetic-user'},action:'app.deploy'},{actor:{kind:'human',id:'synthetic-user'},action:'unknown-action'}])assert.equal((await h.control({action:'audit-begin',input})).status,400);
+ assert.deepEqual(await h.sql('SELECT * FROM flora_org_audit'),[]);
+});
+test('audit_event_envelope_is_included_in_two_kibibyte_limit',async t=>{
+ const h=await createOrgFixture(t);await h.control({action:'bootstrap'});const before=await h.sql('SELECT * FROM flora_org_state');
+ const r=await h.control({action:'audit-raw',data:{message:'x'.repeat(2000)}});assert.equal(r.status,409);
+ assert.deepEqual(await h.sql('SELECT * FROM flora_org_audit'),[]);assert.deepEqual(await h.sql('SELECT * FROM flora_org_state'),before);
+});

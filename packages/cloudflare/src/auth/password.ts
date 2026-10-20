@@ -25,7 +25,7 @@ const parameters = {
 
 const verifierFields = [...Object.keys(parameters), "saltHex", "hashHex"];
 
-function validPassword(password: unknown, minimum: 12 | 15 = 15): password is string {
+export function validPassword(password: unknown, minimum: 12 | 15 = 15): password is string {
   if (minimum !== 12 && minimum !== 15) return false;
   if (typeof password !== "string" || password.length > 256) return false;
   if (Buffer.byteLength(password, "utf8") > 1024) return false;

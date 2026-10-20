@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { MemberAuth } from "./org/member-auth.js";
 import { OrgPolicy } from "./org/policy.js";
 import { OrgFailure } from "./org/types.js";
 import type { OrgPrincipal, OrgAction } from "./org/types.js";
@@ -76,6 +77,7 @@ export class FloraAuth extends DurableObject<FloraEnv> {
   private state: AuthState | undefined;
   private org: OrgStore | undefined;
   private orgPolicy: OrgPolicy | undefined;
+  private memberAuth: MemberAuth | undefined;
   private readonly principals = new WeakMap<AuthGrant, OrgPrincipal>();
   private connections: ManagedConnections | undefined;
   private ci: ManagedCI | undefined;
@@ -109,7 +111,8 @@ export class FloraAuth extends DurableObject<FloraEnv> {
           this.org = new OrgStore(ctx.storage, readConfig(env), readConfig(env).orgLimits);
           const owner = this.state.owner(); this.org.bootstrap({epoch: owner.epoch, claimed: owner.verifier !== null}, Date.now());
           this.orgPolicy = new OrgPolicy(this.org);
-        } catch { this.org = undefined; this.orgPolicy = undefined; /* Organization availability never replaces legacy Owner authority. */ }
+          this.memberAuth = new MemberAuth(this.org, {now:Date.now,minimum:()=>this.config().passwordMinimum??15,tryHeavy:()=>this.tryHeavy("kdf"),owner:()=>this.state!.owner(),reserveOwner:now=>this.state!.reserve(now,true),assertLegacy:(p,now)=>this.state!.assertCurrent({ownerId:this.config().ownerId,sessionHash:p.sessionHash,epoch:p.ownerEpoch,expiresAt:p.expiresAt},now)});
+        } catch { this.org = undefined; this.orgPolicy = undefined; this.memberAuth = undefined; /* Organization availability never replaces legacy Owner authority. */ }
         this.connections = new ManagedConnections(ctx.storage, env); this.ci = new ManagedCI(ctx.storage);
         ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS flora_runner_presence (runner_id TEXT PRIMARY KEY, last_seen_at INTEGER NOT NULL)");
         try { this.otaVerification = new OTAVerificationStore(ctx.storage); }
@@ -225,6 +228,18 @@ export class FloraAuth extends DurableObject<FloraEnv> {
       const rawSession = decode(cookie(request, sessionName)), rawCsrf = decode(cookie(request, csrfName));
       if (!rawSession || !rawCsrf) throw new AuthFailure(401, "UNAUTHENTICATED");
       const sessionHash = await digest(rawSession), csrfHash = await digest(rawCsrf);
+      const member = this.memberAuth?.inspect(sessionHash, Date.now());
+      if (member) {
+        if (member.csrfHash !== csrfHash) throw new AuthFailure(401, "UNAUTHENTICATED");
+        if (!["GET", "HEAD"].includes(request.method) && request.headers.get("X-Flora-CSRF") !== encode(rawCsrf)) throw new AuthFailure(403, "FORBIDDEN");
+        // Fail closed until each management route is explicitly scoped in Task 5.
+        if (!["/api/auth/session", "/api/auth/logout", "/api/auth/reauth", "/api/auth/member/password", "/_internal/session-check"].includes(new URL(request.url).pathname)) throw new AuthFailure(403, "FORBIDDEN");
+        const grant = Object.freeze({ownerId:config.ownerId,sessionHash,epoch:member.principal.ownerEpoch,expiresAt:member.principal.expiresAt});
+        this.grants.add(grant);this.principals.set(grant,member.principal);return grant;
+      }
+      // If new organization auth is unavailable, a known member hash must not
+      // fall through to the old authority (including a corrupt dual-source row).
+      if (!this.memberAuth && this.ctx.storage.sql.exec("SELECT 1 FROM sqlite_master WHERE type='table' AND name='flora_org_sessions'").toArray().length && this.ctx.storage.sql.exec('SELECT 1 FROM flora_org_sessions WHERE session_hash=?',sessionHash).toArray().length) throw new AuthFailure(401,"UNAUTHENTICATED");
       const session = this.state!.session(sessionHash, Date.now());
       if (session.csrf_hash !== csrfHash) throw new AuthFailure(401, "UNAUTHENTICATED");
       if (!["GET", "HEAD"].includes(request.method) && request.headers.get("X-Flora-CSRF") !== encode(rawCsrf)) throw new AuthFailure(403, "FORBIDDEN");
@@ -239,11 +254,11 @@ export class FloraAuth extends DurableObject<FloraEnv> {
         } catch {
           // This session was already verified by the original Owner authority.
           // Do not invent an organization identity or admit a member here.
-          this.org = undefined; this.orgPolicy = undefined;
+          this.org = undefined; this.orgPolicy = undefined; this.memberAuth = undefined;
         }
       }
       return grant;
-    } catch (error) { throw error instanceof AuthFailure ? error : error instanceof OrgFailure ? new AuthFailure(error.status, error.code) : new AuthFailure(503, "AUTH_UNAVAILABLE"); }
+    } catch (error) { throw error instanceof AuthFailure ? error : error instanceof OrgFailure ? new AuthFailure(error.status, error.code, error.retryAfter) : new AuthFailure(503, "AUTH_UNAVAILABLE"); }
   }
 
   /** Synchronous fence immediately before each D1 submission, never after it. */
@@ -251,13 +266,16 @@ export class FloraAuth extends DurableObject<FloraEnv> {
     try {
       this.config();
       if (!this.grants.has(grant)) throw new AuthFailure(401, "UNAUTHENTICATED");
-      this.state!.assertCurrent(grant, Date.now());
       const principal = this.principals.get(grant);
+      if (principal?.authSource === "member") {
+        if (!this.memberAuth) throw new AuthFailure(503,"ORG_ACCESS_NOT_ACTIVE");
+        this.memberAuth.assertCurrent(principal,Date.now());
+      } else this.state!.assertCurrent(grant, Date.now());
       if (principal) {
         if (!this.orgPolicy) throw new OrgFailure(503, "ORG_ACCESS_NOT_ACTIVE");
         this.orgPolicy.require(principal, "org.self", undefined, Date.now());
       }
-    } catch (error) { throw error instanceof AuthFailure ? error : error instanceof OrgFailure ? new AuthFailure(error.status, error.code) : new AuthFailure(503, "AUTH_UNAVAILABLE"); }
+    } catch (error) { throw error instanceof AuthFailure ? error : error instanceof OrgFailure ? new AuthFailure(error.status, error.code, error.retryAfter) : new AuthFailure(503, "AUTH_UNAVAILABLE"); }
   }
 
   requireCapability(grant: AuthGrant, action: OrgAction, appId?: string): () => void {
@@ -266,7 +284,7 @@ export class FloraAuth extends DurableObject<FloraEnv> {
       const principal = this.principals.get(grant);
       if (!principal || !this.orgPolicy) throw new AuthFailure(503, "ORG_ACCESS_NOT_ACTIVE");
       try { this.orgPolicy.require(principal, action, appId, Date.now()); }
-      catch (error) { if (error instanceof OrgFailure) throw new AuthFailure(error.status, error.code); throw error; }
+      catch (error) { if (error instanceof OrgFailure) throw new AuthFailure(error.status, error.code, error.retryAfter); throw error; }
     };
     check(); return check;
   }
@@ -323,6 +341,11 @@ export class FloraAuth extends DurableObject<FloraEnv> {
         setup = this.state!.requireSetup(config, kind, tokenDigest, Date.now());
       }
       if (!validPassword(input.password, config.passwordMinimum)) throw new AuthFailure(kind === "login" ? 401 : 400, kind === "login" ? "UNAUTHENTICATED" : "INVALID_PASSWORD");
+      if (kind === "login" && input.email !== config.ownerEmail && this.memberAuth && this.org?.state().mode !== "owner_only") {
+        const result=await this.memberAuth.login(input.email as string,input.password,Date.now());
+        const headers=new Headers();headers.append("Set-Cookie",sessionName+"="+result.sessionToken+cookieOptions+"; Max-Age=3600");headers.append("Set-Cookie",csrfName+"="+result.csrfToken+cookieOptions+"; Max-Age=3600");
+        return json({csrfToken:result.csrfToken,expiresAt:result.session.expiresAt},200,headers);
+      }
       const owner = this.state!.owner();
       const runnable = kind !== "login" || input.email === config.ownerEmail && owner.verifier !== null;
       if (!runnable) throw new AuthFailure(401, "UNAUTHENTICATED");
@@ -925,6 +948,19 @@ export class FloraAuth extends DurableObject<FloraEnv> {
         return json({ csrfToken: cookie(request, csrfName), expiresAt: grant.expiresAt, ...(this.config().workspaceName ? { workspaceName: this.config().workspaceName } : {}) });
       }
       if (request.method === "POST") {
+        if (path === "/api/auth/reauth" || path === "/api/auth/member/password") {
+          if(this.heavy!==null||this.authBodies>=maxAuthBodies)throw new AuthFailure(409,"BUSY",1);
+          this.authBodies++;
+          try {
+            const grant=await this.requireSession(request),input=await this.body(request);this.assertCurrent(grant);
+            const principal=this.principals.get(grant);if(!principal||!this.memberAuth)throw new AuthFailure(503,"ORG_ACCESS_NOT_ACTIVE");
+            const fields=path.endsWith('/reauth')?['password']:['currentPassword','password','confirmation'];
+            if(Object.keys(input).length!==fields.length||fields.some(k=>typeof input[k]!=='string'))throw new AuthFailure(400,"INVALID_REQUEST");
+            if(path.endsWith('/reauth'))await this.memberAuth.reauth(principal,input.password as string,Date.now());
+            else await this.memberAuth.changePassword(principal,input.currentPassword as string,input.password as string,input.confirmation as string,Date.now());
+            return json({ok:true});
+          } finally {this.authBodies--;}
+        }
         if (path === "/api/auth/login") return await this.authenticate(request, "login");
         if (path === "/api/auth/enroll") return await this.authenticate(request, "enroll");
         if (path === "/api/auth/recover") return await this.authenticate(request, "recover");
@@ -933,7 +969,8 @@ export class FloraAuth extends DurableObject<FloraEnv> {
           const input = await this.body(request);
           if (Object.keys(input).length !== 0) throw new AuthFailure(400, "INVALID_REQUEST");
           this.assertCurrent(grant);
-          this.state!.logout(grant, Date.now());
+          const principal=this.principals.get(grant);
+          if(principal?.authSource==='member')this.memberAuth!.logout(principal,Date.now());else this.state!.logout(grant, Date.now());
           const headers = new Headers();
           for (const name of [sessionName, csrfName]) headers.append("Set-Cookie", name + "=" + cookieOptions + "; Max-Age=0");
           return json({ ok: true }, 200, headers);
@@ -942,7 +979,7 @@ export class FloraAuth extends DurableObject<FloraEnv> {
       return json({ error: "NOT_FOUND" }, 404);
     } catch (error) {
       if (error instanceof HttpFailure) return json({ error: error.code }, error.status);
-      const failure = error instanceof AuthFailure ? error : new AuthFailure(503, "AUTH_UNAVAILABLE");
+      const failure = error instanceof AuthFailure || error instanceof OrgFailure ? error : new AuthFailure(503, "AUTH_UNAVAILABLE");
       const headers = new Headers();
       if (failure.retryAfter !== undefined) headers.set("Retry-After", String(failure.retryAfter));
       return json({ error: failure.code }, failure.status, headers);
