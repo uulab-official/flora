@@ -11,7 +11,13 @@ GitHub push → Flora's app-scoped policy and job queue → Docker export on you
             → OTA publication → installed app downloads, applies and restarts → app history
 ```
 
-Flora is currently a single-owner self-hosting preview. The SDK is not published to npm. A local CLI and authenticated web wizard guide initial installation. This guide uses **D1 asset storage and an independent PC Runner**. It does not assume UULab's dedicated GitHub Release repository or LaunchAgent is a general installation feature.
+Flora is a self-hosting preview with one organization per installation. Existing installations remain owner-only until explicit organization activation; app-scoped admin, deployer and viewer roles and approved personal PCs are then available. The SDK is not published to npm. A local CLI and authenticated web wizard guide initial installation. This guide uses **D1 asset storage and an independent PC Runner**. It does not assume UULab's dedicated GitHub Release repository or LaunchAgent is a general installation feature.
+
+## Reuse app assets with your team and another PC
+
+The protected existing Owner, encrypted keys and deployment history remain intact. The Owner assigns explicit app scopes in **Organization / Members**. Each teammate signs in, requests a PC for an app, receives administrator approval and claims an individual token once. Download the public binding, enter the token through the hidden `flora setup runner` prompt, then run the read-only `flora doctor --runner-service /absolute/private/service.json --strict --json`. Do not copy another PC's private config or upload existing app keys again.
+
+See the [organization activation and PC reuse guide (Korean)](docs/development/organization-access.ko.md). OTA and native build tokens/configs are separate. Each PC still needs Docker or the corresponding native toolchain. Provider permissions and OS services are never silently approved or installed.
 
 ## Follow the path to your first OTA
 

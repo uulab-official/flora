@@ -64,3 +64,9 @@ APK는 실제 package·기존 앱별 인증서 지문·서명·16KB 정렬을 �
 요약 증거는 `dist/native-signing-2026-10-14/final-verification.json`입니다. 실제 산출물을 만든 immutable Runner bundle의 해시와 현재 운영 bundle을 구분해 기록합니다. PC에는 기존 OTA 서비스와 새 네이티브 서비스가 모두 실행 중이며, 새 서비스는 unsigned 컴파일 후 필요한 서명 키만 받아 작업합니다.
 
 최근 변경 검증은 signer 19개, SwiftUI/SwiftPM 집중 검증, 실제 AGP 9.1.1 unsigned 재현, 플랫폼별 실제 앱 빌드·서명으로 수행했습니다. 앞선 전체 직렬 실행은 883개 중 880개 통과·옵트인 3개 제외였습니다. 이후 native 집중 실행의 Miniflare HTTP 연결 종료 1건은 해당 파일을 단독 재실행해 6개 모두 통과했습니다. 최신 전체 `pnpm check`가 통과했다고 기록하지 않습니다.
+
+## 조직과 새 PC의 재사용
+
+조직 기능 버전에서는 [조직·PC 연결 안내](organization-access.ko.md)를 먼저 따릅니다. 기존 Owner와 앱별 키의 암호문·버전·이력은 유지하며, 앱·플랫폼별 개인 native PC 요청을 관리자가 승인합니다. OTA `runner.json`/공개 RunnerBinding과 native `NativeConfig`는 별도입니다. 새 PC용 native JSON은 새0700 디렉터리의0600 파일이며, 기존 private 설정·토큰·저널을 복사하거나 덮어쓰지 않습니다.
+
+`node packages/ota-runner/dist/native-main.js --daemon --config /절대경로/native.json`은 `readNativeConfig`와 macOS 격리/서명 도구 검증을 사용합니다. UULab 고정 경로의 `native-service.mjs`를 다른 PC에 그대로 실행하지 마세요. 이 범위에서 native OS 서비스 설치를 새로 일반화하지 않습니다. PC마다 빌드 도구는 필요하지만 기존 앱 키 재업로드는 필요하지 않습니다.

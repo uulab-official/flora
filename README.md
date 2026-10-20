@@ -11,7 +11,13 @@ GitHub push → Flora의 앱별 정책·작업 큐 → 내 PC의 Docker export
             → Flora OTA 게시 → 설치된 앱의 다운로드·적용·재시작 → 앱별 상세 이력
 ```
 
-현재는 단일 소유자 셀프호스팅 preview입니다. SDK는 npm에 게시되지 않았습니다. 최초 설치는 로컬 CLI와 로그인 후 웹 마법사로 안내합니다. 아래 기본 경로는 **D1 자산 저장 + 독립 PC Runner**입니다. UULab 전용 GitHub Release 저장소와 LaunchAgent를 일반 설치 기능으로 가정하지 않습니다.
+설치당 하나의 조직을 사용하는 셀프호스팅 preview입니다. 기존 설치는 Owner 전용으로 유지하며, 명시적으로 조직 접근을 활성화한 뒤 앱별 관리·배포·조회 권한과 개인 PC 승인을 사용할 수 있습니다. SDK는 npm에 게시되지 않았습니다. 최초 설치는 로컬 CLI와 로그인 후 웹 마법사로 안내합니다. 아래 기본 경로는 **D1 자산 저장 + 독립 PC Runner**입니다. UULab 전용 GitHub Release 저장소와 LaunchAgent를 일반 설치 기능으로 가정하지 않습니다.
+
+## 팀과 다른 PC에서 기존 자산 사용
+
+기존 Owner·키 암호문·배포 이력을 유지합니다. Owner가 **조직 · 멤버**에서 앱 범위를 지정하고, 팀원은 로그인 → 앱의 PC 요청 → 관리자 승인 → 일회 token 수령으로 연결합니다. 같은 앱의 키를 재업로드하거나 다른 PC의 private 설정을 복사하지 않습니다. 공개 binding 파일과 token을 `flora setup runner`의 비표시 입력으로 연결하고 읽기 전용 `doctor --runner-service`로 확인하세요.
+
+[조직 활성화·팀원 초대·새 PC 연결 안내](docs/development/organization-access.ko.md)에 단계별 절차와 중지·회수·복원 기준이 있습니다. OTA/native token과 구성 파일은 별도이며 새 PC에는 Docker 또는 해당 네이티브 빌드 도구가 필요합니다. Apple·Google의 새 계정 연동을 자동 승인하거나 OS 서비스를 임의로 설치하지 않습니다.
 
 ## 첫 OTA까지 따라하기
 
@@ -138,6 +144,8 @@ export async function updateAfterAppIsReady() {
 앱 저장소의 **검증용 브랜치**에 SDK·공개 설정·lockfile·네이티브/JS 변경을 검토해 커밋·push합니다. 개인키는 추가하지 않고 `git add .`는 쓰지 않습니다. Actions를 생략하려면 커밋 메시지에 `[skip ci]`를 넣습니다. Flora의 push webhook은 별도 경로입니다. Flora에서 **GitHub 소스 동기화 · 앱 인식**을 눌러 해당 SHA·runtime·platforms와 중립 export 설정이 인식되는지 확인합니다.
 
 ### 5. 앱 전용 PC Runner 준비하기
+
+팀원은 [조직 PC 승인 절차](docs/development/organization-access.ko.md#팀원-추가와-새-pc의-ota-연결)를 사용합니다. 아래 기존 공유 Runner 발급은 Owner 경로입니다.
 
 root가 아닌 macOS/Linux 사용자, 실행 중인 Docker, 2GiB 이상 디스크 여유가 필요합니다. [Docker 설치와 무료 사용 조건](https://docs.docker.com/engine/install/)을 본인 계정에 맞게 확인하세요. PC 공개 포트·Tunnel·EAS 로그인은 필요 없습니다.
 

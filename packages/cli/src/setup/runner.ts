@@ -42,6 +42,21 @@ async function ensureNewDirectory(directory:string,runtime:SetupRuntime,availabl
  try{await fs.lstat(directory);throw Error("SETUP_EXISTING_RUNNER_PRESERVED");}catch(e){if((e as NodeJS.ErrnoException).code!=="ENOENT")throw e;}
  requireSetup(await availableBytes(dirname(directory))>=2147483648n,"SETUP_DISK_SPACE_LOW");
 }
+const runnerGuidance:Readonly<Record<string,string>>=Object.freeze({
+ SETUP_RUNNER_ACCESS_DENIED:'PC 접근이 거절됐습니다. 웹에서 본인 계정과 앱의 PC 승인 상태를 확인하세요. Owner 토큰으로 우회하거나 자동 재등록하지 않습니다.',
+ SETUP_RUNNER_ACCESS_REVOKED:'PC 승인 또는 요청자 권한이 변경됐습니다. 기존 설정과 복구 저널은 보존하고 웹에서 새 PC 요청을 명시적으로 진행하세요.',
+ SETUP_ORG_ACCESS_NOT_ACTIVE:'조직이 준비 중이거나 팀 접근이 중지됐습니다. Owner에게 조직 상태를 확인하세요. 기존 설정과 키를 변경하지 않습니다.',
+ SETUP_RUNNER_ACCESS_NOT_READY:'PC 발급 또는 회수 결과 확인이 필요합니다. 웹의 현재 요청 이력을 확인하고 기존 토큰·저널을 유지하세요.',
+ SETUP_RUNNER_UNAVAILABLE:'Runner 연결을 확인하지 못했습니다. 네트워크와 웹의 PC 상태를 확인하세요. 자동 재발급이나 키 업로드는 하지 않습니다.',
+});
+async function approvedPresence(client:ReturnType<typeof createRunnerClient>,signal:AbortSignal,notice?:(text:string)=>void){
+ try{return await client.presence!();}catch(error){
+  if(signal.aborted)throw Error('SETUP_CANCELLED');
+  const raw=error instanceof Error?error.message:'',status=typeof error==='object'&&error!==null&&'status'in error?error.status:undefined;
+  const code=raw==='RUNNER_APPROVAL_CHANGED'||raw==='MEMBERSHIP_CHANGED'?'SETUP_RUNNER_ACCESS_REVOKED':raw==='ORG_ACCESS_NOT_ACTIVE'?'SETUP_ORG_ACCESS_NOT_ACTIVE':['RUNNER_GATE_UNAVAILABLE','RUNNER_ACCESS_NOT_READY','RUNNER_ISSUANCE_UNVERIFIED'].includes(raw)?'SETUP_RUNNER_ACCESS_NOT_READY':raw==='RUNNER_ACCESS_DENIED'||status===401||status===403?'SETUP_RUNNER_ACCESS_DENIED':'SETUP_RUNNER_UNAVAILABLE';
+  notice?.(runnerGuidance[code]!);throw Error(code);
+ }
+}
 export async function configureRunner(input:PublicRunnerBinding,connectionFile:string,runtimeDirectory:string,io:SetupIO,runtime:SetupRuntime,signal:AbortSignal,injected:Partial<RunnerDeps>={}):Promise<RunnerPaths>{
  const binding=parseRunnerBinding(input),deps={...defaults(),...injected};signal.throwIfAborted();
  const connection=await publicFile(connectionFile);connectionMatches(connection,binding);await ensureNewDirectory(runtimeDirectory,runtime,deps.availableBytes);
@@ -67,9 +82,9 @@ export async function configureRunner(input:PublicRunnerBinding,connectionFile:s
  image=inspected;const isolated=[...hostArgs,"run","--rm","--pull=never","--network=none","--read-only","--cap-drop=ALL","--security-opt=no-new-privileges","--pids-limit=32","--memory=268435456",`--user=${process.getuid!()}:${process.getgid!()}`,image];
  requireSetup((await run([...isolated,"node","-p","process.versions.node"])).stdout.trim()==="24.19.0","SETUP_IMAGE_TOOLCHAIN_MISMATCH");
  requireSetup((await run([...isolated,preparation==="pnpm-registry"?"pnpm":"npm","--version"])).stdout.trim()===(preparation==="pnpm-registry"?"11.10.0":"10.9.8"),"SETUP_IMAGE_TOOLCHAIN_MISMATCH");
- const token=await io.readSecret("웹에서 한 번 표시한 앱 전용 Runner token: ",signal);requireSetup(token.split(".")[0]===binding.runnerId,"SETUP_RUNNER_ID_MISMATCH");
+ const token=await io.readSecret("웹에서 승인 후 한 번 표시한 이 PC 전용 OTA Runner token: ",signal);requireSetup(token.split(".")[0]===binding.runnerId,"SETUP_RUNNER_ID_MISMATCH");
  const request:typeof fetch=(url,init)=>deps.fetch(url,{...init,signal:AbortSignal.any([signal,init?.signal??AbortSignal.timeout(10000)])});
- const client=createRunnerClient({origin:binding.origin,token,fetch:request});requireSetup((await client.presence!()).runnerId===binding.runnerId,"SETUP_RUNNER_ID_MISMATCH");signal.throwIfAborted();
+ const client=createRunnerClient({origin:binding.origin,token,fetch:request});requireSetup((await approvedPresence(client,signal,message=>io.notice(message))).runnerId===binding.runnerId,"SETUP_RUNNER_ID_MISMATCH");signal.throwIfAborted();
  const runnerPath=join(runtimeDirectory,"runner.json"),servicePath=join(runtimeDirectory,"service.json"),bindingPath=join(runtimeDirectory,"runner-binding.json");
  const runner=json({origin:binding.origin,token,dockerImage:image,dockerNetwork:"none",resourceProfile:"github-hosted",dependencyPreparation:preparation,workDirectory:join(runtimeDirectory,"work"),recoveryDirectory:join(runtimeDirectory,"recovery")});
  const service=json({runtimeDirectory,nodePath:runtime.nodePath,runnerMain:join(runtime.root,"packages/ota-runner/dist/main.js"),runnerConfigs:[runnerPath],path:[dirname(runtime.dockerPath),dirname(runtime.nodePath),"/usr/bin","/bin","/usr/sbin","/sbin"].join(":"),limaHome:runtimeDirectory,dockerHost:host,pollIntervalMs:30000});
@@ -86,7 +101,7 @@ export async function verifyRunnerBinding(paths:RunnerPaths,signal:AbortSignal,i
  const c=JSON.parse(service.toString());requireSetup(c.runtimeDirectory===dir&&c.runnerConfigs.length===1&&c.runnerConfigs[0]===paths.runnerPath&&config.workDirectory===join(dir,"work")&&config.recoveryDirectory===join(dir,"recovery"),"SETUP_RUNNER_PATH_MISMATCH");
  await serviceReader(paths.servicePath,join(fixedRoot,"scripts/local-runner/supervisor.mjs"));await socketHost(c.dockerHost);const deps={...defaults(),...injected};
  const request:typeof fetch=(url,init)=>deps.fetch(url,{...init,signal:AbortSignal.any([signal,init?.signal??AbortSignal.timeout(10000)])});
- const result=await createRunnerClient({origin:binding.origin,token:config.token,fetch:request}).presence!();requireSetup(result.runnerId===binding.runnerId,"SETUP_RUNNER_ID_MISMATCH");signal.throwIfAborted();
+ const result=await approvedPresence(createRunnerClient({origin:binding.origin,token:config.token,fetch:request}),signal);requireSetup(result.runnerId===binding.runnerId,"SETUP_RUNNER_ID_MISMATCH");signal.throwIfAborted();
 }
 export async function startConfiguredRunner(servicePath:string,signal:AbortSignal):Promise<number>{
  const dir=dirname(servicePath);await verifyRunnerBinding({runnerPath:join(dir,"runner.json"),servicePath,bindingPath:join(dir,"runner-binding.json")},signal);
