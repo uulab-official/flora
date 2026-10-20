@@ -10,6 +10,7 @@ export interface SetupWindow {
   purpose: "enroll" | "recover";
 }
 export interface FloraConfig {
+  orgLimits?: import("./org/types.js").OrgLimits;
   workspaceName?: string;
   passwordMinimum?: 12 | 15;
   origin: string;
@@ -19,6 +20,8 @@ export interface FloraConfig {
   setup: SetupWindow | null;
 }
 export interface FloraEnv {
+  FLORA_ORG_METADATA_BYTES?: string;
+  FLORA_ORG_AUDIT_BYTES?: string;
   /** Display-only analytics reporter; not used to enforce quotas. */
   FLORA_USAGE_REPORTER_ID?: string;
   FLORA_CLOUDFLARE_ACCOUNT_ID?: string;

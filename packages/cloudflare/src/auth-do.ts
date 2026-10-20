@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { OrgStore } from "./org/store.js";
 import { readConfig } from "./config.js";
 import type { AuthGrant, FloraConfig, FloraEnv } from "./contracts.js";
 import { createPasswordVerifier, verifyPassword } from "./auth/password.js";
@@ -70,6 +71,7 @@ function origin(request: Request, config: FloraConfig, machine = false): void {
 /** The sole owner authority. Instantiate through idFromName("flora-owner-v1"). */
 export class FloraAuth extends DurableObject<FloraEnv> {
   private state: AuthState | undefined;
+  private org: OrgStore | undefined;
   private connections: ManagedConnections | undefined;
   private ci: ManagedCI | undefined;
   private vault: CredentialVault | undefined;
@@ -97,7 +99,12 @@ export class FloraAuth extends DurableObject<FloraEnv> {
     super(ctx, env);
     this.ready = ctx.blockConcurrencyWhile(async () => {
       try {
-        this.state = new AuthState(ctx.storage, readConfig(env)); this.connections = new ManagedConnections(ctx.storage, env); this.ci = new ManagedCI(ctx.storage);
+        this.state = new AuthState(ctx.storage, readConfig(env));
+        try {
+          this.org = new OrgStore(ctx.storage, readConfig(env), readConfig(env).orgLimits);
+          const owner = this.state.owner(); this.org.bootstrap({epoch: owner.epoch, claimed: owner.verifier !== null}, Date.now());
+        } catch { this.org = undefined; /* Organization availability never replaces legacy Owner authority. */ }
+        this.connections = new ManagedConnections(ctx.storage, env); this.ci = new ManagedCI(ctx.storage);
         ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS flora_runner_presence (runner_id TEXT PRIMARY KEY, last_seen_at INTEGER NOT NULL)");
         try { this.otaVerification = new OTAVerificationStore(ctx.storage); }
         catch { this.otaVerification = undefined; }

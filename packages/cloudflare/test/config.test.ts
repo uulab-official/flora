@@ -40,7 +40,7 @@ test("non_https_or_non_origin_url_is_rejected", () => {
 test("missing_setup_means_locked", () => {
   assert.deepEqual(readConfig(environment()), {
     origin: "https://flora.example.com", ownerId: "owner-synthetic", ownerEmail: "owner@example.com",
-    dbIdentity: "db-synthetic", setup: null,
+    dbIdentity: "db-synthetic", setup: null, orgLimits: {metadataBytes:67_108_864,auditBytes:268_435_456},
   });
 });
 
@@ -81,4 +81,11 @@ test("GitHub asset storage pins private repository identity and excludes simulta
   for (const key of ["FLORA_OTA_ASSET_REPOSITORY", "FLORA_OTA_ASSET_REPOSITORY_ID", "FLORA_OTA_ASSET_INSTALLATION_ID"]) for (const value of [undefined, null, "", "01", "bad/repo/path"]) rejects({ ...github, [key]: value });
   for (const patch of [{FLORA_OTA_ASSET_STORAGE:"disk"}, {FLORA_OTA_ASSETS:{get(){},put(){}}}, {FLORA_OTA_ASSET_REPOSITORY_ID:"9007199254740992"}, {FLORA_OTA_ASSET_REPOSITORY:"https://github.com/owner/repo"}]) rejects({...github,...patch});
   rejects({ FLORA_OTA_ASSET_REPOSITORY: github.FLORA_OTA_ASSET_REPOSITORY });
+});
+
+test('organization storage budgets are operator-controlled positive safe byte counts',()=>{
+  const config=readConfig(environment()) as any;
+  assert.deepEqual(config.orgLimits,{metadataBytes:67_108_864,auditBytes:268_435_456});
+  assert.deepEqual((readConfig({...environment(),FLORA_ORG_METADATA_BYTES:'2048',FLORA_ORG_AUDIT_BYTES:'4096'} as FloraEnv) as any).orgLimits,{metadataBytes:2048,auditBytes:4096});
+  for(const key of ['FLORA_ORG_METADATA_BYTES','FLORA_ORG_AUDIT_BYTES'])for(const value of ['0','-1','1.5','01','9007199254740992','1e9',' 1024',12,null])rejects({[key]:value});
 });

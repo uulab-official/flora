@@ -51,6 +51,8 @@ export function readConfig(env: FloraEnv): FloraConfig {
   requireConfig(workspaceName === undefined || typeof workspaceName === "string" && /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/.test(workspaceName));
   const minimum = env.FLORA_PASSWORD_MIN_LENGTH;
   requireConfig(minimum === undefined || minimum === "15" || minimum === "12" && workspaceName === "UULab");
-  return Object.freeze({ origin: url.origin, ownerId, ownerEmail: env.FLORA_OWNER_EMAIL, dbIdentity, setup: setupWindow(env.FLORA_SETUP),
+  const bytes = (value: unknown, fallback: number) => { if (value === undefined) return fallback; requireConfig(typeof value === "string" && /^[1-9][0-9]*$/.test(value) && Number.isSafeInteger(Number(value))); return Number(value); };
+  const orgLimits = Object.freeze({metadataBytes: bytes(env.FLORA_ORG_METADATA_BYTES, 67_108_864), auditBytes: bytes(env.FLORA_ORG_AUDIT_BYTES, 268_435_456)});
+  return Object.freeze({ orgLimits, origin: url.origin, ownerId, ownerEmail: env.FLORA_OWNER_EMAIL, dbIdentity, setup: setupWindow(env.FLORA_SETUP),
     ...(workspaceName === undefined ? {} : { workspaceName }), ...(minimum === undefined ? {} : { passwordMinimum: Number(minimum) as 12 | 15 }) });
 }
