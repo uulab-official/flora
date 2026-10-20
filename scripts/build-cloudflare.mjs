@@ -45,6 +45,7 @@ export async function validateDeploymentConfig(file) {
 
 export async function buildHosted() {
   await validateExampleConfig();
+  await writeFile(join(packageRoot,"dist/authz-protocol.json"), JSON.stringify({schemaVersion:1,organizationAccess:1})+"\n");
   const outdir = join(packageRoot, "dist/hosted"), publicDir = join(outdir, "public");
   await mkdir(publicDir, { recursive: true });
   const output = await build({ absWorkingDir: root, entryPoints: [join(packageRoot, "src/worker.ts")], outfile: join(outdir, "worker.js"), bundle: true, format: "esm", platform: "browser", target: "es2023", external: ["cloudflare:*", "node:crypto", "node:buffer"], metafile: true });

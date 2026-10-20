@@ -21,6 +21,7 @@ export class RunnerAccess {
  constructor(readonly store:OrgStore,private readonly auth:MemberAuth,readonly verifyApplications:(appIds:string[])=>Promise<void>){this.policy=new OrgPolicy(store);this.audit=new OrgAudit(store.storage,store)}
  private epoch():number {return this.store.storage.sql.exec<{epoch:number}>('SELECT epoch FROM flora_auth_meta WHERE id=1').one().epoch}
  authorize(actor:OrgPrincipal,action:OrgAction,application:string|undefined,now:number):void {this.auth.assertBrowser(actor,now);this.policy.require(actor,action,application,now)}
+ requireReauth(actor:OrgPrincipal,now:number):void {this.auth.requireReauth(actor,now)}
  private active():void {orgAssert(this.store.state().mode==='active',503,'ORG_ACCESS_NOT_ACTIVE')}
  requestRow(id:string):RequestRow {orgId(id);const row=this.store.storage.sql.exec<RequestRow>('SELECT * FROM flora_org_runner_requests WHERE id=?',id).toArray()[0];orgAssert(row,404,'NOT_FOUND');return row}
  get(ref:RunnerAccessRef):AccessRow {orgAssert(ref.kind==='ota'||ref.kind==='native',400,'INVALID_REQUEST');orgId(ref.runnerId);const row=this.store.storage.sql.exec<AccessRow>('SELECT * FROM flora_org_runner_access WHERE kind=? AND runner_id=?',ref.kind,ref.runnerId).toArray()[0];orgAssert(row&&row.org_id===this.store.state().id,403,'RUNNER_ACCESS_DENIED');return row}

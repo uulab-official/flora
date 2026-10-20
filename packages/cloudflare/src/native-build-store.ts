@@ -1,3 +1,4 @@
+import {installNativeBarrier} from './org/migration.js';
 import type { DurableObject } from 'cloudflare:workers';
 import { CredentialVault, CredentialVaultError } from './credential-vault.js';
 import { NativeBuildError, nativeCheck, nativeId, nativeInteger, nativeObject, nativePlatform, parseNativeArtifact, parseNativeJobInput, parseNativeLease } from './native-types.js';
@@ -20,6 +21,7 @@ export class NativeBuildStore {
       CREATE TABLE IF NOT EXISTS flora_native_events (id TEXT PRIMARY KEY, app_id TEXT NOT NULL, job_id TEXT NOT NULL, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS flora_native_credential_uses (id TEXT PRIMARY KEY, app_id TEXT NOT NULL, job_id TEXT NOT NULL, attempt_id TEXT NOT NULL, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS flora_native_completions (job_id TEXT PRIMARY KEY, app_id TEXT NOT NULL, lease_json TEXT NOT NULL, artifact_json TEXT NOT NULL)`);
+    if(storage.sql.exec("SELECT 1 FROM sqlite_master WHERE type='table' AND name='flora_org_state'").toArray().length&&storage.sql.exec<{mode:string}>('SELECT mode FROM flora_org_state WHERE singleton=1').toArray()[0]?.mode!=='owner_only')installNativeBarrier(storage);
   }
   private runner(runnerId: string): { ownerEpoch: number; value: NativeRunnerCredential } | null {
     const row = this.storage.sql.exec<{ owner_epoch: number; data: string }>('SELECT owner_epoch,data FROM flora_native_runners WHERE id=?', nativeId(runnerId)).toArray()[0];

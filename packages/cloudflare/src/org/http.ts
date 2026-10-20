@@ -1,3 +1,4 @@
+import type {OrgMigration} from './migration.js';
 import type {RunnerAccess} from './runner-access.js';
 import type {RunnerRegistration} from './runner-registration.js';
 import {json,parseJson,readBody} from '../http.js';
@@ -9,7 +10,7 @@ import type {InvitationService} from './invitations.js';
 import type {InvitationInput,MembershipInput,OrgPrincipal} from './types.js';
 import {orgActions,orgAssert,safeInteger} from './types.js';
 import {organizationRoute} from './routes.js';
-export interface OrgHttpContext {store:OrgStore;policy:OrgPolicy;auth:MemberAuth;invitations:InvitationService;runnerAccess:RunnerAccess;runnerRegistration:RunnerRegistration;grant:AuthGrant|null;principal:OrgPrincipal|null;now:()=>number}
+export interface OrgHttpContext {migration:OrgMigration;store:OrgStore;policy:OrgPolicy;auth:MemberAuth;invitations:InvitationService;runnerAccess:RunnerAccess;runnerRegistration:RunnerRegistration;grant:AuthGrant|null;principal:OrgPrincipal|null;now:()=>number}
 async function body(request:Request,allowed:readonly string[]):Promise<Record<string,unknown>>{
  const input=parseJson(await readBody(request,16384));orgAssert(input&&typeof input==='object'&&!Array.isArray(input),400,'INVALID_REQUEST');
  const record=input as Record<string,unknown>;orgAssert(Object.keys(record).every(k=>allowed.includes(k)),400,'INVALID_REQUEST');return record;
@@ -46,6 +47,10 @@ export async function handleOrgHttp(request:Request,c:OrgHttpContext):Promise<Re
  }
  if(route.action==='organization'){const s=c.store.state();return json({id:s.id,name:c.store.row().display_name,mode:s.mode,revision:s.revision})}
  c.policy.require(actor,'org.manage',undefined,c.now());
+ if(route.action==='migration-read')return json(await c.migration.read(actor));
+ if(route.action==='migration-step'){const input=await body(request,['expectedRevision']);safeInteger(input.expectedRevision);return json(await c.migration.step(actor,input.expectedRevision));}
+ if(route.action==='mode'){const input=await body(request,['mode','expectedRevision']);safeInteger(input.expectedRevision);orgAssert(['preparing','active','paused'].includes(input.mode as string),400,'INVALID_REQUEST');const state=c.store.state();const result=input.mode==='preparing'?await c.migration.prepare(actor,input.expectedRevision):input.mode==='paused'?c.migration.pause(actor,input.expectedRevision):state.mode==='paused'?c.migration.resume(actor,input.expectedRevision):await c.migration.activate(actor,input.expectedRevision);return json(result);}
+
  if(route.action==='members'||route.action==='audit'){
   const limit=Number(url.searchParams.get('limit')??25);safeInteger(limit);orgAssert(limit<=50,400,'INVALID_REQUEST');const revision=c.store.state().revision,after=cursor(url.searchParams.get('cursor'),actor,revision),sql=c.store.storage.sql;
   let rows:any[];

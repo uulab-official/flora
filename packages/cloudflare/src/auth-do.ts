@@ -1,3 +1,4 @@
+import {OrgMigration} from './org/migration.js';
 import {RunnerAccess} from './org/runner-access.js';
 import {RunnerRegistration} from './org/runner-registration.js';
 import {RunnerGate} from './org/runner-gate.js';
@@ -226,6 +227,13 @@ export class FloraAuth extends DurableObject<FloraEnv> {
     const result=await this.env.FLORA_DB.prepare('SELECT id FROM applications WHERE owner_id=? AND id IN(SELECT value FROM json_each(?))').bind(config.ownerId,JSON.stringify(appIds)).all<{id:string}>();
     if(!result.success||result.results.length!==appIds.length)throw new OrgFailure(404,'NOT_FOUND');
     this.config();
+  }
+  private migration():OrgMigration {
+    if(!this.org||!this.runnerAccess)throw new OrgFailure(503,'ORG_ACCESS_NOT_ACTIVE');
+    const config=this.config();return new OrgMigration(this.org,new RunnerGate(this.env.FLORA_DB,config.ownerId),{
+      otaPage:async(cursor)=>{await verifyD1Identity(this.env.FLORA_DB,config);const result=await this.env.FLORA_DB.prepare('SELECT r.id,r.data FROM automation_runners r WHERE r.owner_id=? AND r.id>? AND r.version=(SELECT max(version) FROM automation_runners WHERE owner_id=r.owner_id AND id=r.id) ORDER BY r.id LIMIT 51').bind(config.ownerId,cursor??'').all<{id:string;data:string}>();if(!result.success)throw new OrgFailure(503,'RUNNER_GATE_UNAVAILABLE');return {items:result.results.slice(0,50).map(r=>JSON.parse(r.data)),nextCursor:result.results.length>50?result.results[49]!.id:null};},
+      nativePage:async(cursor)=>{if(!this.ctx.storage.sql.exec("SELECT 1 FROM sqlite_master WHERE type='table' AND name='flora_native_runners'").toArray().length)return {items:[],nextCursor:null};const rows=this.ctx.storage.sql.exec<{id:string;data:string;owner_epoch:number}>('SELECT id,data,owner_epoch FROM flora_native_runners WHERE id>? ORDER BY id LIMIT 51',cursor??'').toArray();return {items:rows.slice(0,50).map(r=>({...JSON.parse(r.data),ownerEpoch:r.owner_epoch})),nextCursor:rows.length>50?rows[49]!.id:null};}
+    },this.runnerAccess);
   }
   private registration(grant:AuthGrant|null):RunnerRegistration{
     if(!this.org||!this.runnerAccess)throw new OrgFailure(503,'ORG_ACCESS_NOT_ACTIVE');
@@ -654,7 +662,7 @@ export class FloraAuth extends DurableObject<FloraEnv> {
         if(organization.action==='runner-claim'&&!release)throw new AuthFailure(409,'BUSY',1);
         if(organization.public)this.authBodies++;
         try {
-          const result=await handleOrgHttp(request,{store:this.org,policy:this.orgPolicy,auth:this.memberAuth,invitations:this.invitations,runnerAccess:this.runnerAccess,runnerRegistration:this.registration(grant),grant,principal:grant?this.principals.get(grant)??null:null,now:Date.now});
+          const result=await handleOrgHttp(request,{migration:this.migration(),store:this.org,policy:this.orgPolicy,auth:this.memberAuth,invitations:this.invitations,runnerAccess:this.runnerAccess,runnerRegistration:this.registration(grant),grant,principal:grant?this.principals.get(grant)??null:null,now:Date.now});
           if(result){if(grant)this.assertCurrent(grant);return result;}
         } finally {release?.();if(organization.public)this.authBodies--;}
       }
