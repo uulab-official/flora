@@ -400,7 +400,7 @@ test("kernel_rejection_maps_to_503_in_the_real_do", async t => {
   await writeFile(faultKernel, `export { createPasswordVerifier } from ${JSON.stringify(kernelPath)}; export async function verifyPassword() { throw new Error("PASSWORD_KDF_FAILED"); }`);
   const source = await readFile(authorityPath, "utf8");
   assert.equal(source.split('from "./auth/password.js"').length, 2);
-  const authority = source.replace(/from "(\.[^"]+)"/g, (_, specifier: string) => `from ${JSON.stringify(specifier === "./auth/password.js" ? faultKernel : resolve(dirname(authorityPath), specifier))}`)
+  const authority = source.replace(/from (["\'])(\.[^"\']+)\1/g, (_, _quote: string, specifier: string) => `from ${JSON.stringify(specifier === "./auth/password.js" ? faultKernel : resolve(dirname(authorityPath), specifier))}`)
     .replace('from "@app-ops/dogfood"', `from ${JSON.stringify(fileURLToPath(new URL("../../dogfood/dist/index.js", import.meta.url)))}`)
     .replace('from "@app-ops/core"', `from ${JSON.stringify(fileURLToPath(new URL("../../core/dist/index.js", import.meta.url)))}`)
     .replace('from "@app-ops/config"', `from ${JSON.stringify(fileURLToPath(new URL("../../config/dist/index.js", import.meta.url)))}`)
