@@ -10,10 +10,12 @@ import { createTestRuntime } from "./runtime.ts";
 const config: FloraConfig = { ownerId: "owner_a", origin: "https://flora.example.test", ownerEmail: "owner@example.test", dbIdentity: "db_a", setup: null };
 const now = 1800000000000;
 
-test("project summary route is read-only and does not accept app filters or caller scope", () => {
+test("project summary route is read-only with validated app selectors and rejects caller authority", () => {
   assert.equal(routeRequest(new Request(config.origin + "/api/projects")).kind, "hosted");
   for (const method of ["POST", "HEAD", "DELETE"]) assert.throws(() => routeRequest(new Request(config.origin + "/api/projects", { method })), (e: unknown) => e instanceof HttpFailure && e.status === 405);
-  for (const search of ["?appId=application_a", "?ownerId=owner_b", "?token=secret"]) assert.throws(() => routeRequest(new Request(config.origin + "/api/projects" + search)), (e: unknown) => e instanceof HttpFailure && e.status === 400);
+  assert.equal(routeRequest(new Request(config.origin+"/api/projects?appId=application_a")).kind,"hosted");
+  assert.equal(routeRequest(new Request(config.origin+"/api/projects?appCursor=opaque")).kind,"hosted");
+  for (const search of ["?appId=../foreign", "?appId=application_a&appId=application_b", "?appId=application_a&appCursor=opaque", "?ownerId=owner_b", "?token=secret", "?role=owner", "?appIds=application_a"]) assert.throws(() => routeRequest(new Request(config.origin + "/api/projects" + search)), (e: unknown) => e instanceof HttpFailure && e.status === 400);
 });
 
 test("bounded owner projection separates apps and platforms, latest published OTA and Runner semantics without writes", async t => {
