@@ -60,7 +60,8 @@ test('an interrupted successful claim response remains uncertain and must not be
 });
 
 test('presence supervisor survives exhausted interrupted probes, visits other apps and reports actual recovery',async()=>{
- const {presenceLoop,sanitizedLine}=await import('../../../scripts/local-runner/supervisor.mjs');
+ const supervisorModule=new URL('../../../scripts/local-runner/supervisor.mjs',import.meta.url).href;
+ const {presenceLoop,sanitizedLine}=await import(supervisorModule);
  const controller=new AbortController(),events:Record<string,unknown>[]=[],calls:string[]=[],waits:number[]=[];
  let attempts=0,cycles=0;
  const failed=createRunnerClient({origin,token,fetch:async()=>++attempts<=3?interrupted():Response.json({runnerId:'runner_fixture',lastSeenAt:Date.now()})});

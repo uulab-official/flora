@@ -165,6 +165,8 @@ Enter a previously verified immutable `sha256:` image ID, or leave blank to buil
 
 Ordinary PC Runner tokens use app-scoped local recovery journals. Do not add the CI-session-only `publicationRecovery: "remote-checkpoint"` setting. If an existing server uses GitHub Releases asset storage, configure the Runner [`assetStorage` option](packages/ota-runner/README.md) for that repository with a separate private cache, retaining existing journals and tokens.
 
+An always-on **Linux server** can connect to the same Flora server with its own approved Runner. On that host, finish `flora setup runner`, then run `flora runner service-config --service /absolute/private-runner/service.json` to generate a systemd user unit. Generation does not install or start a service or change the existing Mac Runner. See the [Linux server guide (Korean)](docs/development/linux-runner.ko.md) for scoped approval, activation, lingering and preserving journals during migration. Linux can export OTA assets for both platforms; native iOS builds still require macOS/Xcode.
+
 Polling starts at 30 seconds and backs off to five minutes when idle. Presence does not prove export/publication success. Ctrl-C stops only this execution. Reuse the same files/directory to verify fingerprints and scope without issuing a new token. Existing config, recovery journals and `fatal-stop` are preserved.
 
 A powered-off/sleeping PC or closed terminal cannot process jobs. The generic wizard does not install an autostart service. UULab's specific LaunchAgent is an [operator reference](docs/development/local-pc-runner.ko.md); review its names/paths before adapting it.

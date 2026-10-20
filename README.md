@@ -167,6 +167,8 @@ npm exec --yes --package=pnpm@11.19.0 -- pnpm flora setup runner
 
 일반 PC Runner 토큰은 앱별 로컬 복구 저널을 사용합니다. CI 세션 전용 `publicationRecovery: "remote-checkpoint"`를 PC 설정에 추가하지 마세요. 기존 서버가 GitHub Releases 자산 저장소를 사용한다면 [Runner의 `assetStorage` 설정](packages/ota-runner/README.md)을 같은 저장소와 별도 private cache로 연결합니다. 기존 복구 저널과 토큰은 유지합니다.
 
+항상 켜진 **다른 Linux 서버**에서도 같은 Flora 서버에 별도 승인 Runner를 연결할 수 있습니다. 대상 서버에서 `flora setup runner`를 마친 뒤 `flora runner service-config --service /절대경로/service.json`으로 systemd 사용자 서비스 파일을 생성합니다. 생성만 하며 설치·시작·기존 Mac 서비스 변경은 하지 않습니다. [Linux 서버 등록·자동 시작 가이드](docs/development/linux-runner.ko.md)에서 앱별 승인, 로그인 없는 자동 시작과 이전 시 journal 보존 절차를 확인하세요.
+
 기본 조회는 30초, 유휴 시 최대 5분으로 늘어납니다. 연결만 확인됐다고 export·게시 성공으로 표시하지 않습니다. Ctrl-C는 이번 실행만 종료합니다. 같은 파일·디렉터리로 다시 실행하면 fingerprint·앱 scope를 확인하고 기존 토큰을 재사용합니다. 기존 파일·복구 journal·`fatal-stop`은 덮어쓰거나 삭제하지 않습니다.
 
 PC가 꺼지거나 잠들거나 터미널이 닫히면 작업을 처리하지 못합니다. 일반 마법사는 자동 시작 서비스를 설치하지 않습니다. UULab 전용 LaunchAgent는 [운영 참고](docs/development/local-pc-runner.ko.md)이며 이름·경로를 검토 없이 다른 설치에 복사하지 마세요.

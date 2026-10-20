@@ -6,6 +6,7 @@ import { DomainError, ensure } from "@app-ops/core";
 import { resolveSnapshot } from "@app-ops/config";
 import { readInputFile, decodeWorkflow } from "./config-command.js";
 import { runSetupCommand } from "./setup-command.js";
+import { runRunnerServiceCommand } from "./runner-service-command.js";
 import { inspectToolchain } from "./doctor.js";
 import { inspectRunnerService } from "./runner-doctor.js";
 import { simulateWorkflow } from "./simulate.js";
@@ -22,7 +23,7 @@ const productName = (process.env.PRODUCT_NAME || "Flora")
 const help =
   productName +
   " — " +
-  "Local App Operations Foundation\nplatform doctor [--json] [--strict] [--runner-service <absolute-service.json>]\nplatform config validate --file <json>\nplatform job simulate --file <json> [--scenario happy-path|runner-replacement|unsafe-expiry]\nflora dogfood --help\nflora setup [runner | --resume <private-state> | renew --state <private-state> | inspect --state <private-state> --json]\nDoctor --strict exits 1 when required prerequisites or selected local Runner checks are not verified.\nRunner doctor only reads local files and the configured local Docker socket; server connectivity and native builds remain unverified.\nFoundation commands are local. setup can provision a new Cloudflare server and guide a PC Runner; review its explicit resource scope.\n";
+  "Local App Operations Foundation\nplatform doctor [--json] [--strict] [--runner-service <absolute-service.json>]\nplatform config validate --file <json>\nplatform job simulate --file <json> [--scenario happy-path|runner-replacement|unsafe-expiry]\nflora dogfood --help\nflora runner service-config --service <absolute-service.json>\nflora setup [runner | --resume <private-state> | renew --state <private-state> | inspect --state <private-state> --json]\nDoctor --strict exits 1 when required prerequisites or selected local Runner checks are not verified.\nRunner doctor only reads local files and the configured local Docker socket; server connectivity and native builds remain unverified.\nFoundation commands are local. setup can provision a new Cloudflare server and guide a PC Runner; review its explicit resource scope.\n";
 function doctorOptions(argv: readonly string[]): { strict: boolean; runnerService?: string } | null {
   const seen = new Set<string>();
   let runnerService: string | undefined;
@@ -43,6 +44,7 @@ export async function runCli(
   io: CliIO,
 ): Promise<number> {
   try {
+    if (argv[0] === "runner") return await runRunnerServiceCommand(argv.slice(1), io);
     if (argv[0] === "setup") return await runSetupCommand(argv.slice(1),createSetupIO(new Writable({write(chunk,_encoding,done){try{io.stdout(chunk.toString());done();}catch(error){done(error as Error);}}})));
     if (argv[0] === "dogfood") return await runDogfoodCommand(argv.slice(1), io);
     if (argv.length === 0 || (argv.length === 1 && argv[0] === "--help")) {

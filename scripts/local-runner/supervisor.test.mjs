@@ -10,6 +10,18 @@ import {createServer} from 'node:http';
 import {sanitizedLine,readConfig,supervise as actualSupervise,runChild,boundedLog,runService,serviceFailureDiagnostic,persistServiceFailure,presenceLoop} from './supervisor.mjs';
 import {plist,lifecycle,parseLaunchStatus} from './service.mjs';
 const supervise=(c,options)=>{let clock=1800000000000;const pause=options.pause&&!options.now?async(ms,signal)=>{clock+=ms;return options.pause(ms,signal);}:options.pause;return actualSupervise(c,{health:()=>({ok:true}),now:()=>clock,...options,...(pause?{pause}:{})});};
+// These fixtures test draining diagnostics after SIGTERM, not Node startup
+// speed. Arm signal forwarding only after the child has installed its handler
+// and emitted its initial output. The supervisor deadline remains unchanged.
+async function readyChild(source,env,signal,runtime){
+ const ready=join(runtime,'ready-'+crypto.randomUUID()),controller=new AbortController();
+ const pending=runChild(process.execPath,['-e',source+';require("node:fs").writeFileSync('+JSON.stringify(ready)+',"ready",{mode:0o600});'],env,controller.signal);
+ let done=false;pending.then(()=>{done=true;});const forward=()=>controller.abort(),deadline=Date.now()+15000;
+ try{
+  for(;;){try{await lstat(ready);break;}catch(error){if(error.code!=='ENOENT')throw error;}if(done||Date.now()>=deadline)throw Error('CHILD_FIXTURE_NOT_READY');await new Promise(resolve=>setTimeout(resolve,20));}
+  signal.addEventListener('abort',forward,{once:true});if(signal.aborted)forward();return await pending;
+ }finally{signal.removeEventListener('abort',forward);controller.abort();await pending;}
+}
 async function fixture(names=['isso','promise']){const home=await mkdtemp(join(tmpdir(),'flora-service-')),runtime=join(home,'.flora','pc-runner-uulab');await mkdir(runtime,{recursive:true,mode:0o700});await mkdir(join(runtime,'scratch'),{mode:0o700});const configs=names.map(name=>join(runtime,name+'.json'));for(const p of configs)await writeFile(p,'{"token":"never-log-secret"}',{mode:0o600});const c={runtimeDirectory:runtime,nodePath:process.execPath,runnerMain:'/trusted/main.js',runnerConfigs:configs,path:'/trusted/bin:/usr/bin:/bin',limaHome:join(runtime,'lima'),dockerHost:'unix://'+join(runtime,'lima','socket.sock'),pollIntervalMs:10000};const path=join(runtime,'service.json');await writeFile(path,JSON.stringify(c),{mode:0o600});return {home,runtime,c,path,cleanup:()=>rm(home,{recursive:true,force:true})};}
 test('logs contain only fixed fields, never token, raw stderr, recovery path or arbitrary diagnostic stage',()=>{assert.equal(sanitizedLine('secret token'),null);const r=sanitizedLine(JSON.stringify({state:'publication_unknown',recoveryJournal:'/secret/token',token:'never-log-secret',jobId:'never-log-secret'}));assert.deepEqual(r,{state:'publication_unknown'});assert.deepEqual(sanitizedLine('{"diagnostic":true,"stage":"secret-token","code":"unknown-secret","httpStatus":403}'),{diagnostic:true,httpStatus:403});});
 test('compiler diagnostics preserve fixed child cause separately from control codes and exclude unknown values',()=>{
@@ -127,7 +139,7 @@ test('presence deadline drains a real SIGTERM child after transport diagnostics 
  const source="console.error(JSON.stringify({diagnostic:true,stage:'runner-execution',code:'RUNNER_TRANSPORT_UNAVAILABLE'}));console.error('RUNNER_TRANSPORT_UNAVAILABLE');setInterval(()=>{},1000)";
  try{const journal=join(f.runtime,'recovery.json');await writeFile(journal,'existing-immutable-receipt',{mode:0o600});const before=await Promise.all(f.c.runnerConfigs.map(path=>readFile(path,'utf8')));
   assert.equal(await supervise(f.c,{signal:controller.signal,presenceTimeoutMs:1000,run:async(_command,_args,_env,signal)=>{if(!signal.aborted)await new Promise(resolve=>signal.addEventListener('abort',resolve,{once:true}));drained=true;return {exitCode:1,records:[{state:'interrupted'}],overflow:false};},presenceRun:async(_command,args,env,signal)=>{
-   assert.equal(++active,1);calls.push(args[2]);try{if(args[2]===f.c.runnerConfigs[1])return {exitCode:0,records:[presenceRecord],overflow:false};const result=await runChild(process.execPath,['-e',source],env,signal);results.push(result);return result;}finally{active--;}
+   assert.equal(++active,1);calls.push(args[2]);try{if(args[2]===f.c.runnerConfigs[1])return {exitCode:0,records:[presenceRecord],overflow:false};const result=await readyChild(source,env,signal,f.runtime);results.push(result);return result;}finally{active--;}
   },presencePause:async ms=>{waits.push(ms);if(ms===60000)controller.abort();},log:async event=>logs.push(event)}),0);
   assert.deepEqual(calls,[f.c.runnerConfigs[0],f.c.runnerConfigs[0],...f.c.runnerConfigs]);assert.equal(results.length,3);assert.ok(results.every(result=>result.exitCode===null&&!result.overflow));assert.ok(results.every(result=>JSON.stringify(result.records)===JSON.stringify([{diagnostic:true,stage:'runner-execution',code:'RUNNER_TRANSPORT_UNAVAILABLE'},{code:'RUNNER_TRANSPORT_UNAVAILABLE'}])));
   assert.deepEqual(waits,[5000,5000,60000]);assert.equal(active,0);assert.equal(drained,true);assert.equal(logs.filter(event=>event.event==='presence-unavailable'&&event.appIndex===0).length,1);assert.ok(!logs.some(event=>event.appIndex===0&&event.state==='presence'));assert.equal(logs.filter(event=>event.appIndex===1&&event.state==='presence').length,1);
@@ -316,7 +328,7 @@ test('late successful presence after its own deadline stays unavailable, retries
 test('a real late SIGTERM presence child drains without emitting a false success or fatal stop',async()=>{
  const f=await fixture(['isso']),controller=new AbortController(),logs=[],results=[];
  const source=`process.on('SIGTERM',()=>{console.log(JSON.stringify(${JSON.stringify(presenceRecord)}));process.exitCode=0;clearInterval(timer);});const timer=setInterval(()=>{},1000);`;
- try{await presenceLoop(f.c,{signal:controller.signal,timeoutMs:500,env:{PATH:process.env.PATH},run:async(_cmd,_args,env,signal)=>{const result=await runChild(process.execPath,['-e',source],env,signal);results.push(result);return result;},pause:async ms=>{if(ms===60000)controller.abort();},log:async e=>logs.push(e),stop:async()=>assert.fail('drained late presence must not latch')});
+ try{await presenceLoop(f.c,{signal:controller.signal,timeoutMs:500,env:{PATH:process.env.PATH},run:async(_cmd,_args,env,signal)=>{const result=await readyChild(source,env,signal,f.runtime);results.push(result);return result;},pause:async ms=>{if(ms===60000)controller.abort();},log:async e=>logs.push(e),stop:async()=>assert.fail('drained late presence must not latch')});
   assert.equal(results.length,3);assert.ok(results.every(r=>r.exitCode===0&&r.records.length===1));assert.equal(logs.filter(e=>e.event==='presence-deadline-expired').length,3);assert.ok(!logs.some(e=>e.state==='presence'));
  }finally{controller.abort();await f.cleanup();}
 });
