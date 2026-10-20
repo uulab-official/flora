@@ -188,7 +188,8 @@ export function parseAutomationQueueInput(input: unknown): AutomationQueueInput 
 }
 export function parseRunnerEnrollmentInput(input: unknown): RunnerEnrollmentInput {
   const value = object(input, ["name", "appIds"]); ensure(Array.isArray(value.appIds) && value.appIds.length > 0 && value.appIds.length <= 100 && new Set(value.appIds).size === value.appIds.length);
-  return freeze({ name: text(value.name, 128), appIds: value.appIds.map(id) });
+  const name=text(value.name,256);ensure(Array.from(name).length<=128);
+  return freeze({ name, appIds: value.appIds.map(id) });
 }
 export function parseRunnerCredential(input: unknown): RunnerCredential {
   const value = object(input, ["id", "name", "appIds", "createdAt", "credentialEpoch", "revokedAt", "tokenHash"]);

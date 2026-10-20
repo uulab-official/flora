@@ -83,7 +83,7 @@ export function routeRequest(request: Request, internal = false): Route {
   else if (path === "/api/apps") { kind = "hosted"; query=request.method==="GET"?["appCursor"]:[]; if (request.method === "POST") { method = "POST"; limit = 16384; } }
   else if (/^\/api\/apps\/[a-z][a-z0-9_-]{2,95}\/settings$/.test(path)) { kind = "hosted"; method = "POST"; limit = 65536; }
   else if (/^\/api\/apps\/[a-z][a-z0-9_-]{2,95}\/ota\/verification$/.test(path)) { kind = "hosted"; method = "POST"; limit = BODY_LIMITS.auth; }
-  else if (path === "/api/projects") {kind = "hosted";query=["appCursor"];}
+  else if (path === "/api/projects") {kind = "hosted";query=["appCursor","appId"];}
   else if (path === "/api/state") { kind = "hosted"; query = ["snapshotId", "snapshotCursor", "historyCursor", "appId", "appCursor"]; }
   else if (/^\/api\/baselines\/[a-z][a-z0-9_-]{2,95}\/log$/.test(path)) { kind = "hosted"; query = ["appId"]; }
   else if (["/api/sources", "/api/baselines", "/api/head"].includes(path)) {
@@ -92,6 +92,7 @@ export function routeRequest(request: Request, internal = false): Route {
     query = path === "/api/baselines" ? ["snapshotId", "appId"] : ["appId"];
   } else throw new HttpFailure(404, "NOT_FOUND");
   if (request.method !== method) throw new HttpFailure(405, "METHOD_NOT_ALLOWED");
+  if(path==="/api/projects"&&url.searchParams.has("appId")&&url.searchParams.has("appCursor"))throw new HttpFailure(400,"INVALID_INPUT");
   const seen = new Set<string>();
   for (const [key, value] of url.searchParams) {
     if (!query.includes(key) || seen.has(key) || !value || value.length > (["snapshotId", "appId"].includes(key) ? 96 : 512)) throw new HttpFailure(400, "INVALID_INPUT");

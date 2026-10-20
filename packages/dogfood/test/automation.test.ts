@@ -121,3 +121,4 @@ test('server Runner allocation stays separate from strict HTTP enrollment input'
  await assert.rejects(service.enrollRunner({name:'PC',appIds:['app_test'],runnerId:'runner_browser_chosen'}as any));
  await assert.rejects(service.enrollRunner({name:'PC',appIds:['app_test']},{runnerId:'../escape'}));assert.equal(stored.length,1);
 });
+test('Runner_names_count_codepoints_and_preserve_the_legacy_128_character_boundary',async()=>{const {parseRunnerEnrollmentInput}=await import('@app-ops/dogfood');for(const name of ['a'.repeat(128),'🙂'.repeat(80),'🙂'.repeat(128)])assert.equal(parseRunnerEnrollmentInput({name,appIds:['app_test']}).name,name);for(const name of ['a'.repeat(129),'🙂'.repeat(129)])assert.throws(()=>parseRunnerEnrollmentInput({name,appIds:['app_test']}));});

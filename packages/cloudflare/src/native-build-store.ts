@@ -58,7 +58,7 @@ export class NativeBuildStore {
   }
   async enroll(appId: string, input: unknown, ownerEpoch: number, fence: Fence,options?:{runnerId?:string;onInserted?:(runner:NativeRunnerSummary)=>void}) {
     nativeId(appId); nativeInteger(ownerEpoch, 0); const value = nativeObject(input, ['name', 'platform']), platform = nativePlatform(value.platform);
-    nativeCheck(typeof value.name === 'string' && value.name.trim().length > 0 && value.name.length <= 80 && !/[\x00-\x1f\x7f]/.test(value.name));
+    nativeCheck(typeof value.name === 'string' && value.name.trim().length > 0 && Array.from(value.name).length <= 80 && !/[\x00-\x1f\x7f]/.test(value.name));
     const id = options?.runnerId===undefined?'native_runner_'+crypto.randomUUID():nativeId(options.runnerId), raw = crypto.getRandomValues(new Uint8Array(32));
     const token = id + '.' + btoa(String.fromCharCode(...raw)).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, ''); raw.fill(0);
     const tokenHash = await hash(token); fence();

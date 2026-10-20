@@ -122,3 +122,8 @@ test('request_revisions_overflow_before_any_credential_is_issued',async t=>{
   assert.equal((await h.runtime.d1.prepare('SELECT count(*) n FROM automation_runners').first<any>()).n,0);assert.equal((await h.sql('SELECT count(*) n FROM flora_org_runner_access'))[0].n,0);
  }
 });
+test('approved_80_codepoint_PC_label_claims_both_OTA_and_native_without_unknown_state',async t=>{
+ const h=await harness(t,{FLORA_VAULT_KEYS:JSON.stringify({active:'v1',keys:{v1:randomBytes(32).toString('base64url')}})}),name='🙂'.repeat(80);
+ for(const kind of ['ota','native']){const requested=await h.request(h.requester.session,'POST',h.base,{name,kind,platforms:['ios']});assert.equal(requested.status,201);const row=await requested.json()as any,approved=await h.approve(row),claimed=await h.claim(approved);assert.equal(claimed.status,201,kind);const value=await claimed.json()as any;assert.equal(value.runner.name,name);assert.ok(value.token);}
+ const bad=await h.request(h.requester.session,'POST',h.base,{name:name+'🙂',kind:'ota',platforms:['ios']});assert.equal(bad.status,400);
+});

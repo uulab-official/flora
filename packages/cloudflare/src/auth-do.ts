@@ -333,6 +333,7 @@ export class FloraAuth extends DurableObject<FloraEnv> {
     let requirement=managementRequirement(request.method,path);
     const appId=url.searchParams.get('appId')??undefined;
     if(['/api/sources','/api/baselines','/api/head'].includes(path)&&request.method==='POST'&&appId)requirement={action:'app.deploy',appId,ownerOnly:false};
+    if(request.method==='GET'&&path==='/api/projects'&&appId)requirement={action:'app.read',appId,ownerOnly:false};
     if(request.method==='GET'&&(/^\/api\/baselines\/[a-z][a-z0-9_-]{2,95}\/log$/.test(path)||path==='/api/state'))requirement={action:appId?'app.read':'org.self',...(appId?{appId}:{}),ownerOnly:false};
     this.requirements.set(grant,requirement);this.assertCurrent(grant);
     if(principal.role!=='owner'){
@@ -839,7 +840,7 @@ export class FloraAuth extends DurableObject<FloraEnv> {
           ensure(store.applications && await store.applications.getApplication(appId), "NOT_FOUND"); fence();
           if (!this.vault) throw new AuthFailure(503, "VAULT_UNAVAILABLE");
           if (request.method === "GET") {
-            const view=await this.vault.list(appId,fence),role=this.principals.get(grant)?.role;
+            const view=await this.vault.list(appId,fence);fence();const role=this.principals.get(grant)?.role;
             if(role==='viewer'||role==='deployer')return json({appId,configured:view.configured,credentials:view.credentials.map(c=>({kind:c.kind,configured:c.activeVersion!==null,expiresAt:c.expiresAt}))});
             return json(role==='admin'?{...view,history:view.history.map(event=>({...event,actor:event.actor===grant.ownerId||event.actor.includes('@')?'legacy_owner':event.actor}))}:view);
           }
@@ -847,9 +848,9 @@ export class FloraAuth extends DurableObject<FloraEnv> {
           if (route.path.endsWith("/disable")) {
             const value = object(input, ["kind", "expectedVersion"]);
             if (!Number.isSafeInteger(value.expectedVersion) || (value.expectedVersion as number) < 0) throw new AuthFailure(400, "INVALID_CREDENTIAL_INPUT");
-            return json(await this.vault.disable(appId, parseCredentialKind(value.kind), value.expectedVersion as number, this.principals.get(grant)?.authSource==='member'?this.principals.get(grant)!.userId:grant.ownerId, fence,version=>this.recordLocal(grant,{credentialVersion:String(version)})));
+            const result=await this.vault.disable(appId, parseCredentialKind(value.kind), value.expectedVersion as number, this.principals.get(grant)?.authSource==='member'?this.principals.get(grant)!.userId:grant.ownerId, fence,version=>this.recordLocal(grant,{credentialVersion:String(version)}));fence();return json(result);
           }
-          return json(await this.vault.import(appId, input, this.principals.get(grant)?.authSource==='member'?this.principals.get(grant)!.userId:grant.ownerId, fence,version=>this.recordLocal(grant,{credentialVersion:String(version)})), 201);
+          const result=await this.vault.import(appId, input, this.principals.get(grant)?.authSource==='member'?this.principals.get(grant)!.userId:grant.ownerId, fence,version=>this.recordLocal(grant,{credentialVersion:String(version)}));fence();return json(result,201);
         } catch (error) {
           if (error instanceof AuthFailure || error instanceof HttpFailure || error instanceof OrgFailure) throw error;
           if (error instanceof CredentialVaultError) return json({ error: error.code }, error.status);

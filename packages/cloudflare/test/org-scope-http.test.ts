@@ -167,3 +167,32 @@ test('member_management_admission_uses_at_most_four_local_point_lookups_and_zero
  const h=await harness(t);
  const r=await h.control({action:'capture-management-grant',path:'/api/apps/'+h.apps[0]+'/operations',headers:{Cookie:h.session.cookie}});assert.equal(r.status,200);const counts=await r.json()as any;assert.ok(counts.pointQueries<=4,JSON.stringify(counts));assert.equal(counts.d1Reads,0);
 });
+
+test('credential_response_final_delivery_rechecks_access_after_each_vault_await',async t=>{
+ const h=await harness(t,'admin'),app=h.apps[0]!,base='/api/apps/'+app+'/credentials';
+ // A real supported encrypted keystore is used; no provider key is needed.
+ const key={kind:'android_keystore',label:'Synthetic key',expectedVersion:0,metadata:{appIdentifier:'app.synthetic'},payload:{fileBase64:Buffer.from('synthetic').toString('base64'),password:'synthetic-secret-password',keyAlias:'qa'}};
+ for(const method of ['list','import','disable']){
+  await h.sql("UPDATE flora_org_memberships SET role='admin',revision=revision+1 WHERE id=?",[h.member.membershipId]);
+  const session=await h.login(h.member);
+  if(method==='disable'){const seed=await h.request(h.owner,'POST',base,{...key,expectedVersion:1});assert.equal(seed.status,201);await seed.arrayBuffer();}
+  await h.control({action:'vault-return-hold',method});
+  const body=method==='list'?undefined:method==='import'?key:{kind:'android_keystore',expectedVersion:2};
+  const pending=h.request(session,method==='list'?'GET':'POST',base+(method==='disable'?'/disable':''),body);
+  let held=false;for(let n=0;n<200;n++){held=(await(await h.control({action:'vault-return-state'})).json()as any).held;if(held)break;await new Promise(r=>setTimeout(r,5));}assert.equal(held,true,method);
+  await h.sql('UPDATE flora_org_memberships SET revision=revision+1 WHERE id=?',[h.member.membershipId]);await h.control({action:'vault-return-release'});
+  const result=await pending;assert.equal(result.status,403,method);assert.doesNotMatch(await result.text(),/history|fingerprint|synthetic-secret-password/);
+ }
+ assert.equal((await h.sql('SELECT count(*) n FROM flora_credential_versions'))[0].n,2);
+});
+
+test('member_project_pages_and_direct_app_summary_remain_scope_and_cursor_bound',async t=>{
+ const h=await harness(t,'viewer'),all=[...h.apps];
+ for(let n=0;n<24;n++){const r=await h.request(h.owner,'POST','/api/apps',{name:'Extra '+n,repositoryId:'synthetic:extra/'+n,rootDirectory:'.'});assert.equal(r.status,201);all.push((await r.json()as any).id);}
+ for(const app of all.slice(1))await h.sql('INSERT INTO flora_org_app_access VALUES(?,?,1)',[h.member.membershipId,app]);
+ const first=await(await h.request(h.session,'GET','/api/projects')).json()as any;assert.equal(first.projects.length,25);assert.ok(first.nextCursor);
+ const second=await(await h.request(h.session,'GET','/api/projects?appCursor='+encodeURIComponent(first.nextCursor))).json()as any;assert.equal(second.projects.length,1);assert.equal(second.nextCursor,null);assert.equal(new Set([...first.projects,...second.projects].map((a:any)=>a.id)).size,26);
+ const app=second.projects[0].id,directResponse=await h.request(h.session,'GET','/api/projects?appId='+app);assert.equal(directResponse.status,200);const direct=await directResponse.json()as any;assert.deepEqual(direct.projects.map((a:any)=>a.id),[app]);assert.equal((await h.request(h.session,'GET','/api/projects?appId=application_missing')).status,404);
+ assert.equal((await h.request(h.session,'GET','/api/projects?appId='+app+'&appCursor='+encodeURIComponent(first.nextCursor))).status,400);
+ const wrongEndpoint=await h.request(h.session,'GET','/api/state?appCursor='+encodeURIComponent(first.nextCursor));assert.equal(wrongEndpoint.status,403);
+});

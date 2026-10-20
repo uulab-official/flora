@@ -446,6 +446,7 @@ export async function startClient(env) {
   let currentRoute = parseAdminPath(env.location?.pathname ?? "/") ?? parseAdminPath("/");
   let routeEpoch = 0;
   let orgPrincipal=null,orgDispose=()=>{},orgUiEpoch=0;let memberPageCursor=null,requestPageCursor=null;
+  let projectCursors = [null], projectScopeKey = null;
   let projectSummary = null; let projectStatus = "loading"; let projectEpoch = 0; let projectLoading = false; let projectRequest = null; let projectTimer; let projectLastAttempt = -Infinity;
   selectedAppId = currentRoute.appId;
   let currentView = ADMIN_PAGES[currentRoute.page].legacy; let appPage = 0; let filteredCount = 0; let detailTrigger = null; const pageSize = 10;
@@ -506,12 +507,13 @@ export async function startClient(env) {
     credentialsPanel.controls(); nativePanel.controls();
     for (const id of ["ci-refresh", "ci-resolve"]) node(id).disabled = closed || busy || reading || !selectedAppId;
     if (node("project-summary-refresh")) node("project-summary-refresh").disabled = closed || !csrf || reading || projectLoading || !data;
+    node("project-previous").disabled=closed||!csrf||projectLoading||projectCursors.length<2;node("project-next").disabled=closed||!csrf||projectLoading||!projectSummary?.nextCursor;
     renderRoute();
     if(orgPrincipal){const can=action=>orgPrincipal.capabilities.includes(action);for(const id of ['application-register','github-open','github-managed-refresh','github-manifest-start','github-repository-use','github-repositories-more','project-register-open'])if(node(id)&&!can('org.manage'))node(id).disabled=true;for(const id of ['settings-save','settings-json','signing-key-create'])if(node(id)&&!can('app.manage'))node(id).disabled=true;for(const id of ['source-file','baseline-file'])if(node(id)&&!can('app.deploy'))node(id).disabled=true;}
   }
   function erase(preserveProjects = false) {
     orgUiEpoch++;orgDispose();orgDispose=()=>{};for(const id of ["organization-panel","security-panel","personal-runner-panel"])node(id)?.replaceChildren();
-    stopProjectsPoll(); projectEpoch++; if (!preserveProjects) { projectSummary = null; projectStatus = "loading"; projectLastAttempt = -Infinity; node("workspace-status")?.replaceChildren(); } projectLoading = false; node("project-summary-status")?.replaceChildren();
+    stopProjectsPoll(); projectEpoch++; if (!preserveProjects) { projectSummary = null; projectCursors=[null];projectScopeKey=null;node("project-pagination").hidden=true; projectStatus = "loading"; projectLastAttempt = -Infinity; node("workspace-status")?.replaceChildren(); } projectLoading = false; node("project-summary-status")?.replaceChildren();
     credentialsPanel.clear(); nativePanel.clear(); deploymentDevices.clear(); autoRollback.clear(); onboardingPanel.leave();
     ciBinding = null; ciAppId = null; ciKnown = false; ciIdentity = null; ciEpoch++; ciConflict = false; clearCI(document);
     githubCallback = null; githubEpoch++; githubInstallations = []; githubRepositories = []; githubCursor = null; githubSelection = null; githubRepositoryPages = 0;
@@ -550,7 +552,7 @@ export async function startClient(env) {
       if (!response.ok) {
         let code = "";
         try { const payload = await response.json(); const value = payload?.error ?? payload?.code; if (["REAUTH_REQUIRED","MEMBERSHIP_CHANGED","RUNNER_APPROVAL_CHANGED","RUNNER_ACCESS_DENIED","ORG_ACCESS_NOT_ACTIVE","CONFLICT", "APP_CONFLICT", "IDEMPOTENCY_CONFLICT", "CAPACITY", "CAPACITY_EXCEEDED", "BUSY", "GITHUB_ACCESS_DENIED", "GITHUB_REPOSITORY_UNAVAILABLE", "GITHUB_REF_NOT_FOUND", "GITHUB_APP_UNSUPPORTED", "D1_DAILY_READ_LIMIT", "D1_DAILY_WRITE_LIMIT", "D1_ACCOUNT_STORAGE_LIMIT", "D1_DATABASE_SIZE_LIMIT", "D1_OVERLOADED"].includes(value)) code = value; } catch { /* Do not display raw server or proxy text. */ }
-        if(response.status===403&&csrf&&orgPrincipal?.role!=='owner'&&orgPrincipal)close("요청 권한을 확인하지 못해 화면을 비웠습니다. 다시 로그인해 주세요.");
+        if(response.status===403&&code!=='REAUTH_REQUIRED'&&csrf&&orgPrincipal?.role!=='owner'&&orgPrincipal)close("요청 권한을 확인하지 못해 화면을 비웠습니다. 다시 로그인해 주세요.");
         throw Object.assign(new Error("REQUEST_FAILED"), { status: response.status, code });
       }
       return response.status === 204 ? null : await response.json();
@@ -559,6 +561,7 @@ export async function startClient(env) {
   function failure(error, importing = false) {
     if (closed) return;
     if (error.status === 401) { expire(); return; }
+    if(error.code==='REAUTH_REQUIRED'){notice('계정 보안에서 본인 확인을 마친 뒤 다시 진행해 주세요.');return;}
     if(error.status===403&&orgPrincipal&&orgPrincipal.role!=="owner"){close("접근 권한이 변경되어 화면을 비웠습니다. 다시 로그인해 주세요.");return;}
     let text = importing ? "반입 완료 여부를 확인하지 못했습니다. 연결을 확인한 뒤 이력을 다시 불러오세요. 기록이 없다면 같은 원본 파일로 다시 시도할 수 있습니다." : "이력을 불러오지 못했습니다. 연결 또는 저장소를 사용할 수 없는 상태일 수 있습니다. 잠시 후 다시 시도해 주세요.";
     if (["D1_DAILY_READ_LIMIT", "D1_DAILY_WRITE_LIMIT"].includes(error.code)) {
@@ -645,7 +648,7 @@ export async function startClient(env) {
   }
   function validPrincipal(value){return value&&typeof value.organizationId==='string'&&typeof value.userId==='string'&&typeof value.membershipId==='string'&&['owner','admin','deployer','viewer'].includes(value.role)&&Number.isSafeInteger(value.permissionRevision)&&Array.isArray(value.capabilities)&&Array.isArray(value.appIds);}
   async function checkPrincipal(){
-    const value=await api('/api/me');if(!validPrincipal(value)){if(orgPrincipal){close('계정 권한을 확인하지 못해 화면을 비웠습니다. 다시 로그인해 주세요.');return false;}return true;}
+    let value;try{value=await api('/api/me');}catch(error){if(error.status===503&&!orgPrincipal)return true;if(orgPrincipal)close('권한을 확인하지 못해 화면을 비웠습니다.');throw error;}if(!validPrincipal(value)){if(orgPrincipal){close('계정 권한을 확인하지 못해 화면을 비웠습니다. 다시 로그인해 주세요.');return false;}return true;}
     const key=p=>JSON.stringify([p.organizationId,p.userId,p.membershipId,p.role,p.permissionRevision,p.appIds]);
     if(orgPrincipal&&key(orgPrincipal)!==key(value)){close('계정 또는 앱 접근이 변경되어 화면을 비웠습니다. 다시 열어 주세요.');return false;}orgPrincipal=value;return true;
   }
@@ -810,6 +813,7 @@ export async function startClient(env) {
     } catch (error) {
       if (closed || version !== viewGeneration) return;
       if (error.status === 401) { expire(); return; }
+    if(error.code==='REAUTH_REQUIRED'){notice('계정 보안에서 본인 확인을 마친 뒤 다시 진행해 주세요.');return;}
     if(error.status===403&&orgPrincipal&&orgPrincipal.role!=="owner"){close("접근 권한이 변경되어 화면을 비웠습니다. 다시 로그인해 주세요.");return;}
       logs.delete(id); target.replaceChildren(summary, element(document, "p", "로그를 불러오지 못했습니다. 닫았다가 다시 열어 재시도해 주세요.", "warning-text"));
     }
@@ -1114,7 +1118,7 @@ export async function startClient(env) {
       return value === undefined || value === null || value && value.source === "operator-verification" && ["android-emulator", "ios-simulator", "physical-device"].includes(value.environment) && !(os === "ios" && value.environment === "android-emulator" || os === "android" && value.environment === "ios-simulator") && Number.isSafeInteger(value.observedAt) && value.observedAt >= 0 && /^[a-f0-9]{64}$/.test(value.receiptDigest) && ["applied", "restarted", "signatureVerified", "assetsVerified"].every(key => typeof value[key] === "boolean") && (value.appId === undefined || value.appId === app.id) && (value.deploymentId === undefined || value.deploymentId === app.ota[os].id);
     }));
   }
-  function projectView() { return { ...data, projectSummary, projectStatus, projectNow: now() }; }
+  function projectView() { const paged=orgPrincipal&&orgPrincipal.role!=="owner"&&currentRoute.page==="projects"&&projectScopeKey==="page:"+(projectCursors.at(-1)??"");return { ...data,...(paged&&projectSummary?{applications:projectSummary.projects}:{}),projectSummary, projectStatus, projectNow: now() }; }
   function paintProjects() {
     if (!active()) return;
     if (currentRoute.page === "projects") { if (data) renderProjectCards(document, projectView()); renderWorkspaceStatus(document, projectSummary, { status: projectStatus, now: now(), observedAt: projectSummary?.observedAt }); }
@@ -1122,20 +1126,25 @@ export async function startClient(env) {
     const status = node("project-summary-status"), button = node("project-summary-refresh");
     if (status) status.textContent = projectStatus === "error" ? projectSummary ? "운영 정보를 다시 확인하지 못했습니다. 이전 확인 정보를 표시합니다." : "운영 정보를 불러오지 못했습니다. OTA·Runner 상태는 미확인입니다." : projectStatus === "loading" ? "저장소·OTA·Runner 상태 확인 중…" : "마지막 상태 확인 · " + date(projectSummary?.observedAt);
     if (button) button.disabled = closed || !csrf || projectLoading || !data;
+    node("project-pagination").hidden=currentRoute.page!=="projects"||!(projectCursors.length>1||projectSummary?.nextCursor);node("project-page-number").textContent=projectCursors.length+"페이지";node("project-previous").disabled=closed||!csrf||projectLoading||projectCursors.length<2;node("project-next").disabled=closed||!csrf||projectLoading||!projectSummary?.nextCursor;
   }
-  async function loadProjects() {
+  async function pageProjects(direction){if(!active()||projectLoading||currentRoute.page!=="projects")return;const cursors=[...projectCursors];if(direction==="previous"&&cursors.length>1)cursors.pop();else if(direction==="next"&&projectSummary?.nextCursor&&cursors.length<100&&!cursors.includes(projectSummary.nextCursor))cursors.push(projectSummary.nextCursor);else return;await loadProjects(cursors);}
+  async function loadProjects(pageStack = null) {
     if (!active() || !csrf || !visibleSummaryPage() || !data) return false;
     if (projectRequest) return projectRequest;
-    if (now() - projectLastAttempt < summaryInterval) { paintProjects(); scheduleProjectsPoll(); return Boolean(projectSummary); }
+    const cursors=pageStack??projectCursors,targetApp=orgPrincipal&&orgPrincipal.role!=="owner"&&currentRoute.page==="overview"?currentRoute.appId:null,cursor=cursors.at(-1),scopeKey=targetApp?"app:"+targetApp:"page:"+(cursor??"");
+    if (!pageStack&&scopeKey===projectScopeKey&&now() - projectLastAttempt < summaryInterval) { paintProjects(); scheduleProjectsPoll(); return Boolean(projectSummary); }
     const epoch = ++projectEpoch, route = routeEpoch, app = currentRoute.appId;
     const current = () => active() && epoch === projectEpoch && route === routeEpoch && currentRoute.appId === app && visibleSummaryPage();
     projectLastAttempt = now(); projectLoading = true; projectStatus = "loading"; paintProjects();
     const request = (async () => {
       try {
-        const result = await api("/api/projects"); if (!current()) return false;
+        if(pageStack&&(!await checkPrincipal()||!current()))return false;
+        const query=targetApp?"?appId="+encodeURIComponent(targetApp):cursor?"?appCursor="+encodeURIComponent(cursor):"";
+        const result = await api("/api/projects"+query); if (!current()) return false;
         const valid = result && Array.isArray(result.projects) && result.projects.length <= 100 && Number.isSafeInteger(result.observedAt) && result.observedAt >= 0 && new Set(result.projects.map(app => app?.id)).size === result.projects.length && result.projects.every(app => app && /^[a-z][a-z0-9_-]{2,95}$/.test(app.id) && typeof app.name === "string" && typeof app.repositoryId === "string" && typeof app.rootDirectory === "string" && app.ota && app.runner && ["unregistered", "unseen", "online", "offline", "revoked"].includes(app.runner.status) && ["ios", "android"].every(os => app.ota[os] === null || app.ota[os] && typeof app.ota[os].id === "string" && typeof app.ota[os].channel === "string" && typeof app.ota[os].runtimeVersion === "string" && /^[a-f0-9]{40}$/.test(app.ota[os].commitSha) && Number.isSafeInteger(app.ota[os].createdAt))) && validSummaryMetadata(result);
-        if (!valid) throw new Error("INVALID_PROJECTS");
-        projectSummary = result; projectStatus = "ready"; return true;
+        if (!valid||result.nextCursor!==undefined&&result.nextCursor!==null&&(typeof result.nextCursor!=="string"||result.nextCursor.length>16384)) throw new Error("INVALID_PROJECTS");
+        projectSummary = result;projectCursors=[...cursors];projectScopeKey=scopeKey; projectStatus = "ready"; return true;
       } catch (error) {
         if (error.status === 401 && active()) { expire(); return false; }
         if (!current()) return false;
@@ -1177,6 +1186,7 @@ export async function startClient(env) {
     } catch (error) {
       if (!active() || version !== generation || selectedAppId !== appId) return;
       if (error.status === 401) { expire(); return; }
+    if(error.code==='REAUTH_REQUIRED'){notice('계정 보안에서 본인 확인을 마친 뒤 다시 진행해 주세요.');return;}
     if(error.status===403&&orgPrincipal&&orgPrincipal.role!=="owner"){close("접근 권한이 변경되어 화면을 비웠습니다. 다시 로그인해 주세요.");return;}
       renderReadiness(document, appId, operationsAppId === appId ? currentDetection(operations) : null, automationAppId === appId ? automation : null, operationsAppId === appId ? operations : null, "error");
       document.getElementById("operations-status").textContent = "연결과 배포 이력을 확인하지 못했습니다. 다시 확인해 주세요.";
@@ -1379,6 +1389,7 @@ export async function startClient(env) {
   node("sidebar-backdrop").addEventListener("click", () => sidebar(false));
   document.addEventListener?.("keydown", event => { if (event.key === "Escape" && document.body.getAttribute("data-menu-open") === "true") { sidebar(false); node("sidebar-toggle").focus(); } });
   node("project-summary-refresh")?.addEventListener("click", () => loadProjects());
+  node("project-previous").addEventListener("click",()=>pageProjects("previous"));node("project-next").addEventListener("click",()=>pageProjects("next"));
   node("application-select").addEventListener("change", event => chooseApplication(event.target.value));
   node("application-form").addEventListener("submit", event => { event.preventDefault(); return registerApplication(); });
   node("credential-open").addEventListener("click", () => { return navigate("credentials", selectedAppId); });

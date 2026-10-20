@@ -16,6 +16,10 @@ export class OrgFixture {
   private syncCalls=0;
   private syncHeld=false;
   private syncRelease:(()=>void)|undefined;
+  private vaultReturnMethod:string|null=null;
+  private vaultReturnHeld=false;
+  private vaultReturnRelease:(()=>void)|undefined;
+  private vaultPatched=new WeakSet<object>();
   private nativeReturnHold=false;
   private nativeReturnHeld=false;
   private nativeReturnRelease:(()=>void)|undefined;
@@ -73,6 +77,9 @@ export class OrgFixture {
     if(body.action==='sync-hold'){this.syncHoldAt=body.at;this.syncCalls=0;return Response.json({ok:true});}
     if(body.action==='sync-state')return Response.json({held:this.syncHeld});
     if(body.action==='sync-release'){this.syncRelease?.();this.syncRelease=undefined;this.syncHeld=false;return Response.json({ok:true});}
+    if(body.action==='vault-return-hold')this.vaultReturnMethod=body.method;
+    if(body.action==='vault-return-state')return Response.json({held:this.vaultReturnHeld});
+    if(body.action==='vault-return-release'){this.vaultReturnRelease?.();this.vaultReturnRelease=undefined;this.vaultReturnHeld=false;return Response.json({ok:true});}
     if(body.action==='native-return-hold')this.nativeReturnHold=true;
     if(body.action==='native-return-state')return Response.json({held:this.nativeReturnHeld});
     if(body.action==='native-return-release'){this.nativeReturnRelease?.();this.nativeReturnRelease=undefined;this.nativeReturnHeld=false;return Response.json({ok:true});}
@@ -93,6 +100,7 @@ export class OrgFixture {
         Object.assign(this.env, body.env ?? {}); this.authority = new FloraAuth(this.ctx, this.env);
         await this.authority.fetch(new Request(this.env.FLORA_ORIGIN + '/api/auth/session'));
       }
+      const vault=(this.authority as any).vault;if(vault&&!this.vaultPatched.has(vault)){for(const method of ['list','import','disable']){const original=vault[method].bind(vault);vault[method]=async(...args:any[])=>{const value=await original(...args);if(this.vaultReturnMethod===method){this.vaultReturnMethod=null;this.vaultReturnHeld=true;await new Promise<void>(resolve=>{this.vaultReturnRelease=resolve;});}return value;};}this.vaultPatched.add(vault);}
       const native=(this.authority as any).native;if(native&&!this.nativePatched.has(native)){const original=native.credentials.bind(native);native.credentials=async(...args:any[])=>{const value=await original(...args);if(this.nativeReturnHold){this.nativeReturnHold=false;this.nativeReturnHeld=true;await new Promise<void>(resolve=>{this.nativeReturnRelease=resolve;});}return value;};this.nativePatched.add(native);}
       const access=(this.authority as any).runnerAccess;
       if(access&&!this.patchedAccess.has(access)){const finish=access.finishNative.bind(access);access.finishNative=(...args:any[])=>{if(this.readyFailure)throw new OrgFailure(503,'SYNTHETIC_PROOF_FAILURE');return finish(...args);};this.patchedAccess.add(access);}
