@@ -1,3 +1,4 @@
+import {OrgFailure} from "./org/types.js";
 import type {MutationSubmit,ReadScope} from "./contracts.js";
 import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types";
 import { canonicalJson, freeze } from "@app-ops/config";
@@ -26,6 +27,7 @@ export function createD1AutomationStore(db: D1Database, owner: string, applicati
     try { return await (mutate?mutate(()=>db.batch<Row>(statements)):db.batch<Row>(statements)); }
     catch (error) {
       if (error instanceof Error) {
+        if (/org runner/.test(error.message)) throw new OrgFailure(409,"RUNNER_ACCESS_NOT_READY");
         if (/runner authority/.test(error.message)) throw new DomainError("PERMISSION_DENIED");
         if (/lease fence/.test(error.message)) throw new DomainError("LEASE_STALE");
         if (/automation conflict|flora capacity exceeded|deployment timestamp conflict|deployment provenance mismatch|UNIQUE constraint failed/.test(error.message)) throw new DomainError("CONFLICT");

@@ -1,3 +1,4 @@
+import {storageIdentity} from './types.js';
 import {createOrgSchema} from './schema.js';
 import {OrgFailure,defaultOrgLimits,normalizeOwnerEmail,orgAssert,orgId,safeInteger,utf8Bytes} from './types.js';
 import type {OrgBinding,OrgLimits,OrgStorage,OrgState,OrgMemberState,OrgPrincipal,MembershipInput,OrgRole} from './types.js';
@@ -5,7 +6,7 @@ export type OrgStateRow = {id:string;owner_id:string;db_identity:string;origin:s
 export class OrgStore {
  readonly limits:Readonly<OrgLimits>;
  constructor(readonly storage:OrgStorage,readonly binding:OrgBinding,limits:OrgLimits=defaultOrgLimits) {
-  orgId(binding.ownerId);orgId(binding.dbIdentity);normalizeOwnerEmail(binding.ownerEmail);
+  storageIdentity(binding.ownerId);storageIdentity(binding.dbIdentity);normalizeOwnerEmail(binding.ownerEmail);
   safeInteger(limits.metadataBytes);safeInteger(limits.auditBytes);this.limits=Object.freeze({...limits});
   this.atomic(()=>{createOrgSchema(storage);const row=this.storage.sql.exec<OrgStateRow>('SELECT * FROM flora_org_state WHERE singleton=1').toArray()[0];if(row)this.checkBinding(row);});
  }

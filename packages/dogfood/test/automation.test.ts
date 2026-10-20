@@ -113,3 +113,11 @@ test("automatic queue rejects policy changes and repository reconnects during de
     if (change === "none") assert.equal(expectedVersion, 1);
   }
 });
+test('server Runner allocation stays separate from strict HTTP enrollment input',async()=>{
+ const stored:RunnerCredential[]=[];
+ const ctx={applications:{async listApplications(){return [{id:'app_test',name:'Test',createdAt:1}]}},automation:{async registerRunner(value:RunnerCredential){stored.push(value);const {tokenHash,...summary}=value;return summary;}}}as unknown as AutomationContext;
+ const service=createAutomationService(ctx,{now:()=>1000,publicOrigin:"https://updates.example.test"});
+ const result=await service.enrollRunner({name:'PC',appIds:['app_test']},{runnerId:'runner_server_reserved'});assert.equal(result.runner.id,'runner_server_reserved');assert.ok(result.token.startsWith('runner_server_reserved.'));assert.equal(stored.length,1);assert.doesNotMatch(JSON.stringify(result.runner),/tokenHash/);
+ await assert.rejects(service.enrollRunner({name:'PC',appIds:['app_test'],runnerId:'runner_browser_chosen'}as any));
+ await assert.rejects(service.enrollRunner({name:'PC',appIds:['app_test']},{runnerId:'../escape'}));assert.equal(stored.length,1);
+});

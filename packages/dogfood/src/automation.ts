@@ -138,7 +138,7 @@ export interface AutomationService {
   authorizeRunner(token: string, lease?: AutomationLease): Promise<void>;
   getState(appId: string): Promise<AutomationState>;
   getJob(appId: string, jobId: string): Promise<{ job: AutomationJob; attempts: AutomationAttempt[]; events: AutomationEvent[] }>;
-  enrollRunner(input: RunnerEnrollmentInput): Promise<RunnerEnrollment>;
+  enrollRunner(input: RunnerEnrollmentInput,allocation?:{runnerId:string}): Promise<RunnerEnrollment>;
   revokeRunner(runnerId: string): Promise<RunnerSummary>;
   queue(appId: string, input: AutomationQueueInput): Promise<AutomationJob>;
   updatePolicy(appId: string, input: AutoPolicyUpdate): Promise<AutoPolicy>;
@@ -304,9 +304,9 @@ export function createAutomationService(ctx: AutomationContext, options: Automat
     async authorizeRunner(token, lease) { const auth = await authority(token); if (lease) await ctx.automation.requireAutomationLease(auth, parseAutomationLease(lease), now()); },
     async getState(appId) { await application(appId); const [jobs, runners, policy] = await Promise.all([ctx.automation.listAutomationJobs(appId), ctx.automation.listRunners(appId), ctx.automation.getAutomationPolicy(appId)]); return freeze({ jobs: jobs.slice(0, 20), runners: runners.map(runner => ({ id: runner.id, name: runner.name, appIds: runner.appIds, createdAt: runner.createdAt, credentialEpoch: runner.credentialEpoch, revokedAt: runner.revokedAt })), policy }); },
     async getJob(appId, jobId) { await application(appId); const job = await ctx.automation.getAutomationJob(appId, id(jobId)); ensure(job, "NOT_FOUND"); const [attempts, events] = await Promise.all([ctx.automation.listAutomationAttempts(appId, jobId), ctx.automation.listAutomationEvents(appId, jobId)]); return freeze({ job, attempts, events }); },
-    async enrollRunner(input) {
+    async enrollRunner(input,allocation) {
       const parsed = parseRunnerEnrollmentInput(input), apps = new Set((await ctx.applications.listApplications()).map(app => app.id)); ensure(parsed.appIds.every(appId => apps.has(appId)), "NOT_FOUND");
-      const runnerId = "runner_" + crypto.randomUUID(), secret = crypto.getRandomValues(new Uint8Array(32));
+      const runnerId = allocation===undefined?"runner_"+crypto.randomUUID():id(object(allocation,["runnerId"]).runnerId), secret = crypto.getRandomValues(new Uint8Array(32));
       const token = runnerId + "." + btoa(String.fromCharCode(...secret)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
       const runner = await ctx.automation.registerRunner(parseRunnerCredential({ id: runnerId, ...parsed, createdAt: now(), credentialEpoch: 1, revokedAt: null, tokenHash: await runnerTokenHash(token) }));
       return freeze({ runner, token });

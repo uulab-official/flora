@@ -28,3 +28,6 @@ export function utf8Bytes(value:unknown):number{return new TextEncoder().encode(
 
 /** Legacy Owner syntax is validated by readConfig; do not impose new-member ASCII rules. */
 export function normalizeOwnerEmail(value:string):string {return value.trim().toLowerCase()}
+
+/** Preserve the exact pre-organization deployment identifier syntax from readConfig. */
+export function storageIdentity(value:unknown):asserts value is string {orgAssert(typeof value==='string'&&/^[A-Za-z0-9._:-]{1,256}$/.test(value),400,'INVALID_REQUEST')}
