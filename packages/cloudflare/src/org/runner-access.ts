@@ -93,11 +93,17 @@ export class RunnerAccess {
    if(changed)this.store.bumpRevision();
   });
  }
+ private scope(row:AccessRow):{appIds:string[];platforms:('ios'|'android')[]} {
+  let apps:unknown,platforms:unknown;try{apps=JSON.parse(row.app_ids);platforms=JSON.parse(row.platforms);}catch{orgAssert(false,403,'RUNNER_ACCESS_DENIED');}
+  orgAssert(Array.isArray(apps)&&apps.length>0&&apps.length<=100&&new Set(apps).size===apps.length&&apps.every(a=>typeof a==='string'&&/^[a-z][a-z0-9_-]{2,95}$/.test(a))&&Array.isArray(platforms)&&platforms.length>0&&platforms.length<=2&&new Set(platforms).size===platforms.length&&platforms.every(p=>p==='ios'||p==='android')&&(row.kind!=='native'||apps.length===1&&platforms.length===1),403,'RUNNER_ACCESS_DENIED');return {appIds:apps,platforms};
+ }
+ serviceScope(ref:RunnerAccessRef,now:number):{appIds:string[];platforms:('ios'|'android')[]} {const scope=this.scope(this.get(ref));for(const appId of scope.appIds)this.assertService(ref,appId,undefined,now);return scope;}
  assertService(ref:RunnerAccessRef,application:string,platform:string|undefined,now:number):void {
-  safeInteger(now,0);const row=this.get(ref);orgAssert(row.state==='ready'&&JSON.parse(row.app_ids).includes(application)&&(platform===undefined||JSON.parse(row.platforms).includes(platform)),403,'RUNNER_ACCESS_DENIED');
+  safeInteger(now,0);const row=this.get(ref),scope=this.scope(row);orgAssert(row.state==='ready'&&scope.appIds.includes(application)&&(platform===undefined||scope.platforms.includes(platform as 'ios'|'android')),403,'RUNNER_ACCESS_DENIED');
   if(row.owner_mode==='organization')return;
   orgAssert(row.owner_mode==='personal'&&this.store.state().mode==='active'&&row.org_access_epoch===this.store.state().orgAccessEpoch&&row.owner_epoch===this.epoch(),403,'RUNNER_ACCESS_DENIED');
-  const request=this.store.storage.sql.exec<RequestRow>('SELECT * FROM flora_org_runner_requests WHERE operation_id=? AND runner_id=? AND kind=?',row.operation_id,row.runner_id,row.kind).toArray()[0];orgAssert(request?.state==='claimed',403,'RUNNER_ACCESS_DENIED');this.participants(request);
+  const request=this.store.storage.sql.exec<RequestRow>('SELECT * FROM flora_org_runner_requests WHERE operation_id=? AND runner_id=? AND kind=?',row.operation_id,row.runner_id,row.kind).toArray()[0];
+  orgAssert(request?.state==='claimed'&&request.app_id===application&&scope.appIds.length===1&&row.platforms===request.platforms&&row.sponsor_id===request.requester_id&&row.issuer_id===request.requester_id&&row.sponsor_auth_epoch===request.requester_auth_epoch&&row.sponsor_revision===request.requester_revision&&row.approver_id===request.approver_id&&request.approver_id!==null&&row.org_access_epoch===request.org_access_epoch&&row.owner_epoch===request.owner_epoch,403,'RUNNER_ACCESS_DENIED');this.participants(request);
  }
  revoke(actor:OrgPrincipal,ref:RunnerAccessRef,now:number):void {
   this.store.atomic(()=>{const old=this.get(ref),apps=JSON.parse(old.app_ids) as string[];orgAssert(apps.length>0,403,'RUNNER_ACCESS_DENIED');this.authorize(actor,old.owner_mode==='organization'?'runner.organization':'runner.approve',old.owner_mode==='organization'?undefined:apps[0],now);if(old.state==='revoked')return;

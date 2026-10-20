@@ -16,3 +16,5 @@ export class OrgAudit {
   });
  }
 }
+
+export function serviceActor(kind:'runner'|'webhook'|'system',id:string):import('./types.js').ActorRef {orgAssert(['runner','webhook','system'].includes(kind),400,'INVALID_REQUEST');orgId(id);return Object.freeze({kind,id});}

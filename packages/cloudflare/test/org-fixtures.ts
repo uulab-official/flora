@@ -4,8 +4,8 @@ import {createHash,randomBytes} from 'node:crypto';
 import {createPasswordVerifier} from '../dist/auth/password.js';
 import {createTestRuntime} from './runtime.ts';
 export const orgOrigin = 'https://organization.example.test';
-export async function createOrgFixture(t:TestContext,bindings:NonNullable<import('./runtime.ts').TestRuntimeOptions['bindings']>={}) {
-  const runtime=await createTestRuntime({entrypoint:new URL('./fixtures/org-entry.ts',import.meta.url),durableObjects:{FLORA_AUTH:'OrgFixture'},bindings:{
+export async function createOrgFixture(t:TestContext,bindings:NonNullable<import('./runtime.ts').TestRuntimeOptions['bindings']>={},options:Pick<import('./runtime.ts').TestRuntimeOptions,'outboundService'>={}) {
+  const runtime=await createTestRuntime({...options,entrypoint:new URL('./fixtures/org-entry.ts',import.meta.url),durableObjects:{FLORA_AUTH:'OrgFixture'},bindings:{
     FLORA_ORIGIN:orgOrigin,FLORA_OWNER_ID:'synthetic-owner',FLORA_OWNER_EMAIL:'Owner@example.test',FLORA_DB_IDENTITY:'synthetic-db',...bindings}});
   t.after(()=>runtime.dispose());
   const control=(body:Record<string,unknown>)=>runtime.fetch(orgOrigin+'/__test/control',{method:'POST',body:JSON.stringify(body)});
@@ -23,9 +23,9 @@ export async function createOrgFixture(t:TestContext,bindings:NonNullable<import
 
 export interface TestSession {cookie:string;csrfToken:string}
 export function sessionCookies(response:{headers:{getSetCookie():string[]}},csrfToken:string):TestSession{return {cookie:response.headers.getSetCookie().map(v=>v.split(';',1)[0]).join('; '),csrfToken}}
-export async function createMemberAuthFixture(t:TestContext,bindings:NonNullable<import('./runtime.ts').TestRuntimeOptions['bindings']>={}){
+export async function createMemberAuthFixture(t:TestContext,bindings:NonNullable<import('./runtime.ts').TestRuntimeOptions['bindings']>={},options:Pick<import('./runtime.ts').TestRuntimeOptions,'outboundService'>={}){
  const now=Date.now(),token=randomBytes(32),ownerPassword='synthetic-owner-password-qa';
- const h=await createOrgFixture(t,{...bindings,FLORA_SETUP:{digest:createHash('sha256').update(token).digest('hex'),issuedAt:now,expiresAt:now+600_000,generation:1,purpose:'enroll'}});
+ const h=await createOrgFixture(t,{...bindings,FLORA_SETUP:{digest:createHash('sha256').update(token).digest('hex'),issuedAt:now,expiresAt:now+600_000,generation:1,purpose:'enroll'}},options);
  await h.control({now});
  const request=(actor:TestSession|null,method:string,path:string,body?:unknown)=>h.runtime.fetch(orgOrigin+path,{method,headers:{...(actor?{Cookie:actor.cookie,'X-Flora-CSRF':actor.csrfToken}:{}),...(method!=='GET'?{Origin:orgOrigin,'Content-Type':'application/json'}:{})},...(body===undefined?{}:{body:JSON.stringify(body)})});
  const r=await request(null,'POST','/api/auth/enroll',{email:'Owner@example.test',password:ownerPassword,confirmation:ownerPassword,token:token.toString('base64url')});assert.equal(r.status,200);

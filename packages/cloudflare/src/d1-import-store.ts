@@ -74,7 +74,7 @@ function writeError(error: unknown): never {
 }
 
 /** D1 owns facts only. The caller's synchronous hook guards submission, not D1 completion. */
-export function createD1ImportStore(db: D1Database, config: FloraConfig, beforeCommit: () => void, externalAssets?:import("./external-assets.js").ExternalOTAAssets, scope?:ReadScope, mutate?:MutationSubmit,readFence?:()=>void): HostedStore {
+export function createD1ImportStore(db: D1Database, config: FloraConfig, beforeCommit: () => void, externalAssets?:import("./external-assets.js").ExternalOTAAssets, scope?:ReadScope, mutate?:MutationSubmit,readFence?:()=>void,selection?:()=>{appIds:string[];platforms:string[]}|undefined): HostedStore {
   // Capture immutable authority so a caller cannot switch the owner between awaited operations.
   const identity = { ...config };
   const owner = text(identity.ownerId, 256);
@@ -157,7 +157,7 @@ export function createD1ImportStore(db: D1Database, config: FloraConfig, beforeC
   };
   const operations = createD1OperationsStore(db, owner, applications, verify, beforeCommit,externalAssets,mutate);
   return {
-    automation: createD1AutomationStore(db, owner, applications, operations, verify, beforeCommit,mutate,scope),
+    automation: createD1AutomationStore(db, owner, applications, operations, verify, beforeCommit,mutate,scope,selection),
     operations,
     applications,
     async saveInventory(snapshot) {

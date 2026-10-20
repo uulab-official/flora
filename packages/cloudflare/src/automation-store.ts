@@ -18,7 +18,7 @@ const summary = ({ tokenHash: _secret, ...runner }: RunnerCredential): RunnerSum
 function charge(fields: unknown[]) { const bytes = encoder.encode(canonicalJson(fields)).byteLength; ensure(bytes <= 524288, "INPUT_TOO_LARGE"); return bytes; }
 const transitionColumns = ["owner_id", "app_id", "job_id", "version", "now", "kind", "authority_json", "lease_json", "data"];
 export function createD1AutomationStore(db: D1Database, owner: string, applications: ApplicationStore, operations: D1OperationsStore,
-  verify: () => Promise<void>, beforeCommit: () => void,mutate?:MutationSubmit,scope?:ReadScope): AutomationStore {
+  verify: () => Promise<void>, beforeCommit: () => void,mutate?:MutationSubmit,scope?:ReadScope,selection?:()=>{appIds:string[];platforms:string[]}|undefined): AutomationStore {
   function insert(table: string, columns: string[], fields: (string | number | null)[], suffix = "", extra: (string | number | null)[] = []) {
     return db.prepare(`INSERT INTO ${table}(${columns.join(",")},stored_bytes) SELECT ${fields.map(() => "?").join(",")},? ${suffix}`).bind(...fields, charge(fields), ...extra);
   }
@@ -168,12 +168,14 @@ export function createD1AutomationStore(db: D1Database, owner: string, applicati
     async claimAutomationJob(input, now, leaseMs, scope) {
       if (scope) scope = parseAutomationClaimScope(scope);
       const authority = parseRunnerAuthority(input); integer(now); integer(leaseMs, 1, AUTOMATION_LEASE_MAX_MS); await verify(); const runner = await credential(authority);
+      const selected=selection?.();
       // Visit registered jobs once and seek each job's latest immutable fact.
       // Polling must not re-scan all historic heartbeat versions of each job.
       const row = await db.prepare(`SELECT t.data,t.version FROM automation_jobs j JOIN automation_transitions t
         ON t.rowid=(SELECT rowid FROM automation_transitions WHERE owner_id=j.owner_id AND app_id=j.app_id AND job_id=j.id ORDER BY version DESC LIMIT 1)
         WHERE j.owner_id=? AND j.app_id IN(SELECT value FROM json_each(?)) AND (json_extract(t.data,'$.job.state')='queued' OR (json_extract(t.data,'$.job.state') IN ('leased','cancel_requested') AND json_extract(t.data,'$.job.lease.expiresAt')<=?))
-        ${scope ? "AND t.app_id=? AND json_extract(t.data,'$.job.commitSha')=?" + (scope.platform ? " AND json_extract(t.data,'$.job.platform')=?" : "") : ""} ORDER BY json_extract(t.data,'$.job.createdAt'),t.job_id LIMIT 1`).bind(owner, canonicalJson(runner.appIds), now, ...(scope ? [scope.appId, scope.commitSha, ...(scope.platform ? [scope.platform] : [])] : [])).first<Row>();
+        ${selected?" AND j.app_id IN(SELECT value FROM json_each(?)) AND json_extract(t.data,'$.job.platform') IN(SELECT value FROM json_each(?))":""}
+        ${scope ? "AND t.app_id=? AND json_extract(t.data,'$.job.commitSha')=?" + (scope.platform ? " AND json_extract(t.data,'$.job.platform')=?" : "") : ""} ORDER BY json_extract(t.data,'$.job.createdAt'),t.job_id LIMIT 1`).bind(owner, canonicalJson(runner.appIds), now, ...(selected?[JSON.stringify(selected.appIds),JSON.stringify(selected.platforms)]:[]), ...(scope ? [scope.appId, scope.commitSha, ...(scope.platform ? [scope.platform] : [])] : [])).first<Row>();
       if (!row) return null; let found: Current = { version: Number(row.version), snapshot: read<Snapshot>(row) };
       if (found.snapshot.job.state !== "queued") { const expired = await store.expireAutomationJob(found.snapshot.job.appId, found.snapshot.job.id, now); if (expired.state !== "queued") return null; found = (await current(expired.appId, expired.id))!; }
       const job = found.snapshot.job; ensure(now >= job.updatedAt); ensure(job.attemptCount < 3, "INVALID_TRANSITION");

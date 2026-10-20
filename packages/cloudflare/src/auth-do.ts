@@ -8,11 +8,11 @@ import { handleOrgHttp } from "./org/http.js";
 import { organizationRoute } from "./org/routes.js";
 import { MemberAuth } from "./org/member-auth.js";
 import { OrgPolicy } from "./org/policy.js";
-import { OrgFailure } from "./org/types.js";
+import { OrgFailure,orgAssert } from "./org/types.js";
 import type { OrgPrincipal, OrgAction } from "./org/types.js";
 import {managementRequirement} from "./org/route-policy.js";
 import type {ManagementRequirement} from "./org/route-policy.js";
-import {OrgAudit} from "./org/audit.js";
+import {OrgAudit,serviceActor} from "./org/audit.js";
 import { OrgStore } from "./org/store.js";
 import { readConfig } from "./config.js";
 import type { AuthGrant, FloraConfig, FloraEnv, ReadScope, MutationSubmit } from "./contracts.js";
@@ -235,6 +235,16 @@ export class FloraAuth extends DurableObject<FloraEnv> {
       nativePage:async(cursor)=>{if(!this.ctx.storage.sql.exec("SELECT 1 FROM sqlite_master WHERE type='table' AND name='flora_native_runners'").toArray().length)return {items:[],nextCursor:null};const rows=this.ctx.storage.sql.exec<{id:string;data:string;owner_epoch:number}>('SELECT id,data,owner_epoch FROM flora_native_runners WHERE id>? ORDER BY id LIMIT 51',cursor??'').toArray();return {items:rows.slice(0,50).map(r=>({...JSON.parse(r.data),ownerEpoch:r.owner_epoch})),nextCursor:rows.length>50?rows[49]!.id:null};}
     },this.runnerAccess);
   }
+  private machineScope(ref:import('./org/types.js').RunnerAccessRef):{appIds:string[];platforms:('ios'|'android')[]}|undefined {
+    const mode=this.ctx.storage.sql.exec<{mode:string}>("SELECT mode FROM flora_org_state WHERE singleton=1").toArray()[0]?.mode;
+    if(mode==='owner_only')return undefined;
+    if(!this.org||!this.runnerAccess)throw new OrgFailure(503,'ORG_ACCESS_NOT_ACTIVE');
+    if(mode==='preparing')return undefined; // Original credentials only; new issuance is barred in both stores.
+    if(mode!=='active'&&mode!=='paused')throw new OrgFailure(503,'ORG_ACCESS_NOT_ACTIVE');
+    const scope=this.runnerAccess.serviceScope(ref,Date.now());
+    if(ref.kind==='native'){const actual=this.ctx.storage.sql.exec<{app_id:string;platform:string}>('SELECT app_id,platform FROM flora_native_runners WHERE id=?',ref.runnerId).toArray()[0];orgAssert(actual&&scope.appIds.length===1&&scope.appIds[0]===actual.app_id&&scope.platforms.length===1&&scope.platforms[0]===actual.platform,403,'RUNNER_ACCESS_DENIED');}
+    return scope;
+  }
   private registration(grant:AuthGrant|null):RunnerRegistration{
     if(!this.org||!this.runnerAccess)throw new OrgFailure(503,'ORG_ACCESS_NOT_ACTIVE');
     let registration:RunnerRegistration;
@@ -243,14 +253,14 @@ export class FloraAuth extends DurableObject<FloraEnv> {
     const automation=createAutomationService({applications:store.applications,operations:store.operations,automation:store.automation},{now:Date.now,publicOrigin:config.origin});
     registration=new RunnerRegistration(this.runnerAccess,new RunnerGate(this.env.FLORA_DB,config.ownerId),automation,this.native);return registration;
   }
-  private importStore(config: FloraConfig, beforeCommit: () => void, readFence = beforeCommit, upload?: () => ExternalAssetUploadContext | undefined, scope?:ReadScope, mutate?:MutationSubmit) {
+  private importStore(config: FloraConfig, beforeCommit: () => void, readFence = beforeCommit, upload?: () => ExternalAssetUploadContext | undefined, scope?:ReadScope, mutate?:MutationSubmit, selection?:()=>{appIds:string[];platforms:string[]}|undefined) {
     let external: ExternalOTAAssets | undefined;
     if (this.assetBlobsRequired) {
       const unavailable = async (): Promise<never> => { throw new HttpFailure(503, "ASSET_STORAGE_UNAVAILABLE"); };
       external = this.githubAssetBlobs?.scope(config, readFence, upload) ?? this.assetBlobs?.scope(config, readFence) ?? { put: unavailable, get: unavailable };
     }
     if(external&&mutate){const underlying=external;external={...underlying,put:(asset,bytes)=>mutate(()=>underlying.put(asset,bytes)),get:underlying.get.bind(underlying)};}
-    return createD1ImportStore(this.env.FLORA_DB, config, beforeCommit, external,scope,mutate,scope?readFence:undefined);
+    return createD1ImportStore(this.env.FLORA_DB, config, beforeCommit, external,scope,mutate,scope?readFence:undefined,selection);
   }
 
   tryHeavy(kind: "kdf" | "import"): (() => void) | null {
@@ -471,14 +481,23 @@ export class FloraAuth extends DurableObject<FloraEnv> {
     let expectedPush: GitHubPushEvent | null = null;
     let ciSession: CISession | null = null;
     let assetUpload: ExternalAssetUploadContext | undefined;
+    let serviceRef:import('./org/types.js').RunnerAccessRef|undefined;
     const fence = () => {
       const current = this.config();
       if (current.ownerId !== config.ownerId || current.origin !== config.origin || current.dbIdentity !== config.dbIdentity || this.state!.owner().epoch !== owner.epoch) throw new AuthFailure(403, "FORBIDDEN");
       ensure(deadline === null || Date.now() < deadline, "LEASE_STALE");
       ensure(pushKey === null || this.pushIntents.get(pushKey) === pushIntent, "CONFIG_CONFLICT");
       if (ciSession) this.ci!.assertSession(ciSession, owner.epoch, Date.now());
+      if(serviceRef)this.machineScope(serviceRef);
     };
-    const store = this.importStore(config, fence, fence, () => assetUpload);
+    const serviceSubmit:MutationSubmit=async submit=>{
+      if(!this.org||this.org.state().mode==='owner_only')return submit();
+      fence();const actor=serviceRef?serviceActor('runner',serviceRef.runnerId):expectedPush?serviceActor('webhook',expectedPush.deliveryId):null;
+      orgAssert(actor,503,'SERVICE_ACTOR_UNAVAILABLE');const audit=new OrgAudit(this.ctx.storage,this.org),intent=audit.begin({actor,action:'app.deploy'},Date.now(),fence);let submitted=false,settled=false;
+      try{await this.ctx.storage.sync();fence();submitted=true;const result=await submit();audit.settle(intent.id,'completed',{},Date.now());settled=true;await this.ctx.storage.sync();return result;}
+      catch(error){if(!settled)audit.settle(intent.id,submitted?'unknown':'rejected',{},Date.now());throw error;}
+    };
+    const store = this.importStore(config, fence, fence, () => assetUpload,undefined,serviceSubmit,()=>serviceRef?this.machineScope(serviceRef):undefined);
     ensure(store.applications && store.operations && store.automation, "PROVIDER_UNSUPPORTED");
     const credentials = this.connections!.credentials();
     const github = credentials ? createGitHubResolver({ credentials, onCurrentRefValidated: (connection, sha) => {
@@ -498,22 +517,22 @@ export class FloraAuth extends DurableObject<FloraEnv> {
       if (!reporter || !account || !/^[a-f0-9]{32}$/.test(account) || !this.usageCache) throw new AuthFailure(503,"USAGE_REPORT_UNAVAILABLE");
       const token=runnerToken(request.headers);
       if(token.split(".")[0]!==reporter)throw new AuthFailure(403,"FORBIDDEN");
-      await service.authorizeRunner(token); fence();
+      await service.authorizeRunner(token); serviceRef={kind:'ota',runnerId:token.split('.')[0]!}; fence();
       admitBody(); const input=await this.body(request);
       // Fresh credential authority, not a cached presence or a CI session.
-      await service.authorizeRunner(token); fence();
+      await service.authorizeRunner(token); serviceRef={kind:'ota',runnerId:token.split('.')[0]!}; fence();
       this.usageCache.record(account,input,Date.now());
       return json({recorded:true});
     }
     if (kind === "runner" && new URL(request.url).pathname === "/api/runner/presence") {
       // Authenticate before consuming the body. CI session tokens and arbitrary
       // app or Runner selectors never gain presence authority.
-      const token = runnerToken(request.headers); await service.authorizeRunner(token);
+      const token = runnerToken(request.headers); await service.authorizeRunner(token);serviceRef={kind:'ota',runnerId:token.split('.')[0]!};fence();
       admitBody(); object(await this.body(request), []);
       const runnerId = token.split(".")[0]!, credential = await store.automation.getRunnerCredential(runnerId);
       ensure(credential && credential.id === runnerId && credential.revokedAt === null, "PERMISSION_DENIED");
       // Recheck the credential after the asynchronous body and credential read.
-      await service.authorizeRunner(token); fence();
+      await service.authorizeRunner(token); serviceRef={kind:'ota',runnerId:token.split('.')[0]!}; fence();
       return json(this.recordRunnerPresence(runnerId, Date.now(), fence));
     }
     if (kind === "ci-token") {
@@ -528,7 +547,7 @@ export class FloraAuth extends DurableObject<FloraEnv> {
       // old response cannot replace a newer admission, even across DO eviction.
       const sequence = this.ci!.reserveAdmission();
       const sha = await this.connections!.branchHead(connection, fence); if (sha !== identity.commitSha) throw new AuthFailure(403, "CI_COMMIT_SUPERSEDED");
-      const token = this.ci!.credential(appId); ensure(token, "PERMISSION_DENIED"); await service.authorizeRunner(token);
+      const token = this.ci!.credential(appId); ensure(token, "PERMISSION_DENIED"); await service.authorizeRunner(token);serviceRef={kind:'ota',runnerId:token.split('.')[0]!};fence();
       const runner = (await store.automation.listRunners(appId)).find(item => item.id === binding.runnerId); ensure(runner && runner.appIds.length === 1 && runner.appIds[0] === appId, "PERMISSION_DENIED");
       const platforms = [...automationPolicyPlatforms(await store.automation.getAutomationPolicy(appId))];
       return json(await this.ci!.issue(binding, identity, header.slice(7), runner, owner.epoch, Date.now(), sequence, fence, platforms), 201);
@@ -563,6 +582,7 @@ export class FloraAuth extends DurableObject<FloraEnv> {
     }
     const headers = new Headers(request.headers); headers.set("Authorization", "Bearer " + token);
     const githubAssetMode = !!this.githubAssetBlobs;
+    const servicePlatform=(appId:string,platform:string)=>{if(serviceRef){const scope=this.machineScope(serviceRef);if(scope)orgAssert(scope.appIds.includes(appId)&&scope.platforms.includes(platform as 'ios'|'android'),403,'RUNNER_ACCESS_DENIED');}};
     async function admit(lease: AutomationLease, allowCancel = false): Promise<void> {
       if (ciSession) ensure(lease.appId === ciSession.appId && lease.runnerId === ciSession.runnerId, "PERMISSION_DENIED");
       if (!allowCancel) await service.authorizeRunner(token, lease);
@@ -571,6 +591,7 @@ export class FloraAuth extends DurableObject<FloraEnv> {
         && job.lease.attemptId === lease.attemptId && job.lease.fence === lease.fence
         && job.lease.runnerId === lease.runnerId && job.lease.credentialEpoch === lease.credentialEpoch, "LEASE_STALE");
       if (ciSession) ensure(job.commitSha === ciSession.commitSha && (!ciSession.platforms || ciSession.platforms.includes(job.platform)), "PERMISSION_DENIED");
+      servicePlatform(job.appId,job.platform);
       deadline = job.lease.expiresAt;
       if (route.binary) {
         const reference = request.headers.get("X-Flora-Asset-Reference");
@@ -578,7 +599,7 @@ export class FloraAuth extends DurableObject<FloraEnv> {
         assetUpload = { job, lease, reference };
       }
     }
-    await service.authorizeRunner(token);
+    await service.authorizeRunner(token);serviceRef={kind:'ota',runnerId:token.split('.')[0]!};fence();
     if (route.binary) await admit(runnerUploadLease(request.headers));
     fence();
     admitBody();
@@ -617,6 +638,7 @@ export class FloraAuth extends DurableObject<FloraEnv> {
       // Completed finalization retries are read-only and use the service's
       // original attempt/Runner checks; all live writes retain this deadline.
       const prior = route.action === "finalize" ? await store.automation.getAutomationJob(lease.appId, lease.jobId) : null;
+      if(prior)servicePlatform(prior.appId,prior.platform);
       if (ciSession) {
         ensure(lease.appId === ciSession.appId && lease.runnerId === ciSession.runnerId, "PERMISSION_DENIED");
         if (prior?.state === "succeeded" && prior.commitSha !== ciSession.commitSha) {
@@ -784,11 +806,12 @@ export class FloraAuth extends DurableObject<FloraEnv> {
         if (this.nativeBodies >= 4) throw new AuthFailure(409, "BUSY", 1);
         this.nativeBodies++;
         const config = this.config(), ownerEpoch = this.state!.owner().epoch;
-        const fence = () => { const current = this.config(); if (current.ownerId !== config.ownerId || current.origin !== config.origin || current.dbIdentity !== config.dbIdentity || this.state!.owner().epoch !== ownerEpoch) throw new AuthFailure(403, "FORBIDDEN"); };
+        let nativeRef:import('./org/types.js').RunnerAccessRef|undefined;
+        const fence = () => { const current = this.config(); if (current.ownerId !== config.ownerId || current.origin !== config.origin || current.dbIdentity !== config.dbIdentity || this.state!.owner().epoch !== ownerEpoch) throw new AuthFailure(403, "FORBIDDEN");if(nativeRef)this.machineScope(nativeRef); };
         let release: (() => void) | null = null;
         try {
           if (!this.native) throw new AuthFailure(503, "VAULT_UNAVAILABLE");
-          const authority = await this.native.authorize(runnerToken(request.headers), ownerEpoch, fence);
+          const authority = await this.native.authorize(runnerToken(request.headers), ownerEpoch, fence);nativeRef={kind:'native',runnerId:authority.runnerId};fence();
           if (path.endsWith("/credentials")) { release = this.tryHeavy("import"); if (!release) throw new AuthFailure(409, "BUSY", 1); }
           const input = parseJson(await readBody(request, route.limit)); fence();
           if (path.endsWith("/claim")) return json(this.native.claim(authority, input, fence), 201);
@@ -796,7 +819,7 @@ export class FloraAuth extends DurableObject<FloraEnv> {
           if (path.endsWith("/presence")) { nativeObject(input, []); return json(this.native.presence(authority, fence)); }
           const action = path.split("/")[3]!, raw = nativeObject(input, action === "complete" ? ["lease", "artifact"] : action === "fail" ? ["lease", "code"] : ["lease"]), lease = parseNativeLease(raw.lease);
           if (action === "heartbeat") return json(this.native.heartbeat(authority, lease, fence));
-          if (action === "credentials") return json(await this.native.credentials(authority, lease, fence));
+          if (action === "credentials") {const result=await this.native.credentials(authority, lease, fence);fence();return json(result);}
           if (action === "complete") return json(this.native.complete(authority, lease, raw.artifact, fence));
           if (action === "fail") return json(this.native.fail(authority, lease, raw.code, fence));
           throw new HttpFailure(404, "NOT_FOUND");
