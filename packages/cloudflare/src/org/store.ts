@@ -67,8 +67,18 @@ export class OrgStore {
    this.appendAudit('access_'+crypto.randomUUID(),'completed',{actor:{kind:'human',id:actor.userId},action:'org.manage',targetUserId:userId,membershipRevision:input.expectedRevision+1},now,!expansion);
   });
  }
+ bumpRevision():void {const before=this.state().revision;safeInteger(before+1);this.storage.sql.exec('UPDATE flora_org_state SET revision=revision+1 WHERE singleton=1');}
+ disable(actor:OrgPrincipal,userId:string,expectedRevision:number,now:number):void {
+  this.atomic(()=>{
+   this.assertActor(actor,now);orgAssert(actor.role==='owner');safeInteger(expectedRevision);const target=this.member(userId);orgAssert(target,404,'NOT_FOUND');orgAssert(target.role!=='owner'&&target.authSource!=='legacy_owner',409,'BOOTSTRAP_OWNER_PROTECTED');orgAssert(target.membershipRevision===expectedRevision,409,'REVISION_CONFLICT');
+   if(target.userStatus==='disabled'&&target.membershipStatus==='disabled')return;
+   safeInteger(target.authEpoch+1);safeInteger(target.membershipRevision+1);
+   const measure=()=>utf8Bytes(this.storage.sql.exec('SELECT * FROM flora_org_users WHERE id=?',userId).one())+utf8Bytes(this.storage.sql.exec('SELECT * FROM flora_org_memberships WHERE id=?',target.membershipId).one())+utf8Bytes(this.storage.sql.exec('SELECT * FROM flora_org_sessions WHERE user_id=? ORDER BY sequence',userId).toArray());const before=measure();
+   this.storage.sql.exec("UPDATE flora_org_users SET status='disabled',auth_epoch=auth_epoch+1 WHERE id=?",userId);this.storage.sql.exec("UPDATE flora_org_memberships SET status='disabled',revision=revision+1 WHERE id=?",target.membershipId);this.storage.sql.exec('DELETE FROM flora_org_sessions WHERE user_id=?',userId);this.charge(measure()-before,0,0,true);this.bumpRevision();this.appendAudit('disable_'+crypto.randomUUID(),'completed',{actor:{kind:'human',id:actor.userId},action:'member-disabled',targetUserId:userId,membershipRevision:target.membershipRevision+1},now,true);
+  });
+ }
  appendAudit(operationId:string,phase:string,data:unknown,now:number,safety=false):void {
-  const payload=JSON.stringify(data);const bytes=utf8Bytes({operation_id:operationId,phase,data:payload,created_at:now,safety:safety?1:0});orgAssert(bytes<=2048,409,'ORG_ACCESS_CAPACITY');this.charge(0,safety?0:bytes,safety?bytes:0);
-  this.storage.sql.exec('INSERT INTO flora_org_audit(operation_id,phase,data,created_at,safety) VALUES(?,?,?,?,?)',operationId,phase,payload,now,safety?1:0);
+  const payload=JSON.stringify(data);const bytes=utf8Bytes({operation_id:operationId,phase,data:payload,created_at:now,safety:safety?1:0});orgAssert(bytes<=2048,409,'ORG_ACCESS_CAPACITY');const reserve=safety&&this.row().audit_bytes+bytes>this.limits.auditBytes;this.charge(0,reserve?0:bytes,reserve?bytes:0);
+  this.storage.sql.exec('INSERT INTO flora_org_audit(operation_id,phase,data,created_at,safety) VALUES(?,?,?,?,?)',operationId,phase,payload,now,reserve?1:0);
  }
 }

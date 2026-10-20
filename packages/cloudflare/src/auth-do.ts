@@ -1,4 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
+import { InvitationService } from "./org/invitations.js";
+import { handleOrgHttp } from "./org/http.js";
+import { organizationRoute } from "./org/routes.js";
 import { MemberAuth } from "./org/member-auth.js";
 import { OrgPolicy } from "./org/policy.js";
 import { OrgFailure } from "./org/types.js";
@@ -78,6 +81,7 @@ export class FloraAuth extends DurableObject<FloraEnv> {
   private org: OrgStore | undefined;
   private orgPolicy: OrgPolicy | undefined;
   private memberAuth: MemberAuth | undefined;
+  private invitations: InvitationService | undefined;
   private readonly principals = new WeakMap<AuthGrant, OrgPrincipal>();
   private connections: ManagedConnections | undefined;
   private ci: ManagedCI | undefined;
@@ -111,7 +115,13 @@ export class FloraAuth extends DurableObject<FloraEnv> {
           this.org = new OrgStore(ctx.storage, readConfig(env), readConfig(env).orgLimits);
           const owner = this.state.owner(); this.org.bootstrap({epoch: owner.epoch, claimed: owner.verifier !== null}, Date.now());
           this.orgPolicy = new OrgPolicy(this.org);
-          this.memberAuth = new MemberAuth(this.org, {now:Date.now,minimum:()=>this.config().passwordMinimum??15,tryHeavy:()=>this.tryHeavy("kdf"),owner:()=>this.state!.owner(),reserveOwner:now=>this.state!.reserve(now,true),assertLegacy:(p,now)=>this.state!.assertCurrent({ownerId:this.config().ownerId,sessionHash:p.sessionHash,epoch:p.ownerEpoch,expiresAt:p.expiresAt},now)});
+          this.memberAuth = new MemberAuth(this.org, {now:Date.now,minimum:()=>this.config().passwordMinimum??15,tryHeavy:()=>this.tryHeavy("kdf"),owner:()=>this.state!.owner(),reserveOwner:now=>this.state!.reserve(now,true),assertLegacy:(p,now)=>{try{this.state!.assertCurrent({ownerId:this.config().ownerId,sessionHash:p.sessionHash,epoch:p.ownerEpoch,expiresAt:p.expiresAt},now)}catch(e){if(e instanceof AuthFailure)throw new OrgFailure(e.status,e.code,e.retryAfter);throw e}}});
+          this.invitations = new InvitationService(this.org,this.memberAuth,async appIds=>{
+            if(!appIds.length)return;
+            if(appIds.length>100||appIds.some(id=>typeof id!=="string"||!/^[a-z][a-z0-9_-]{2,95}$/.test(id))||new Set(appIds).size!==appIds.length)throw new OrgFailure(400,"INVALID_REQUEST");
+            const result=await this.env.FLORA_DB.prepare('SELECT id FROM applications WHERE owner_id=? AND id IN(SELECT value FROM json_each(?))').bind(this.config().ownerId,JSON.stringify(appIds)).all<{id:string}>();
+            if(!result.success||result.results.length!==appIds.length)throw new OrgFailure(404,"NOT_FOUND");
+          });
         } catch { this.org = undefined; this.orgPolicy = undefined; this.memberAuth = undefined; /* Organization availability never replaces legacy Owner authority. */ }
         this.connections = new ManagedConnections(ctx.storage, env); this.ci = new ManagedCI(ctx.storage);
         ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS flora_runner_presence (runner_id TEXT PRIMARY KEY, last_seen_at INTEGER NOT NULL)");
@@ -233,7 +243,7 @@ export class FloraAuth extends DurableObject<FloraEnv> {
         if (member.csrfHash !== csrfHash) throw new AuthFailure(401, "UNAUTHENTICATED");
         if (!["GET", "HEAD"].includes(request.method) && request.headers.get("X-Flora-CSRF") !== encode(rawCsrf)) throw new AuthFailure(403, "FORBIDDEN");
         // Fail closed until each management route is explicitly scoped in Task 5.
-        if (!["/api/auth/session", "/api/auth/logout", "/api/auth/reauth", "/api/auth/member/password", "/_internal/session-check"].includes(new URL(request.url).pathname)) throw new AuthFailure(403, "FORBIDDEN");
+        if (!["/api/auth/session", "/api/auth/logout", "/api/auth/reauth", "/api/auth/member/password", "/_internal/session-check"].includes(new URL(request.url).pathname) && !organizationRoute(new URL(request.url).pathname)) throw new AuthFailure(403, "FORBIDDEN");
         const grant = Object.freeze({ownerId:config.ownerId,sessionHash,epoch:member.principal.ownerEpoch,expiresAt:member.principal.expiresAt});
         this.grants.add(grant);this.principals.set(grant,member.principal);return grant;
       }
@@ -579,6 +589,17 @@ export class FloraAuth extends DurableObject<FloraEnv> {
     try {
       const route = routeRequest(request, true), path = new URL(request.url).pathname;
       origin(request, this.config(), route.kind === "runner" || route.kind === "hook" || route.kind === "ci-token" || route.kind === "native-runner" || route.kind === "sdk-telemetry");
+      const organization=organizationRoute(path);
+      if(organization){
+        if(organization.public&&(this.authBodies>=maxAuthBodies||organization.action==='accept'&&this.heavy!==null))throw new AuthFailure(409,"BUSY",1);
+        const grant=organization.public?null:await this.requireSession(request);
+        if(!this.org||!this.orgPolicy||!this.memberAuth||!this.invitations)throw new OrgFailure(503,"ORG_ACCESS_NOT_ACTIVE");
+        if(organization.public)this.authBodies++;
+        try {
+          const result=await handleOrgHttp(request,{store:this.org,policy:this.orgPolicy,auth:this.memberAuth,invitations:this.invitations,grant,principal:grant?this.principals.get(grant)??null:null,now:Date.now});
+          if(result)return result;
+        } finally {if(organization.public)this.authBodies--;}
+      }
       if (route.kind === "github-callback") {
         const url = new URL(request.url), state = url.searchParams.get("state"), code = url.searchParams.get("code");
         if (!state || !/^[A-Za-z0-9_-]{43}$/.test(state) || !code || !/^[A-Za-z0-9_-]{20,200}$/.test(code)) throw new AuthFailure(400, "INVALID_INPUT");

@@ -142,3 +142,10 @@ test('audit_event_envelope_is_included_in_two_kibibyte_limit',async t=>{
  const r=await h.control({action:'audit-raw',data:{message:'x'.repeat(2000)}});assert.equal(r.status,409);
  assert.deepEqual(await h.sql('SELECT * FROM flora_org_audit'),[]);assert.deepEqual(await h.sql('SELECT * FROM flora_org_state'),before);
 });
+
+
+test('critical_events_use_ordinary_audit_capacity_before_finite_safety_reserve',async t=>{
+ const h=await createOrgFixture(t);await h.control({action:'bootstrap'});
+ const r=await h.control({action:'audit-raw',data:{action:'member-disabled'},safety:true});assert.equal(r.status,200);
+ const [state]=await h.sql('SELECT audit_bytes,safety_bytes FROM flora_org_state');assert.ok(state.audit_bytes>0);assert.equal(state.safety_bytes,0);
+});

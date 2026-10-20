@@ -1,3 +1,4 @@
+import { organizationRoute } from "./org/routes.js";
 import { parseAdminPath } from "../public/admin-routes.js";
 
 /** Shared metadata admission. The front never consumes or duplicates a body. */
@@ -41,12 +42,14 @@ export function routeRequest(request: Request, internal = false): Route {
   const url = new URL(request.url), path = url.pathname;
   let method = "GET", kind: Route["kind"] = "auth", limit = 0, query: string[] = [];
   let binary = false;
+  const orgRoute=organizationRoute(path);
   const management = managementRoute(path);
   const automation = automationManagementRoute(path), runner = automationRunnerRoute(path);
   const admin = parseAdminPath(path);
   const icon = /^\/project-icons\/[a-zA-Z0-9_-][a-zA-Z0-9_.-]{0,95}\.(?:png|webp|jpg)$/.test(path) && !path.includes("..");
   const asset = Object.hasOwn(assets, path) ? assets[path] : icon ? { kind: "private-asset" as const, file: path } : admin ? { kind: "private-asset" as const, file: "/index.html" } : undefined;
-  if (/^\/api\/native-runner\/(?:pending|claim|heartbeat|credentials|complete|fail|presence)$/.test(path)) { kind = "native-runner"; method = "POST"; limit = 16384; }
+  if(orgRoute){kind=orgRoute.public?"auth":"hosted";method=orgRoute.method;limit=method==="POST"?16384:0;query=orgRoute.query;}
+  else if (/^\/api\/native-runner\/(?:pending|claim|heartbeat|credentials|complete|fail|presence)$/.test(path)) { kind = "native-runner"; method = "POST"; limit = 16384; }
   else if (/^\/api\/apps\/[a-z][a-z0-9_-]{2,95}\/native(?:\/(?:runners|jobs)(?:\/[a-z][a-z0-9_-]{2,95}\/(?:revoke|cancel))?)?$/.test(path)) {
     kind = "native-management"; if (!path.endsWith("/native")) { method = "POST"; limit = 16384; }
   }
