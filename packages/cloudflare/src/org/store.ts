@@ -37,11 +37,11 @@ export class OrgStore {
   this.storage.sql.exec('UPDATE flora_org_state SET metadata_bytes=metadata_bytes+?,audit_bytes=audit_bytes+?,safety_bytes=safety_bytes+? WHERE singleton=1',metadataDelta,auditDelta,safetyDelta);
  }
  member(userId:string):OrgMemberState|null {
-  const r=this.storage.sql.exec<{userId:string;membershipId:string;role:OrgRole;userStatus:'active'|'disabled';membershipStatus:'active'|'disabled';authEpoch:number;membershipRevision:number}>('SELECT u.id AS userId,m.id AS membershipId,m.role,u.status AS userStatus,m.status AS membershipStatus,u.auth_epoch AS authEpoch,m.revision AS membershipRevision FROM flora_org_users u JOIN flora_org_memberships m ON m.user_id=u.id WHERE u.id=? AND m.org_id=?',userId,this.row().id).toArray()[0];return r??null;
+  const r=this.storage.sql.exec<{authSource:'legacy_owner'|'member';userId:string;membershipId:string;role:OrgRole;userStatus:'active'|'disabled';membershipStatus:'active'|'disabled';authEpoch:number;membershipRevision:number}>('SELECT u.auth_source AS authSource,u.id AS userId,m.id AS membershipId,m.role,u.status AS userStatus,m.status AS membershipStatus,u.auth_epoch AS authEpoch,m.revision AS membershipRevision FROM flora_org_users u JOIN flora_org_memberships m ON m.user_id=u.id WHERE u.id=? AND m.org_id=?',userId,this.row().id).toArray()[0];return r??null;
  }
- assertActor(actor:OrgPrincipal,now:number):void {
+ assertActor(actor:OrgPrincipal,now:number):OrgMemberState {
   const s=this.state(),m=this.member(actor.userId);
-  orgAssert(actor.organizationId===s.id&&!!m&&m.membershipId===actor.membershipId&&m.role===actor.role&&m.userStatus==='active'&&m.membershipStatus==='active'&&m.authEpoch===actor.authEpoch&&m.membershipRevision===actor.membershipRevision&&actor.expiresAt>now,403,'MEMBERSHIP_CHANGED');
+  safeInteger(actor.expiresAt);orgAssert(actor.organizationId===s.id&&!!m&&m.membershipId===actor.membershipId&&m.role===actor.role&&m.userStatus==='active'&&m.membershipStatus==='active'&&m.authEpoch===actor.authEpoch&&m.membershipRevision===actor.membershipRevision&&m.authSource===actor.authSource&&(m.role==='owner'?m.authSource==='legacy_owner':m.authSource==='member')&&actor.expiresAt>now,403,'MEMBERSHIP_CHANGED');return m!;
  }
  setAccess(actor:OrgPrincipal,userId:string,input:MembershipInput,now:number):void {
   this.atomic(()=>{

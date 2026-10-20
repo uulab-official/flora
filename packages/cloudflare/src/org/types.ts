@@ -11,7 +11,7 @@ export interface OrgBinding {ownerId:string;ownerEmail:string;dbIdentity:string;
 export interface OrgLimits {metadataBytes:number;auditBytes:number}
 export interface OrgPrincipal {organizationId:string;userId:string;membershipId:string;role:OrgRole;authSource:'legacy_owner'|'member';authEpoch:number;membershipRevision:number;ownerEpoch:number;sessionHash:string;expiresAt:number}
 export interface OrgGrant extends AuthGrant {principal:OrgPrincipal}
-export interface OrgMemberState {userId:string;membershipId:string;role:OrgRole;userStatus:'active'|'disabled';membershipStatus:'active'|'disabled';authEpoch:number;membershipRevision:number}
+export interface OrgMemberState {authSource:'legacy_owner'|'member';userId:string;membershipId:string;role:OrgRole;userStatus:'active'|'disabled';membershipStatus:'active'|'disabled';authEpoch:number;membershipRevision:number}
 export interface OrgPage<T>{items:T[];nextCursor:string|null}
 export interface MembershipInput {expectedRevision:number;role:Exclude<OrgRole,'owner'>;addAppIds:string[];removeAppIds:string[]}
 export interface InvitationInput {purpose:'invite'|'reset'|'reactivate';email:string;targetUserId?:string;expectedRevision:number;role?:Exclude<OrgRole,'owner'>;appIds?:string[]}

@@ -1,4 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
+import { OrgPolicy } from "./org/policy.js";
+import { OrgFailure } from "./org/types.js";
+import type { OrgPrincipal, OrgAction } from "./org/types.js";
 import { OrgStore } from "./org/store.js";
 import { readConfig } from "./config.js";
 import type { AuthGrant, FloraConfig, FloraEnv } from "./contracts.js";
@@ -72,6 +75,8 @@ function origin(request: Request, config: FloraConfig, machine = false): void {
 export class FloraAuth extends DurableObject<FloraEnv> {
   private state: AuthState | undefined;
   private org: OrgStore | undefined;
+  private orgPolicy: OrgPolicy | undefined;
+  private readonly principals = new WeakMap<AuthGrant, OrgPrincipal>();
   private connections: ManagedConnections | undefined;
   private ci: ManagedCI | undefined;
   private vault: CredentialVault | undefined;
@@ -103,7 +108,8 @@ export class FloraAuth extends DurableObject<FloraEnv> {
         try {
           this.org = new OrgStore(ctx.storage, readConfig(env), readConfig(env).orgLimits);
           const owner = this.state.owner(); this.org.bootstrap({epoch: owner.epoch, claimed: owner.verifier !== null}, Date.now());
-        } catch { this.org = undefined; /* Organization availability never replaces legacy Owner authority. */ }
+          this.orgPolicy = new OrgPolicy(this.org);
+        } catch { this.org = undefined; this.orgPolicy = undefined; /* Organization availability never replaces legacy Owner authority. */ }
         this.connections = new ManagedConnections(ctx.storage, env); this.ci = new ManagedCI(ctx.storage);
         ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS flora_runner_presence (runner_id TEXT PRIMARY KEY, last_seen_at INTEGER NOT NULL)");
         try { this.otaVerification = new OTAVerificationStore(ctx.storage); }
@@ -224,8 +230,20 @@ export class FloraAuth extends DurableObject<FloraEnv> {
       if (!["GET", "HEAD"].includes(request.method) && request.headers.get("X-Flora-CSRF") !== encode(rawCsrf)) throw new AuthFailure(403, "FORBIDDEN");
       const grant = Object.freeze({ ownerId: config.ownerId, sessionHash, epoch: session.epoch, expiresAt: session.expires_at });
       this.grants.add(grant);
+      // Preserve legacy Owner sessions even if the additive store is unavailable.
+      // Member grants (added separately) never use this fallback.
+      if (this.orgPolicy) {
+        try {
+          const principal = this.orgPolicy.resolveLegacy(grant, Date.now());
+          this.principals.set(grant, principal);
+        } catch {
+          // This session was already verified by the original Owner authority.
+          // Do not invent an organization identity or admit a member here.
+          this.org = undefined; this.orgPolicy = undefined;
+        }
+      }
       return grant;
-    } catch (error) { throw error instanceof AuthFailure ? error : new AuthFailure(503, "AUTH_UNAVAILABLE"); }
+    } catch (error) { throw error instanceof AuthFailure ? error : error instanceof OrgFailure ? new AuthFailure(error.status, error.code) : new AuthFailure(503, "AUTH_UNAVAILABLE"); }
   }
 
   /** Synchronous fence immediately before each D1 submission, never after it. */
@@ -234,7 +252,23 @@ export class FloraAuth extends DurableObject<FloraEnv> {
       this.config();
       if (!this.grants.has(grant)) throw new AuthFailure(401, "UNAUTHENTICATED");
       this.state!.assertCurrent(grant, Date.now());
-    } catch (error) { throw error instanceof AuthFailure ? error : new AuthFailure(503, "AUTH_UNAVAILABLE"); }
+      const principal = this.principals.get(grant);
+      if (principal) {
+        if (!this.orgPolicy) throw new OrgFailure(503, "ORG_ACCESS_NOT_ACTIVE");
+        this.orgPolicy.require(principal, "org.self", undefined, Date.now());
+      }
+    } catch (error) { throw error instanceof AuthFailure ? error : error instanceof OrgFailure ? new AuthFailure(error.status, error.code) : new AuthFailure(503, "AUTH_UNAVAILABLE"); }
+  }
+
+  requireCapability(grant: AuthGrant, action: OrgAction, appId?: string): () => void {
+    const check = () => {
+      this.assertCurrent(grant);
+      const principal = this.principals.get(grant);
+      if (!principal || !this.orgPolicy) throw new AuthFailure(503, "ORG_ACCESS_NOT_ACTIVE");
+      try { this.orgPolicy.require(principal, action, appId, Date.now()); }
+      catch (error) { if (error instanceof OrgFailure) throw new AuthFailure(error.status, error.code); throw error; }
+    };
+    check(); return check;
   }
 
   private async body(request: Request): Promise<Record<string, unknown>> {
