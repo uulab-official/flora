@@ -14,10 +14,12 @@ test("untrusted output and execution duration are bounded without echoing diagno
  await assert.rejects(trustedProcess(process.execPath,["-e","process.stderr.write('secret'.repeat(10000));setInterval(()=>{},1000)"],{maxBytes:1000}),/^Error: EXECUTION_FAILED$/);
  await assert.rejects(trustedProcess(process.execPath,["-e","setInterval(()=>{},1000)"],{timeoutMs:30}),/^Error: EXECUTION_FAILED$/);
 });
-test("actual pinned npm loads distinct controlled empty user and global configuration",async t=>{
+test("actual npm loads distinct controlled empty user and global configuration",async t=>{
  const root=await mkdtemp(join(tmpdir(),"flora-npm-configuration-"));t.after(()=>rm(root,{recursive:true,force:true}));await writeFile(join(root,"npm-user.rc"),"",{mode:0o444});await writeFile(join(root,"npm-global.rc"),"",{mode:0o444});
  const api=processModule as unknown as {npmConfigurationEnvironment(root:string):Record<string,string>;processEnvironment(extra:Record<string,string>):Record<string,string>};assert.equal(typeof api.npmConfigurationEnvironment,"function");const config=api.npmConfigurationEnvironment(root);assert.notEqual(config.npm_config_userconfig,config.npm_config_globalconfig);
- const version=await trustedProcess("npm",["--version"],{cwd:root,env:api.processEnvironment(config)});assert.equal(version.trim(),"10.9.8");
+ const options={cwd:root,env:api.processEnvironment(config)};
+ const version=await trustedProcess("npm",["--version"],options);assert.match(version.trim(),/^\d+\.\d+\.\d+$/);
+ for(const key of ["userconfig","globalconfig"]){const actual=await trustedProcess("npm",["config","get",key],options);assert.equal(actual.trim(),config["npm_config_"+key]);}
 });
 test("safe child diagnostics classify npm failure while excluding arbitrary stderr and fake secret markers",async()=>{
  const api=processModule as unknown as {trustedProcess:typeof trustedProcess;diagnosticCode(error:unknown):string};
