@@ -54,17 +54,17 @@ export class NativeBuildStore {
     const rows = (table: string) => this.storage.sql.exec<{ data: string }>(`SELECT data FROM ${table} WHERE app_id=? ORDER BY rowid DESC LIMIT 100`, appId).toArray().map(row => JSON.parse(row.data));
     return { appId, jobs: rows('flora_native_jobs'), runners: rows('flora_native_runners').map(value => summary(value)), events: rows('flora_native_events'), credentialUses: rows('flora_native_credential_uses') };
   }
-  async enroll(appId: string, input: unknown, ownerEpoch: number, fence: Fence,committed?:(runner:NativeRunnerCredential)=>void) {
+  async enroll(appId: string, input: unknown, ownerEpoch: number, fence: Fence,options?:{runnerId?:string;onInserted?:(runner:NativeRunnerSummary)=>void}) {
     nativeId(appId); nativeInteger(ownerEpoch, 0); const value = nativeObject(input, ['name', 'platform']), platform = nativePlatform(value.platform);
     nativeCheck(typeof value.name === 'string' && value.name.trim().length > 0 && value.name.length <= 80 && !/[\x00-\x1f\x7f]/.test(value.name));
-    const id = 'native_runner_' + crypto.randomUUID(), raw = crypto.getRandomValues(new Uint8Array(32));
+    const id = options?.runnerId===undefined?'native_runner_'+crypto.randomUUID():nativeId(options.runnerId), raw = crypto.getRandomValues(new Uint8Array(32));
     const token = id + '.' + btoa(String.fromCharCode(...raw)).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, ''); raw.fill(0);
     const tokenHash = await hash(token); fence();
     const runner: NativeRunnerCredential = { id, appId, platform, name: value.name.trim(), createdAt: Date.now(), credentialEpoch: 1, revokedAt: null, lastSeenAt: null, tokenHash };
     return this.storage.transactionSync(() => {
       fence(); nativeCheck(this.storage.sql.exec<{ count: number }>('SELECT count(*) AS count FROM flora_native_runners').one().count < 20, 409, 'NATIVE_CAPACITY');
       this.storage.sql.exec('INSERT INTO flora_native_runners VALUES(?,?,?,?,?)', id, appId, platform, ownerEpoch, JSON.stringify(runner));
-      committed?.(runner);return { runner: summary(runner), token };
+      options?.onInserted?.(summary(runner));return { runner: summary(runner), token };
     });
   }
   async authorize(token: string, ownerEpoch: number, fence: Fence): Promise<NativeAuthority> {

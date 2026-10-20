@@ -55,6 +55,14 @@ export class RunnerGate {
    this.db.prepare('SELECT * FROM flora_org_runner_gate WHERE owner_id=?').bind(this.ownerId),
   ]));const row=results[1]?.results[0] as GateRow|undefined;orgAssert(row?.generation===generation&&row.phase==='ledger_only',409,'RUNNER_GATE_CONFLICT');return receipt(row);
  }
+ async verifyAllocation(input:{runnerId:string;operationId:string;appIds:string[];generation:number}):Promise<void>{
+  orgId(input.runnerId);orgId(input.operationId);safeInteger(input.generation);const context=await this.context();orgAssert(context.row?.phase==='ledger_only'&&context.row.generation===input.generation,503,'RUNNER_ISSUANCE_UNVERIFIED');
+  const row=await this.db.prepare(`SELECT r.data,s.operation_id,s.app_ids,s.generation,s.consumed_at FROM automation_runners r JOIN flora_org_runner_reservations s ON s.owner_id=r.owner_id AND s.runner_id=r.id
+   WHERE r.owner_id=? AND r.id=? AND r.version=(SELECT max(version) FROM automation_runners WHERE owner_id=r.owner_id AND id=r.id)`).bind(this.ownerId,input.runnerId).first<{data:string;operation_id:string;app_ids:string;generation:number;consumed_at:number|null}>();
+  orgAssert(row&&row.operation_id===input.operationId&&row.generation===input.generation&&row.consumed_at!==null&&row.app_ids===JSON.stringify([...input.appIds].sort()),503,'RUNNER_ISSUANCE_UNVERIFIED');
+  let credential:any;try{credential=JSON.parse(row.data)}catch{orgAssert(false,503,'RUNNER_ISSUANCE_UNVERIFIED')}
+  orgAssert(credential.id===input.runnerId&&credential.credentialEpoch===1&&credential.revokedAt===null&&Array.isArray(credential.appIds)&&JSON.stringify([...credential.appIds].sort())===row.app_ids,503,'RUNNER_ISSUANCE_UNVERIFIED');
+ }
  async reserve(input:{runnerId:string;operationId:string;appIds:string[];generation:number}):Promise<void>{
   orgId(input.runnerId);orgId(input.operationId);safeInteger(input.generation);orgAssert(Array.isArray(input.appIds)&&input.appIds.length>0&&input.appIds.length<=100&&new Set(input.appIds).size===input.appIds.length,400,'INVALID_REQUEST');
   const {runnerId,operationId,generation}=input,appIds=[...input.appIds].sort();for(const app of appIds)orgAssert(typeof app==='string'&&/^[a-z][a-z0-9_-]{2,95}$/.test(app),400,'INVALID_REQUEST');const apps=JSON.stringify(appIds);

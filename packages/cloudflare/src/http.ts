@@ -42,7 +42,7 @@ export function routeRequest(request: Request, internal = false): Route {
   const url = new URL(request.url), path = url.pathname;
   let method = "GET", kind: Route["kind"] = "auth", limit = 0, query: string[] = [];
   let binary = false;
-  const orgRoute=organizationRoute(path);
+  const orgRoute=organizationRoute(path,request.method);
   const management = managementRoute(path);
   const automation = automationManagementRoute(path), runner = automationRunnerRoute(path);
   const admin = parseAdminPath(path);

@@ -1,3 +1,5 @@
+import type {RunnerAccess} from './runner-access.js';
+import type {RunnerRegistration} from './runner-registration.js';
 import {json,parseJson,readBody} from '../http.js';
 import type {AuthGrant} from '../contracts.js';
 import type {OrgStore} from './store.js';
@@ -7,7 +9,7 @@ import type {InvitationService} from './invitations.js';
 import type {InvitationInput,MembershipInput,OrgPrincipal} from './types.js';
 import {orgActions,orgAssert,safeInteger} from './types.js';
 import {organizationRoute} from './routes.js';
-export interface OrgHttpContext {store:OrgStore;policy:OrgPolicy;auth:MemberAuth;invitations:InvitationService;grant:AuthGrant|null;principal:OrgPrincipal|null;now:()=>number}
+export interface OrgHttpContext {store:OrgStore;policy:OrgPolicy;auth:MemberAuth;invitations:InvitationService;runnerAccess:RunnerAccess;runnerRegistration:RunnerRegistration;grant:AuthGrant|null;principal:OrgPrincipal|null;now:()=>number}
 async function body(request:Request,allowed:readonly string[]):Promise<Record<string,unknown>>{
  const input=parseJson(await readBody(request,16384));orgAssert(input&&typeof input==='object'&&!Array.isArray(input),400,'INVALID_REQUEST');
  const record=input as Record<string,unknown>;orgAssert(Object.keys(record).every(k=>allowed.includes(k)),400,'INVALID_REQUEST');return record;
@@ -17,7 +19,7 @@ function cursor(value:string|null,actor:OrgPrincipal,revision:number):string{
  orgAssert(decoded&&decoded.org===actor.organizationId&&decoded.user===actor.userId&&decoded.revision===revision&&typeof decoded.after==='string',403,'MEMBERSHIP_CHANGED');return decoded.after;
 }
 export async function handleOrgHttp(request:Request,c:OrgHttpContext):Promise<Response|null>{
- const url=new URL(request.url),route=organizationRoute(url.pathname);if(!route)return null;
+ const url=new URL(request.url),route=organizationRoute(url.pathname,request.method);if(!route)return null;
  if(route.public){
   const input=await body(request,route.action==='preview'?['nonce']:['nonce','email','password','confirmation']);
   if(route.action==='preview'){orgAssert(Object.keys(input).length===1,400,'INVALID_REQUEST');return json(await c.invitations.preview(input.nonce as string,c.now()))}
@@ -25,6 +27,18 @@ export async function handleOrgHttp(request:Request,c:OrgHttpContext):Promise<Re
   const headers=new Headers(),options='; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=3600';headers.append('Set-Cookie','__Host-flora_session='+result.sessionToken+options);headers.append('Set-Cookie','__Host-flora_csrf='+result.csrfToken+options);return json({csrfToken:result.csrfToken,expiresAt:result.session.expiresAt},200,headers);
  }
  const actor=c.principal;orgAssert(actor&&c.grant,503,'ORG_ACCESS_NOT_ACTIVE');c.policy.require(actor,'org.self',undefined,c.now());
+ if(route.action.startsWith('runner-')){
+  const access=c.runnerAccess,application=route.appId!,action=route.action==='runner-approve'?'runner.approve':route.action==='runner-request'||route.action==='runner-claim'?'runner.request':'app.read';access.authorize(actor,action,application,c.now());
+  if(route.action==='runner-list')return json(access.list(actor,application,url.searchParams.get('cursor'),Number(url.searchParams.get('limit')??25),c.now()));
+  if(route.action==='runner-request'){
+   const input=await body(request,['kind','name','platforms']);access.authorize(actor,'runner.request',application,c.now());await access.verifyApplications([application]);return json(access.request(actor,application,input as any,c.now()),201);
+  }
+  const input=await body(request,['expectedRevision']);orgAssert(Object.keys(input).length===1,400,'INVALID_REQUEST');safeInteger(input.expectedRevision);
+  orgAssert(access.requestView(route.id!).appId===application,404,'NOT_FOUND');
+  if(route.action==='runner-approve')return json(access.approve(actor,route.id!,input.expectedRevision,c.now()));
+  if(route.action==='runner-claim')return json(await c.runnerRegistration.claim(actor,route.id!,input.expectedRevision),201);
+  return json(await c.runnerRegistration.revokeRequest(actor,route.id!,input.expectedRevision));
+ }
  if(route.action==='self'){
   const page=c.policy.visibleApps(actor,null,50);const user=c.store.storage.sql.exec<{display_name:string}>('SELECT display_name FROM flora_org_users WHERE id=?',actor.userId).one();
   const capabilities=orgActions.filter(action=>actor.role==='owner'||action==='org.self'||['app.read','credential.read'].includes(action)||(actor.role!=='viewer'&&['app.deploy','runner.request'].includes(action))||(actor.role==='admin'&&['app.manage','credential.manage','runner.approve'].includes(action)));

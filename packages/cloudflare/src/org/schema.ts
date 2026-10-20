@@ -39,6 +39,10 @@ export function createOrgSchema(storage:OrgStorage):void {
  CREATE INDEX IF NOT EXISTS flora_org_audit_operation ON flora_org_audit(operation_id,sequence);
  CREATE TABLE IF NOT EXISTS flora_org_auth_budget(bucket TEXT PRIMARY KEY,attempt_window INTEGER NOT NULL,attempts INTEGER NOT NULL,kdf_window INTEGER NOT NULL,kdfs INTEGER NOT NULL);
  `);
+ storage.sql.exec('CREATE INDEX IF NOT EXISTS flora_org_requests_operation ON flora_org_runner_requests(operation_id)');
+ for(const table of ['flora_org_runner_access','flora_org_runner_requests'])
+  if(!storage.sql.exec<{name:string}>('PRAGMA table_info('+table+')').toArray().some(c=>c.name==='owner_epoch'))
+   storage.sql.exec('ALTER TABLE '+table+' ADD COLUMN owner_epoch INTEGER NOT NULL DEFAULT 0');
  // This column belongs to the new organization table, never the legacy sessions.
  if(!storage.sql.exec<{name:string}>('PRAGMA table_info(flora_org_state)').toArray().some(c=>c.name==='owner_reauth'))
   storage.sql.exec("ALTER TABLE flora_org_state ADD COLUMN owner_reauth TEXT NOT NULL DEFAULT '{}'");

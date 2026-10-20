@@ -12,6 +12,13 @@ export class OrgFixture {
   private env: FloraEnv;
   private heldFence: (()=>void)|undefined;
   private grant: import("../../src/contracts.js").AuthGrant|undefined;
+  private syncHoldAt=0;
+  private syncCalls=0;
+  private syncHeld=false;
+  private syncRelease:(()=>void)|undefined;
+  private readyFailure=false;
+  private loseOtaResponse=false;
+  private patchedAccess=new WeakSet<object>();
   private pointQueries=0;
   private dbGate:'read'|'batch-after'|null=null;
   private dbHeld=false;
@@ -25,16 +32,21 @@ export class OrgFixture {
   private releaseHash:(()=>void)|undefined;
   constructor(private ctx: DurableObjectState, env: FloraEnv) {
     this.env = {...env, ASSETS: {fetch: async () => new Response('fixture')} as unknown as FloraEnv['ASSETS']};
+    const sync=ctx.storage.sync.bind(ctx.storage);
+    ctx.storage.sync=async()=>{await sync();if(this.syncHoldAt&&++this.syncCalls===this.syncHoldAt){this.syncHoldAt=0;this.syncHeld=true;await new Promise<void>(resolve=>{this.syncRelease=resolve;});}};
     const db=env.FLORA_DB;
     const pause=async(kind:'read'|'batch-after')=>{if(this.dbGate!==kind)return;this.dbGate=null;this.dbHeld=true;await new Promise<void>(resolve=>{this.dbRelease=resolve;});};
-    const statement=(value:any):any=>new Proxy(value,{get:(target,key)=>{
-      if(key==='bind')return (...args:any[])=>statement(target.bind(...args));
-      const method=target[key];if(typeof method!=='function')return method;
-      return async(...args:any[])=>{const result=await method.apply(target,args);if(key==='first'||key==='all')await pause('read');return result;};
-    }});
+    const sqlByStatement=new WeakMap<object,string>();
+    const statement=(value:any,sql:string):any=>{
+      const proxy=new Proxy(value,{get:(target,key)=>{
+        if(key==='bind')return (...args:any[])=>statement(target.bind(...args),sql);
+        const method=target[key];if(typeof method!=='function')return method;
+        return async(...args:any[])=>{const result=await method.apply(target,args);if(key==='first'||key==='all')await pause('read');return result;};
+      }});sqlByStatement.set(proxy,sql);return proxy;
+    };
     this.env.FLORA_DB=new Proxy(db,{get:(target,key)=>{
-      if(key==='prepare')return (sql:string)=>{this.queries.push(sql);return statement(target.prepare(sql));};
-      if(key==='batch')return async(values:any[])=>{this.batches++;const result=await target.batch(values);await pause('batch-after');return result;};
+      if(key==='prepare')return (sql:string)=>{this.queries.push(sql);return statement(target.prepare(sql),sql);};
+      if(key==='batch')return async(values:any[])=>{this.batches++;const result=await target.batch(values);if(this.loseOtaResponse&&values.some(v=>/^\s*INSERT INTO automation_runners\b/i.test(sqlByStatement.get(v)??''))){this.loseOtaResponse=false;throw new Error('Synthetic committed response loss');}await pause('batch-after');return result;};
       const value=(target as any)[key];return typeof value==='function'?value.bind(target):value;
     }});
     const exec=ctx.storage.sql.exec.bind(ctx.storage.sql);
@@ -52,6 +64,11 @@ export class OrgFixture {
     if (path !== '/__test/control') return this.authority.fetch(request);
     const body = await request.json() as any;
     if(body.now!==undefined)clock=body.now;
+    if(body.action==='sync-hold'){this.syncHoldAt=body.at;this.syncCalls=0;return Response.json({ok:true});}
+    if(body.action==='sync-state')return Response.json({held:this.syncHeld});
+    if(body.action==='sync-release'){this.syncRelease?.();this.syncRelease=undefined;this.syncHeld=false;return Response.json({ok:true});}
+    if(body.action==='runner-ready-failure')this.readyFailure=body.enabled;
+    if(body.action==='runner-ota-response-loss')this.loseOtaResponse=body.enabled;
     if(body.action==='db-gate'){this.dbGate=body.kind;this.batches=0;this.queries=[];return Response.json({ok:true});}
     if(body.action==='db-state')return Response.json({held:this.dbHeld,batches:this.batches,queries:this.queries});
     if(body.action==='db-release'){this.dbRelease?.();this.dbRelease=undefined;this.dbHeld=false;return Response.json({ok:true});}
@@ -67,6 +84,9 @@ export class OrgFixture {
         Object.assign(this.env, body.env ?? {}); this.authority = new FloraAuth(this.ctx, this.env);
         await this.authority.fetch(new Request(this.env.FLORA_ORIGIN + '/api/auth/session'));
       }
+      const access=(this.authority as any).runnerAccess;
+      if(access&&!this.patchedAccess.has(access)){const finish=access.finishNative.bind(access);access.finishNative=(...args:any[])=>{if(this.readyFailure)throw new OrgFailure(503,'SYNTHETIC_PROOF_FAILURE');return finish(...args);};this.patchedAccess.add(access);}
+      if(body.action==='runner-service'){if(!access)throw new OrgFailure(503,'ORG_ACCESS_NOT_ACTIVE');access.assertService(body.ref,body.appId,body.platform,clock??realNow());return Response.json({ok:true});}
       if(body.action==='capture-management-grant'){this.pointQueries=0;const queries=this.queries.length;this.grant=await this.authority.requireSession(new Request(this.env.FLORA_ORIGIN+body.path,{headers:body.headers}));return Response.json({pointQueries:this.pointQueries,d1Reads:this.queries.length-queries});}
       if(body.action==='capture-grant'){this.grant=await this.authority.requireSession(new Request(this.env.FLORA_ORIGIN+'/api/auth/session',{headers:body.headers}));return Response.json({ok:true});}
       if(body.action==='assert-grant'){this.authority.assertCurrent(body.forged?{...this.grant!}:this.grant!);return Response.json({ok:true});}

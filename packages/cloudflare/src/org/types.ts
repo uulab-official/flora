@@ -16,7 +16,7 @@ export interface OrgMemberState {authSource:'legacy_owner'|'member';userId:strin
 export interface OrgPage<T>{items:T[];nextCursor:string|null}
 export interface MembershipInput {expectedRevision:number;role:Exclude<OrgRole,'owner'>;addAppIds:string[];removeAppIds:string[]}
 export interface InvitationInput {purpose:'invite'|'reset'|'reactivate';email:string;targetUserId?:string;expectedRevision:number;role?:Exclude<OrgRole,'owner'>;appIds?:string[]}
-export interface AuditIntent {id:string;actor:ActorRef;action:OrgAction;appId?:string;membershipRevision?:number;state:'pending'|'completed'|'rejected'|'unknown'}
+export interface AuditIntent {id:string;actor:ActorRef;action:OrgAction;appId?:string;membershipRevision?:number;requestId?:string;state:'pending'|'completed'|'rejected'|'unknown'}
 export class OrgFailure extends Error {constructor(readonly status:number,readonly code:string,readonly retryAfter?:number){super(code)}}
 export const defaultOrgLimits:Readonly<OrgLimits>=Object.freeze({metadataBytes:67_108_864,auditBytes:268_435_456});
 export function orgAssert(condition:unknown,status=403,code='FORBIDDEN'):asserts condition {if(!condition)throw new OrgFailure(status,code)}
@@ -31,3 +31,6 @@ export function normalizeOwnerEmail(value:string):string {return value.trim().to
 
 /** Preserve the exact pre-organization deployment identifier syntax from readConfig. */
 export function storageIdentity(value:unknown):asserts value is string {orgAssert(typeof value==='string'&&/^[A-Za-z0-9._:-]{1,256}$/.test(value),400,'INVALID_REQUEST')}
+
+export interface RunnerAccessRef {kind:RunnerKind;runnerId:string}
+export interface RunnerRequest {id:string;appId:string;kind:RunnerKind;name:string;platforms:('ios'|'android')[];requesterUserId:string;approverUserId:string|null;state:'pending'|'approved'|'issuing'|'claimed'|'revoked'|'unknown';revision:number;requestedAt:number;expiresAt:number;claimExpiresAt:number|null;runnerId:string|null}

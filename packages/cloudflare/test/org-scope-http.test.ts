@@ -35,7 +35,7 @@ test('all_management_routes_are_classified',async()=>{
   ['POST',base+'/signing-key','credential.manage',false],['GET',base+'/native','app.read',false],['POST',base+'/native/jobs','app.deploy',false],
   ['POST',base+'/native/runners','runner.organization',true],['POST',base+'/native/runners/runner_qa/revoke','runner.organization',true],['POST',base+'/native/jobs/job_qa/cancel','app.deploy',false],
   ['GET',base+'/automation','app.read',false],['GET',base+'/automation/jobs/job_qa','app.read',false],['POST',base+'/automation/jobs','app.deploy',false],['POST',base+'/automation/jobs/job_qa/cancel','app.deploy',false],
-  ['POST',base+'/automation/policy','app.manage',false],['GET',base+'/automation/ci','app.read',false],['POST',base+'/automation/ci','app.manage',false],
+  ['POST',base+'/automation/policy','app.manage',false],['GET',base+'/automation/ci','org.manage',true],['POST',base+'/automation/ci','org.manage',true],
   ['GET',base+'/ota/rollback-policy','app.read',false],['POST',base+'/ota/rollback-policy','app.manage',false],['POST',base+'/ota/rollback-installations','app.manage',false],
   ['POST',base+'/ota/verification','app.deploy',false],['POST','/api/runners','runner.organization',true],['POST','/api/runners/runner_qa/revoke','runner.organization',true],
   ['GET','/api/github/repositories','org.manage',true],['POST',base+'/future-dangerous-route','org.manage',true],
@@ -75,7 +75,7 @@ test('credential_metadata_is_role_scoped',async t=>{
 });
 test('github_search_is_owner_only',async t=>{
  const h=await harness(t,'admin');
- for(const path of ['/api/github/repositories?installationId=42','/api/github/installations','/api/github/connection'])assert.equal((await h.request(h.session,'GET',path)).status,403,path);
+ for(const path of ['/api/github/repositories?installationId=42','/api/github/installations','/api/github/connection','/api/apps/'+h.apps[0]+'/automation/ci'])assert.equal((await h.request(h.session,'GET',path)).status,403,path);
  assert.equal((await h.request(h.session,'POST','/api/apps/'+h.apps[0]+'/github',{})).status,403);
  assert.equal((await h.request(h.session,'POST','/api/runners',{})).status,403);
 });
