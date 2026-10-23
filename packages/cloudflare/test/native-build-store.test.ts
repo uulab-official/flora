@@ -143,6 +143,24 @@ test('pending retains native token purpose, revocation and owner epoch fences', 
   await h.ok({ action: 'revoke', appId: a.appId, runnerId: a.runner.id });
   assert.equal((await h.call({ action: 'pending', token: a.token })).status, 403);
 });
+test('queue indexes preserve FIFO ties and rebuild existing active cancellation leases', async t => {
+  const h = await harness(t), a = await h.setup();
+  const second = await h.ok({ action: 'enqueue', appId: a.appId, input: input('android', 'request_tie') });
+  for (const [job, id] of [[a.job, 'native_job_z_last'], [second, 'native_job_a_first']] as const)
+    await h.ok({ action: 'sql', sql: 'UPDATE flora_native_jobs SET id=?,data=? WHERE id=?', args: [id, JSON.stringify({ ...job, id, createdAt: 1 }), job.id] });
+  assert.deepEqual(await h.ok({ action: 'pending', token: a.token }), { jobId: 'native_job_a_first' });
+  const claim = await h.ok({ action: 'claim', token: a.token, jobId: 'native_job_a_first' });
+  const cancelled = await h.ok({ action: 'cancel', appId: a.appId, jobId: claim.job.id });
+  assert.equal(cancelled.state, 'cancel_requested');
+  // The fixture constructs the real store on each request. Recreate both
+  // indexes over existing queued and active rows, as an old DO upgrade would.
+  await h.ok({ action: 'sql', sql: 'DROP INDEX flora_native_jobs_pending; DROP INDEX flora_native_jobs_active_runner' });
+  assert.deepEqual(await h.ok({ action: 'pending', token: a.token }), { jobId: null });
+  await h.ok({ action: 'sql', sql: 'UPDATE flora_native_jobs SET data=? WHERE id=?', args: [JSON.stringify({ ...cancelled, lease: { ...cancelled.lease, expiresAt: 0 } }), cancelled.id] });
+  assert.deepEqual(await h.ok({ action: 'pending', token: a.token }), { jobId: 'native_job_z_last' });
+  const history = await h.ok({ action: 'sql', sql: 'SELECT data FROM flora_native_jobs WHERE id=?', args: [cancelled.id] });
+  assert.equal(JSON.parse(history[0].data).state, 'cancel_requested', 'pending must not rewrite expired history');
+});
 test('pending retires rotated credential pins without starving a newer valid approved job or another app', async t => {
   const h = await harness(t), a = await h.setup(), b = await h.setup('app_second');
   const beforeB = await h.ok({ action: 'list', appId: b.appId });

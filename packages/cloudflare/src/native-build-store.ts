@@ -20,6 +20,15 @@ export class NativeBuildStore {
       CREATE TABLE IF NOT EXISTS flora_native_events (id TEXT PRIMARY KEY, app_id TEXT NOT NULL, job_id TEXT NOT NULL, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS flora_native_credential_uses (id TEXT PRIMARY KEY, app_id TEXT NOT NULL, job_id TEXT NOT NULL, attempt_id TEXT NOT NULL, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS flora_native_completions (job_id TEXT PRIMARY KEY, app_id TEXT NOT NULL, lease_json TEXT NOT NULL, artifact_json TEXT NOT NULL)`);
+    // Idle polling must not reread completed history. These additive indexes
+    // preserve the queue's FIFO order and the existing active-lease predicates.
+    // Terminal jobs occupy neither index; existing stores are upgraded in place.
+    storage.sql.exec(`CREATE INDEX IF NOT EXISTS flora_native_jobs_pending
+      ON flora_native_jobs(app_id,json_extract(data,'$.platform'),json_extract(data,'$.createdAt'),id)
+      WHERE json_extract(data,'$.state')='queued'`);
+    storage.sql.exec(`CREATE INDEX IF NOT EXISTS flora_native_jobs_active_runner
+      ON flora_native_jobs(app_id,json_extract(data,'$.lease.runnerId'),json_extract(data,'$.lease.expiresAt'),id)
+      WHERE json_extract(data,'$.state') IN ('leased','cancel_requested')`);
   }
   private runner(runnerId: string): { ownerEpoch: number; value: NativeRunnerCredential } | null {
     const row = this.storage.sql.exec<{ owner_epoch: number; data: string }>('SELECT owner_epoch,data FROM flora_native_runners WHERE id=?', nativeId(runnerId)).toArray()[0];

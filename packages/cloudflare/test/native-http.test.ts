@@ -6,9 +6,10 @@ import { readFile } from 'node:fs/promises';
 import { createTestRuntime } from './runtime.ts';
 import { githubOTAFixture } from '../../../tests/github-ota-fixtures.ts';
 const origin = 'https://flora.example.test';
-async function harness(t: TestContext) {
+type SqlCost = { queries: number; rowsRead: number; rowsWritten: number; jobRows: number; authRows: number; indexRows: number; indexWrites: number };
+async function harness(t: TestContext, profileSql = false) {
   const appMap = new Map<string, string>(), github = githubOTAFixture(() => origin, appMap), token = randomBytes(32), password = randomBytes(24).toString('base64url'), now = Date.now();
-  const runtime = await createTestRuntime({ entrypoint: new URL('./fixtures/native-http-entry.ts', import.meta.url), durableObjects: { FLORA_AUTH: 'NativeHttpFixture' }, outboundService: github.respond,
+  const runtime = await createTestRuntime({ entrypoint: new URL(profileSql ? './fixtures/native-read-cost-entry.ts' : './fixtures/native-http-entry.ts', import.meta.url), durableObjects: { FLORA_AUTH: 'NativeHttpFixture' }, outboundService: github.respond,
     bindings: { FLORA_ORIGIN: origin, FLORA_OWNER_ID: 'synthetic-owner', FLORA_OWNER_EMAIL: 'owner@example.test', FLORA_DB_IDENTITY: 'synthetic-db',
       FLORA_GITHUB_APP_ID: github.credentials.appId, FLORA_GITHUB_PRIVATE_KEY: github.credentials.privateKey,
       FLORA_VAULT_KEYS: JSON.stringify({ active: 'v1', keys: { v1: randomBytes(32).toString('base64url') } }),
@@ -25,7 +26,7 @@ async function harness(t: TestContext) {
   // issuing another request; retain independent bodies for caller assertions.
   const complete = async (pending: ReturnType<typeof runtime.fetch>) => { const response = await pending; return new Response(await response.arrayBuffer(), { status: response.status, statusText: response.statusText, headers: [...response.headers.entries()] }); };
   const call = (path: string, input?: unknown, headers: Record<string, string> = {}) => complete(runtime.fetch(origin + path, { method: input === undefined ? 'GET' : 'POST', headers: { Cookie: cookie, ...(input === undefined ? {} : { Origin: origin, 'Content-Type': 'application/json', 'X-Flora-CSRF': csrf }), ...headers }, ...(input === undefined ? {} : { body: JSON.stringify(input) }) }));
-  const machine = (token: string, action: string, input: unknown) => complete(runtime.fetch(origin + '/api/native-runner/' + action, { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify(input) }));
+  const machine = (token: string, action: string, input: unknown) => complete(runtime.fetch(origin + '/api/native-runner/' + action, { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', ...(profileSql ? { 'X-Flora-Test-Measure-Sql': '1' } : {}) }, body: JSON.stringify(input) }));
   const apps: string[] = [];
   for (const repository of ['expo-one', 'rn-two']) {
     const r = await call('/api/apps', { name: repository, repositoryId: 'github:synthetic/' + repository, rootDirectory: '.' }); assert.equal(r.status, 201); const appId = (await r.json() as any).id; apps.push(appId); appMap.set(repository, appId);
@@ -35,6 +36,80 @@ async function harness(t: TestContext) {
   const queue = (appId: string, commitSha = 'a'.repeat(40)) => call(`/api/apps/${appId}/native/jobs`, { requestKey: 'request_qa', platform: 'android', commitSha, appIdentifier: 'app.synthetic', credentials: [{ kind: 'android_keystore', version: 1 }] });
   return { runtime, call, machine, apps, queue };
 }
+test('native idle HTTP polling does not scan completed job history or change authority checks', async t => {
+  const h = await harness(t, true), [a, b] = h.apps;
+  const runner = await (await h.call(`/api/apps/${a}/native/runners`, { name: 'Read cost QA', platform: 'android' })).json() as any;
+  const profile: Record<string, SqlCost> = {};
+  const measured = async (label: string, response: Response) => {
+    assert.equal(response.status, 200, await response.clone().text());
+    profile[label] = JSON.parse(response.headers.get('X-Flora-Test-Sql')!);
+    return response.json() as Promise<any>;
+  };
+  const pending = async (label: string) => assert.deepEqual(await measured(label, await h.machine(runner.token, 'pending', {})), { jobId: null });
+  await pending('empty');
+  const templates: any[] = [];
+  for (const [index, appId] of [a!, b!].entries()) {
+    const response = await h.queue(appId, (index ? 'b' : 'a').repeat(40));
+    assert.equal(response.status, 201, await response.clone().text());
+    templates.push(await response.json());
+  }
+  const literal = (value: string) => "'" + value.replaceAll("'", "''") + "'";
+  const seed = async (perApp: number) => {
+    const statements = ['DELETE FROM flora_native_jobs'];
+    for (const [appIndex, template] of templates.entries()) for (let i = 0; i < perApp; i++) {
+      const job = { ...template, id: `native_job_history_${appIndex}_${String(i).padStart(3, '0')}`, requestKey: `history_${i}`,
+        platform: i % 2 ? 'ios' : 'android', state: 'failed', code: 'NATIVE_BUILD_FAILED', lease: null, claimedAt: null };
+      statements.push(`INSERT INTO flora_native_jobs VALUES(${[job.id, job.appId, job.requestKey, JSON.stringify(job)].map(literal).join(',')})`);
+    }
+    for (let offset = 0; offset < statements.length; offset += 20) {
+      const response = await h.call('/__test/control', { sql: statements.slice(offset, offset + 20).join(';') });
+      assert.equal(response.status, 200, await response.text());
+    }
+  };
+  await seed(10); await pending('history20'); await pending('history20Repeat');
+  await seed(100); await pending('history200'); await pending('history200Repeat');
+  const snapshot = async () => (await h.call('/__test/control', { sql: 'SELECT * FROM flora_native_jobs ORDER BY id' })).json();
+  const beforeMigration = await snapshot();
+  assert.equal((await h.call('/__test/control', { sql: 'DROP INDEX IF EXISTS flora_native_jobs_pending; DROP INDEX IF EXISTS flora_native_jobs_active_runner' })).status, 200);
+  await pending('legacyHistory200');
+  await measured('upgrade', await h.call('/__test/native-restart', {}, { 'X-Flora-Test-Measure-Sql': '1' }));
+  await pending('upgradedHistory200');
+  await measured('restart', await h.call('/__test/native-restart', {}, { 'X-Flora-Test-Measure-Sql': '1' }));
+  await pending('restartedHistory200');
+  assert.deepEqual(await snapshot(), beforeMigration, 'additive upgrade and repeated polling preserve every historical row');
+  await measured('presence', await h.machine(runner.token, 'presence', {}));
+  await measured('presenceRepeat', await h.machine(runner.token, 'presence', {}));
+  await measured('session', await h.call('/api/auth/session', undefined, { 'X-Flora-Test-Measure-Sql': '1' }));
+  await measured('sessionRepeat', await h.call('/api/auth/session', undefined, { 'X-Flora-Test-Measure-Sql': '1' }));
+  await measured('historyList', await h.call(`/api/apps/${a}/native`, undefined, { 'X-Flora-Test-Measure-Sql': '1' }));
+  const queued = { ...templates[0], id: 'native_job_history_0_000', requestKey: 'history_0', state: 'queued' };
+  assert.equal((await h.call('/__test/control', { sql: `UPDATE flora_native_jobs SET data=${literal(JSON.stringify(queued))} WHERE id=${literal(queued.id)}` })).status, 200);
+  assert.deepEqual(await measured('queued', await h.machine(runner.token, 'pending', {})), { jobId: queued.id });
+  const claimed = await h.machine(runner.token, 'claim', { jobId: queued.id });
+  assert.equal(claimed.status, 201, await claimed.clone().text());
+  profile.claim = JSON.parse(claimed.headers.get('X-Flora-Test-Sql')!);
+  const { lease } = await claimed.json() as any;
+  await pending('active');
+  await measured('heartbeat', await h.machine(runner.token, 'heartbeat', { lease }));
+  assert.equal((await h.call(`/api/apps/${a}/native/jobs/${queued.id}/cancel`, {})).status, 200);
+  await pending('cancelRequested');
+  assert.equal((await measured('cancelled', await h.machine(runner.token, 'fail', { lease, code: 'CANCELLED' }))).state, 'cancelled');
+  await pending('afterCancellation');
+  t.diagnostic('Local workerd DO SQL counters (warm requests; D1 excluded): ' + JSON.stringify(profile));
+  const query = `EXPLAIN QUERY PLAN SELECT data FROM flora_native_jobs WHERE app_id=${literal(a!)} AND json_extract(data,'$.platform')='android' AND json_extract(data,'$.state')='queued' ORDER BY json_extract(data,'$.createdAt'),id LIMIT 100`;
+  const plan = await (await h.call('/__test/control', { sql: query })).json();
+  t.diagnostic('Queued job query plan: ' + JSON.stringify(plan));
+  for (const label of ['empty', 'history20', 'history20Repeat', 'history200', 'history200Repeat', 'upgradedHistory200', 'restartedHistory200']) {
+    assert.ok(profile[label]!.rowsRead <= 50, `${label}: idle pending must have bounded reads, got ${profile[label]!.rowsRead}`);
+    assert.equal(profile[label]!.rowsWritten, 0, label + ' must remain a read-only poll');
+    assert.equal(profile[label]!.authRows, profile.empty!.authRows, 'history size must not change authority checks');
+  }
+  assert.equal(profile.history200!.rowsRead, profile.history20!.rowsRead, 'completed history must not add idle reads');
+  assert.ok(profile.legacyHistory200!.rowsRead >= 200, 'same database without indexes must reproduce the historical scan');
+  assert.ok(profile.upgradedHistory200!.rowsRead < profile.legacyHistory200!.rowsRead / 5, 'upgrade must reduce the same idle request by at least 80%');
+  assert.equal(profile.restart!.indexWrites, 0, 'existing indexes must not be rebuilt on each constructor');
+  assert.equal(profile.presenceRepeat!.rowsWritten, 0, 'existing presence write coalescing must remain effective');
+});
 test('native HTTP flow binds GitHub commit, leaves OTA history untouched and requires separate native capability', async t => {
   const h = await harness(t), [a, b] = h.apps;
   const before = await (await h.call(`/api/apps/${a}/operations`)).json();
