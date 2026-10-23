@@ -9,11 +9,13 @@ export function measureMobileAppDensity(evidence) {
   assert.ok(evidence.scale === 1 && evidence.scrollY === 0, invalid);
   const { viewport, navigation, rows } = evidence;
   assert.ok(box(navigation) && navigation.x === 0 && navigation.width === viewport.width && navigation.height > 0 && navigation.y >= 0 && navigation.y < viewport.height, invalid);
-  assert.ok(Math.abs(navigation.y + navigation.height - viewport.height) < 0.01, invalid);
+  const topNavigation = navigation.y === 0;
+  assert.ok(topNavigation ? navigation.height < viewport.height : Math.abs(navigation.y + navigation.height - viewport.height) < 0.01, invalid);
   assert.ok(Array.isArray(rows) && rows.length > 0 && rows.length <= 100 && rows.every(box), invalid);
-  const visibleBottom = Math.min(viewport.height, navigation.y);
-  const completeVisibleRows = rows.filter(row => row.width > 0 && row.height > 0 && row.x >= 0 && row.y >= 0 && row.x + row.width <= viewport.width && row.y + row.height <= visibleBottom).length;
+  const visibleTop = topNavigation ? navigation.height : 0;
+  const visibleBottom = topNavigation ? viewport.height : Math.min(viewport.height, navigation.y);
+  const completeVisibleRows = rows.filter(row => row.width > 0 && row.height > 0 && row.x >= 0 && row.y >= visibleTop && row.x + row.width <= viewport.width && row.y + row.height <= visibleBottom).length;
   assert.ok(completeVisibleRows >= 4, `MOBILE_APP_DENSITY_REQUIRED: ${completeVisibleRows} complete rows`);
   return { viewport, scale: evidence.scale, scrollY: evidence.scrollY, firstRowY: rows[0].y,
-    navigationTop: navigation.y, visibleBottom, completeVisibleRows, minimumCompleteRows: 4 };
+    navigationTop: navigation.y, visibleTop, visibleBottom, completeVisibleRows, minimumCompleteRows: 4 };
 }

@@ -115,7 +115,7 @@ try {
       appDensity = measureMobileAppDensity({
         viewport: page.viewportSize(),
         ...await page.evaluate(() => ({ scale: window.visualViewport?.scale, scrollY: window.scrollY })),
-        navigation: await page.locator(".mobile-nav").boundingBox(),
+        navigation: await page.locator(".studio-topbar").boundingBox(),
         rows: await Promise.all(rows.map(row => row.boundingBox())),
       });
       checks.push("at-least-four-complete-mobile-app-rows");
@@ -139,10 +139,18 @@ try {
     await page.waitForFunction(() => document.getElementById("workspace")?.getAttribute("aria-busy") === "false" && document.getElementById("source-file")?.disabled === false);
   }
   async function navigate(page, view) {
-    const mobile = page.locator("#mobile-" + view);
-    await (await mobile.isVisible() ? mobile : page.locator("#nav-" + view)).click();
+    // Flavors and source evidence now share the selected project's source page.
+    const destination = { apps: "source", sources: "source", history: "activity", account: "settings" }[view];
+    assert.ok(destination, "KNOWN_CONSOLE_DESTINATION_REQUIRED");
+    const target = page.locator("#nav-" + (view === "apps" ? "sources" : view));
+    if (!await target.isVisible()) await page.locator("#sidebar-toggle").click();
+    await target.click();
+    await page.locator('body[data-admin-page="' + destination + '"]').waitFor();
     await page.locator("#view-" + view).waitFor({ state: "visible" });
-    for (const other of ["apps", "sources", "history", "account"].filter(value => value !== view)) assert.equal(await page.locator("#view-" + other).isHidden(), true);
+    for (const other of ["apps", "sources", "history", "account"]) {
+      const visible = destination === "source" ? ["apps", "sources"].includes(other) : other === view;
+      assert.equal(await page.locator("#view-" + other).isVisible(), visible);
+    }
   }
   async function mobileTargets(page, state, selectors) {
     assert.equal(page.viewportSize().width, 390, "MOBILE_VIEWPORT_REQUIRED");
@@ -154,6 +162,7 @@ try {
         if (!await control.isVisible() || !await control.isEnabled()) continue;
         await control.scrollIntoViewIfNeeded();
         const box = await control.boundingBox();
+        if (!box || box.width < 44 || box.height < 44) console.error("FLORA_HOSTED_QA_TARGET_FAILURE " + JSON.stringify({ state, selector, index, width: box?.width ?? null, height: box?.height ?? null }));
         assert.ok(box && box.width >= 44 && box.height >= 44, "MOBILE_TOUCH_TARGET_REQUIRED");
         // Trial clicks check real pointer actionability without toggling a
         // disclosure, changing a page or opening an import file chooser.
@@ -198,7 +207,7 @@ try {
               if (expired) return null;
               pointer = await page.evaluate(quad => {
                 const target = document.getElementById("flavor-row-sample-4"), visual = window.visualViewport;
-                const navigation = document.querySelector(".mobile-nav");
+                const navigation = document.querySelector(".studio-topbar");
                 if (!target || !visual || !Array.isArray(quad) || quad.length !== 8 || !quad.every(Number.isFinite)) return null;
                 const box = target.getBoundingClientRect(), nav = navigation?.getBoundingClientRect();
                 // Sample Playwright 1.58.2's layout-clipped quad candidate. This
@@ -339,6 +348,12 @@ try {
   async function uploadOutcome(page, kind, bytes) {
     await ready(page);
     if (kind === "baseline") await navigate(page, "history");
+    if (kind === "source") {
+      if (await page.locator("body").getAttribute("data-admin-page") !== "source") await navigate(page, "sources");
+      const disclosure = page.locator("#page-source .advanced-import");
+      if (!await disclosure.evaluate(node => node.open)) await disclosure.locator("summary").click();
+      await page.locator('label[for="source-file"]').waitFor({ state: "visible" });
+    }
     const pending = observeUpload(page, "/api/" + (kind === "source" ? "sources" : "baselines"));
     try {
       await page.locator("#" + kind + "-file").setInputFiles({ name: "synthetic-" + kind + ".json", mimeType: "application/json", buffer: bytes });
@@ -397,9 +412,23 @@ try {
   assert.equal((await first.context.cookies()).length, 0); checks.push("invalid-setup-rejected-by-authority");
 
   phase = "real-enrollment-and-empty-state";
-  assert.equal((await authenticate(page, true)).status(), 200); await page.waitForURL(harness.origin + "/"); await ready(page);
-  await page.getByText("첫 소스 snapshot을 가져오세요").waitFor(); await both(page, "empty");
+  assert.equal((await authenticate(page, true)).status(), 200); await page.waitForURL(harness.origin + "/onboarding"); await ready(page);
+  await page.locator("#page-onboarding").waitFor({ state: "visible" });
   const firstSession = await cookieProof(first.context, page); checks.push("real-scrypt-enrollment", "secure-httponly-strict-host-cookies", "no-browser-credential-storage");
+  phase = "register-synthetic-project-and-empty-source";
+  await page.goto(harness.origin + "/projects/new"); await ready(page);
+  await page.locator("#application-name").fill("Synthetic import project");
+  await page.locator("#application-repository").fill("repo_synthetic");
+  await page.locator("#application-root").fill(".");
+  const registeredResponse = page.waitForResponse(value => new URL(value.url()).pathname === "/api/apps" && value.request().method() === "POST");
+  await page.locator("#application-register").click(); const registration = await registeredResponse;
+  assert.equal(registration.status(), 201); const registered = await registration.json();
+  assert.equal(registered.repositoryId, "repo_synthetic"); assert.equal(registered.rootDirectory, ".");
+  assert.match(registered.id, /^[a-z][a-z0-9_-]{2,95}$/);
+  await page.waitForURL(harness.origin + "/apps/" + registered.id);
+  await page.goto(harness.origin + "/apps/" + registered.id + "/source"); await ready(page);
+  await page.locator("#empty").filter({ hasText: "프로젝트의 연결과 배포 상태를 확인하세요" }).waitFor(); await both(page, "empty");
+  checks.push("enrollment-enters-onboarding", "real-ui-project-registration-before-source-import");
   phase = "source-predispatch-abort-explicit-recovery";
   const sourceBytes = harness.source(), emptyState = await storedState(page);
   const beforeAbort = uploadPosts.source; abortNextSourceBeforeDispatch = true;
@@ -484,7 +513,8 @@ try {
   assert.equal(rows.length, 10);
   for (const row of rows) {
     assert.ok(row.includes("1.2.3") && row.includes("example/synthetic-app"));
-    assert.equal(row.match(/미연결/g)?.length, 3, "UNKNOWN_DEPLOYMENT_ERROR_REVENUE_REQUIRED");
+    assert.ok(row.includes("선택 앱 OTA에서 확인"), "DEPLOYMENT_SCOPE_REQUIRED");
+    assert.equal(row.match(/미연결/g)?.length, 2, "UNKNOWN_ERROR_REVENUE_REQUIRED");
   }
   await page.locator("#app-sort").selectOption("name-asc");
   checks.push("search-clear-and-empty-results", "source-filter-and-name-sort", "ten-row-flavor-pagination", "app-detail-selection-and-close", "declared-version-and-unknown-operations-metrics");
@@ -497,7 +527,7 @@ try {
   await page.locator("#baseline-history summary").focus();
   assert.equal(await page.locator("#baseline-history summary").evaluate(node => node === document.activeElement), true);
   await page.setViewportSize({ width: 390, height: 844 });
-  await mobileTargets(page, "history-disclosures-and-imports", ["#view-history summary", 'label[for="baseline-file"]', 'label[for="source-file"]']);
+  await mobileTargets(page, "history-disclosures-and-imports", ["#view-history summary", 'label[for="baseline-file"]']);
   await capture(page, "mobile-history");
   await navigate(page, "sources");
   await mobileTargets(page, "source-disclosure-and-controls", ["#view-sources summary", "#snapshot-select", 'label[for="source-file"]']);
@@ -509,7 +539,7 @@ try {
   phase = "mobile-twofold-page-scale";
   await twofoldPageScale(page, appButtons);
   phase = "approved-apps-reference-state";
-  // Exact approved interaction state, with the requested denser type/table:
+  // Retain the original flavor-table interaction state on the current source route:
   // eleven declared flavors, one source, one source-scoped imported baseline,
   // Sample App 4 selected, no search, ascending app name, and detail closed.
   await page.setViewportSize({ width: 1487, height: 1058 });
@@ -521,7 +551,12 @@ try {
   await page.locator('label[for="source-file"]').first().waitFor({ state: "visible" });
   await page.locator("#app-search").waitFor({ state: "visible" });
   await both(page, "apps");
-  await mobileTargets(page, "apps-navigation-and-rows", ["#mobile-apps", "#mobile-sources", "#mobile-history", "#mobile-account", '#app-rows button[id^="flavor-row-"]', "#app-rows .row-arrow"]);
+  await page.locator("#sidebar-toggle").click();
+  await mobileTargets(page, "apps-sidebar-navigation", ["#sidebar-toggle", "#nav-apps", "#nav-sources", "#nav-history", "#nav-account"]);
+  await page.locator("#sidebar-toggle").click();
+  await page.locator(".studio-sidebar").waitFor({ state: "hidden" });
+  assert.equal(await page.locator(".studio-sidebar").isVisible(), false);
+  await mobileTargets(page, "apps-rows", ['#app-rows button[id^="flavor-row-"]', "#app-rows .row-arrow"]);
   assert.equal(await page.locator('meta[name="viewport"]').getAttribute("content"), "width=device-width, initial-scale=1");
   checks.push("original-source-baseline-ui-upload", "eleven-flavors-one-source", "exact-baseline-envelope-digest", "lazy-log-fetch-and-keyboard-focus", "desktop-and-mobile-three-view-navigation", "measured-mobile-targets-and-actionability", "viewport-metadata-allows-user-scaling");
 
@@ -585,6 +620,7 @@ try {
   await second.page.locator("#auth-login-link").click(); assert.equal((await authenticate(second.page, false)).status(), 200);
   await second.page.waitForURL(harness.origin + "/"); await ready(second.page);
   const secondSession = await cookieProof(second.context, second.page); assert.notEqual(firstSession, secondSession);
+  await second.page.goto(harness.origin + "/apps/" + registered.id + "/source"); await ready(second.page);
   await navigate(second.page, "sources");
   assert.equal(await second.page.locator("#snapshot-select").inputValue(), newestId);
   await second.page.locator("#snapshot-next").click(); await ready(second.page);
@@ -602,7 +638,10 @@ try {
   logGate = createResponseGate(); logoutGate = createResponseGate();
   try {
     await page.locator("#baseline-history summary").first().click(); await logGate.entered;
-    await navigate(page, "account");
+    // Keep private history and the delayed response live until logout itself.
+    // Navigating to global settings would clear them before this assertion.
+    assert.ok((await page.locator("#history-scope").innerText()).includes("example/synthetic-app"));
+    assert.ok(await page.locator("#baseline-history .record").count() > 0);
     const logoutResponse = page.waitForResponse(response => new URL(response.url()).pathname === "/api/auth/logout");
     await page.locator("#logout-button").click(); await logoutGate.entered;
     // The real authority has revoked the session, but neither the logout
@@ -641,9 +680,10 @@ try {
     visualTarget: {
       desktop: { sha256: "87822d71c7531c20e038955642279c79eba9cf9bb8bc1c48b7560cc25086d813", width: 1487, height: 1058 },
       mobile: { sha256: "828923f82f1337aca78ee2eabb79c969c5083d8876362995b2d9430c886f7617", sourceWidth: 853, sourceHeight: 1844, viewportWidth: 390, viewportHeight: 844 },
-      state: "apps; 11 declared flavors; 1 source; 1 source-scoped baseline; Sample App 4 selected; detail closed; empty search; ascending app name; first page",
+      legacyReferences: true,
+      state: "selected project source; 11 declared flavors; 1 source; 1 source-scoped baseline; Sample App 4 selected; detail closed; empty search; ascending app name; first page",
       approvedRefinement: "13–14px body, minimum 12px auxiliary text, 20–22px heading, denser rows and unknown deployment/error/revenue comparisons",
-      referenceNormalization: "Mobile reference proportionally normalizes to 390×843; capture is 390×844. Density gate requires at least four complete mobile app rows above the fixed navigation.",
+      referenceNormalization: "Legacy mobile reference normalizes to 390×843; current capture is 390×844 with a topbar and sidebar drawer. The unchanged four-row minimum excludes topbar occlusion. Current pixels need review against the changed console structure.",
       pixelReview: "required after decoding; interaction assertions alone are not visual approval",
     },
     transport: "synthetic HTTPS interception via ordinary local HTTP into production Worker, SQLite DO and D1; real response cookies",

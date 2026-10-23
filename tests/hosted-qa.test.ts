@@ -108,12 +108,24 @@ const mobileDensity = (firstRowY = 418) => ({
 test("mobile density counts only complete rows above the fixed navigation", () => {
   assert.deepEqual(measureMobileAppDensity(mobileDensity(418)), {
     viewport: { width: 390, height: 844 }, scale: 1, scrollY: 0,
-    firstRowY: 418, navigationTop: 779, visibleBottom: 779, completeVisibleRows: 5, minimumCompleteRows: 4,
+    firstRowY: 418, navigationTop: 779, visibleTop: 0, visibleBottom: 779, completeVisibleRows: 5, minimumCompleteRows: 4,
   });
   assert.equal(measureMobileAppDensity(mobileDensity(507)).completeVisibleRows, 4);
   assert.throws(() => measureMobileAppDensity(mobileDensity(508)), /MOBILE_APP_DENSITY_REQUIRED: 3 complete rows/);
   // The reviewed defect: two full rows at y616, with row three under the nav.
   assert.throws(() => measureMobileAppDensity(mobileDensity(616)), /MOBILE_APP_DENSITY_REQUIRED: 2 complete rows/);
+});
+
+test("mobile density excludes rows occluded by the current fixed topbar without lowering the four-row minimum", () => {
+  const current = mobileDensity(64);
+  current.navigation = { x: 0, y: 0, width: 390, height: 64 };
+  assert.equal(measureMobileAppDensity(current).completeVisibleRows, 10);
+  current.rows = current.rows.slice(0, 4);
+  assert.equal(measureMobileAppDensity(current).completeVisibleRows, 4);
+  current.rows[0]!.y = 63;
+  assert.throws(() => measureMobileAppDensity(current), /MOBILE_APP_DENSITY_REQUIRED: 3/);
+  current.navigation.y = 1;
+  assert.throws(() => measureMobileAppDensity(current), /INVALID_MOBILE_DENSITY_EVIDENCE/);
 });
 
 test("mobile density excludes viewport clipping and hidden or zero-size rows", () => {

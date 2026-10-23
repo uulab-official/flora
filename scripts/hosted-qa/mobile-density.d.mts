@@ -5,6 +5,7 @@ export function measureMobileAppDensity(evidence: unknown): {
   scrollY: number;
   firstRowY: number;
   navigationTop: number;
+  visibleTop: number;
   visibleBottom: number;
   completeVisibleRows: number;
   minimumCompleteRows: number;
