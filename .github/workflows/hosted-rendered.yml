@@ -16,6 +16,7 @@ on:
       - 'packages/cloudflare/**'
       - 'tests/dogfood-fixtures.ts'
       - 'tests/hosted-qa.test.ts'
+      - 'tests/hosted-failure-diagnostic.test.ts'
       - 'scripts/build-cloudflare.mjs'
       - 'scripts/build-cloudflare.d.mts'
       - 'scripts/dashboard-qa/**'
@@ -54,7 +55,7 @@ jobs:
         run: |
           npm exec --yes --package=pnpm@11.19.0 -- pnpm build
           npm exec --yes --package=pnpm@11.19.0 -- pnpm typecheck
-          node scripts/test.mjs tests/hosted-qa.test.ts tests/dashboard-qa.test.ts
+          node scripts/test.mjs tests/hosted-qa.test.ts tests/hosted-failure-diagnostic.test.ts tests/dashboard-qa.test.ts
       - name: Install pinned development-only browser driver
         run: npm install --prefix "$RUNNER_TEMP/flora-hosted-qa-tools" --ignore-scripts --no-audit --no-fund --package-lock=false playwright@1.58.2
       - name: Prepare Korean fonts in the job temporary directory

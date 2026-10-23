@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createHostedQaHarness } from "./runtime.mjs";
+import { browserFailureDiagnostic } from "./failure-diagnostic.mjs";
 import { bridgeRequest, SYNTHETIC_ORIGIN } from "./transport.mjs";
 import { createResponseGate } from "./response-gate.mjs";
 import { observeUpload, uploadResetEvidence } from "./upload-outcome.mjs";
@@ -657,7 +658,8 @@ try {
     : /KOREAN_FONT_NOT_RENDERED|KOREAN_SAMPLE_REQUIRED/.test(message) ? "KOREAN_FONT_NOT_RENDERED"
     : /SCREENSHOT_BYTE_LIMIT|EVIDENCE_TOTAL_BYTE_LIMIT|INVALID_RENDER_EVIDENCE/.test(message) ? "EVIDENCE_LIMIT_OR_FORMAT"
     : error?.name === "TimeoutError" ? "BROWSER_TIMEOUT" : error?.name === "AssertionError" ? "ASSERTION_FAILED" : "CHECK_FAILED";
-  console.error("FLORA_HOSTED_QA_FAILURE " + phase + " " + reason); process.exitCode = 1;
+  console.error("FLORA_HOSTED_QA_FAILURE " + phase + " " + reason);
+  console.error("FLORA_HOSTED_QA_DIAGNOSTIC " + JSON.stringify(browserFailureDiagnostic(error))); process.exitCode = 1;
 } finally {
   clearTimeout(timeout);
   await browser?.close().catch(() => {}); await harness?.close().catch(() => {});
