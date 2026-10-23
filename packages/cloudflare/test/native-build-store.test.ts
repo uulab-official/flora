@@ -109,6 +109,46 @@ test('authoritative expiry rejects forged future lease and retains legacy histor
   for (const action of ['credentials', 'heartbeat']) assert.equal((await h.call({ action, token: a.token, lease: { ...claim.lease, expiresAt: Date.now() + 3600000 } })).status, 409);
   assert.equal((await h.ok({ action: 'list', appId: a.appId })).credentialUses.length, 0);
 });
+test('indexed claim preserves busy cancellation leases, expired leases and other-runner isolation', async t => {
+  const h = await harness(t), a = await h.setup(), first = await h.ok({ action: 'claim', token: a.token, jobId: a.job.id });
+  const next = await h.ok({ action: 'enqueue', appId: a.appId, input: input('android', 'request_second') });
+  const busy = async () => { const r = await h.call({ action: 'claim', token: a.token, jobId: next.id }); assert.equal(r.status, 409); assert.deepEqual(await r.json(), { error: 'NATIVE_RUNNER_BUSY' }); };
+  await busy(); await h.ok({ action: 'cancel', appId: a.appId, jobId: first.job.id }); await busy();
+  const other = await h.ok({ action: 'enroll', appId: a.appId, input: { name: 'Other runner', platform: 'android' } });
+  const otherClaim = await h.ok({ action: 'claim', token: other.token, jobId: next.id }); assert.equal(otherClaim.lease.runnerId, other.runner.id);
+  const later = await h.ok({ action: 'enqueue', appId: a.appId, input: input('android', 'request_third') });
+  const expired = { ...first.job, state: 'cancel_requested', lease: { ...first.lease, expiresAt: 0 } };
+  await h.ok({ action: 'sql', sql: 'UPDATE flora_native_jobs SET data=? WHERE id=?', args: [JSON.stringify(expired), expired.id] });
+  assert.equal((await h.ok({ action: 'claim', token: a.token, jobId: later.id })).lease.runnerId, a.runner.id);
+});
+test('indexed expiry preserves active jobs and foreign history, expires absolute deadlines once and keeps its authority fence', async t => {
+  const h = await harness(t), a = await h.setup(), b = await h.setup('app_second');
+  const first = await h.ok({ action: 'claim', token: a.token, jobId: a.job.id });
+  const samples = [
+    { id: 'native_job_expired', state: 'leased', claimedAt: Date.now(), lease: { ...first.lease, expiresAt: 0 } },
+    { id: 'native_job_cancel_expired', state: 'cancel_requested', claimedAt: Date.now(), lease: { ...first.lease, expiresAt: 0 } },
+    { id: 'native_job_deadline', state: 'leased', claimedAt: 0, lease: { ...first.lease, expiresAt: Number.MAX_SAFE_INTEGER } },
+    { id: 'native_job_terminal', state: 'failed', claimedAt: null, lease: null },
+  ];
+  for (const sample of samples) {
+    const job = { ...first.job, ...sample, requestKey: sample.id };
+    await h.ok({ action: 'sql', sql: 'INSERT INTO flora_native_jobs VALUES(?,?,?,?)', args: [job.id, a.appId, job.requestKey, JSON.stringify(job)] });
+  }
+  const foreign = { ...b.job, state: 'leased', claimedAt: 0, lease: { ...first.lease, expiresAt: 0 } };
+  await h.ok({ action: 'sql', sql: 'UPDATE flora_native_jobs SET data=? WHERE id=?', args: [JSON.stringify(foreign), foreign.id] });
+  assert.equal((await h.call({ action: 'list', appId: a.appId, revokeAt: 1 })).status, 401);
+  const untouched = await h.ok({ action: 'sql', sql: 'SELECT data FROM flora_native_jobs WHERE id=?', args: ['native_job_expired'] });
+  assert.equal(JSON.parse(untouched[0].data).state, 'leased');
+  const listed = await h.ok({ action: 'list', appId: a.appId }), byId = new Map(listed.jobs.map((job: any) => [job.id, job]));
+  assert.equal((byId.get(first.job.id) as any).state, 'leased');
+  assert.equal((byId.get('native_job_expired') as any).code, 'LEASE_EXPIRED');
+  assert.equal((byId.get('native_job_cancel_expired') as any).state, 'cancelled');
+  assert.equal((byId.get('native_job_deadline') as any).code, 'LEASE_EXPIRED');
+  assert.deepEqual(byId.get('native_job_terminal'), { ...first.job, ...samples[3], requestKey: 'native_job_terminal' });
+  const repeated = await h.ok({ action: 'list', appId: a.appId });
+  assert.deepEqual(repeated, listed); assert.equal(listed.events.filter((event: any) => event.action === 'expired').length, 3);
+  const other = await h.ok({ action: 'sql', sql: 'SELECT data FROM flora_native_jobs WHERE id=?', args: [foreign.id] }); assert.deepEqual(JSON.parse(other[0].data), foreign);
+});
 test('failed use-audit transaction releases no secret and terminal receipt retries reject changed artifacts', async t => {
   const h = await harness(t), a = await h.setup(), claim = await h.ok({ action: 'claim', token: a.token, jobId: a.job.id });
   await h.ok({ action: 'sql', sql: "CREATE TRIGGER reject_use BEFORE INSERT ON flora_native_credential_uses BEGIN SELECT RAISE(ABORT,'synthetic rejection'); END" });

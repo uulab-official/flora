@@ -24,7 +24,7 @@ export class NativeBuildFixture {
       if (body.action === 'disable') return Response.json(await vault.disable(body.appId, body.kind, body.version, 'synthetic-owner', fence));
       if (body.action === 'enroll') return Response.json(await store.enroll(body.appId, body.input, body.ownerEpoch ?? 1, fence));
       if (body.action === 'enqueue') return Response.json(await store.enqueue(body.appId, body.input, body.source ?? { owner: 'synthetic', repository: body.appId, ref: 'main', rootDirectory: '.', installationId: 42, connectionVersion: 1 }, fence));
-      if (body.action === 'list') return Response.json(store.list(body.appId));
+      if (body.action === 'list') return Response.json(store.list(body.appId, fence));
       if (body.action === 'cancel') return Response.json(store.cancel(body.appId, body.jobId, fence));
       if (body.action === 'revoke') return Response.json(store.revoke(body.appId, body.runnerId, fence));
       const authority = await store.authorize(body.token, body.ownerEpoch ?? 1, fence);

@@ -13,14 +13,19 @@ Native daemon은 기본 60초마다 각 앱·플랫폼의 `POST /api/native-runn
 `UNIQUE(app_id, request_key)` 인덱스는 앱 범위만 좁혀, 완료된 이력도 매번 읽었다.
 queued 검색은 정렬용 임시 B-tree도 사용했다.
 
-수정은 NativeBuildStore 생성자의 `CREATE INDEX IF NOT EXISTS` 두 개뿐이다.
+NativeBuildStore 생성자에 `CREATE INDEX IF NOT EXISTS` 두 개를 추가했다.
 
 - `flora_native_jobs_pending`: queued 행만 보관하며 앱·플랫폼·createdAt·id 순서를 지원한다.
 - `flora_native_jobs_active_runner`: leased/cancel_requested 행만 보관하며 앱·Runner·lease 만료 조건을 지원한다.
 
-SQL 조회 조건, FIFO 순서, 권한 fence, credential 검증, 세션 취소, Runner 조회 주기,
+후속 수정은 같은 active 인덱스를 사용해 두 번의 불필요한 이력 읽기를 줄인다.
+claim의 Runner 중복 실행 검사는 앱 전체 JSON을 읽는 대신 해당 Runner의 미만료 활성 작업 존재만 확인한다.
+목록 조회 전 expireStale은 만료 처리 대상인 leased/cancel_requested 작업만 읽는다.
+기존 lease 만료 및 2시간 실행 기한, 취소·실패 상태와 이벤트 기록 조건은 유지한다.
+
+FIFO 순서, 권한 fence, credential 검증, 세션 취소, Runner 조회 주기,
 heartbeat, 타임아웃은 변경하지 않는다. 완료 이력은 삭제하거나 다른 형식으로 바꾸지 않는다.
-인증 캐시는 도입하지 않는다. 작업 목록과 claim의 기존 넓은 조회도 이번 변경에 포함하지 않는다.
+인증 캐시는 도입하지 않는다. 작업 목록 자체의 이력 반환은 유지한다.
 
 ## 측정 방법과 결과
 
@@ -46,7 +51,18 @@ HTTP 처리 후 `rowsRead`와 `rowsWritten`을 합산한다. SQL 인자나 결�
 
 별도 수정 전후의 같은 논리 시나리오에서는 queued 조회가 230 → 29행이었다.
 세션 조회는 13행, presence는 첫 요청 17행/쓰기 1행, 직후 반복은 16행/쓰기 0행으로 유지됐다.
-작업 목록은 약 322~324행으로 남는다. 이는 이번 최적화가 해결하지 않는 비용이다.
+후속 쿼리 수정 전후, 동일한 논리 데이터와 HTTP 요청 시나리오의 측정은 다음과 같다.
+각 실행은 새 합성 DB를 사용하므로 앞의 동일 물리 DB 인덱스 비교와 구분한다.
+
+| 요청 | 인덱스만 적용 | 후속 쿼리 수정 | 인증 읽기 | 쓰기 |
+| --- | ---: | ---: | ---: | ---: |
+| claim | 122 | 22 | 14 → 14 | 4 → 4 |
+| 작업 목록 | 324 | 223 | 18 → 18 | 0 → 0 |
+| 유휴 pending | 21 | 21 | 17 → 17 | 0 → 0 |
+
+claim의 작업 읽기는 103 → 3행, 목록의 작업 읽기는 302 → 201행이었다.
+별도 실행의 무작위 ID 배치에 따라 1–2행 차이가 날 수 있다. 운영 계정의 감소율로 환산하지 않는다.
+목록은 요청한 작업과 이벤트를 계속 반환하므로 그 비용은 남는다.
 
 쓰기 비용도 구분한다. 합성 시나리오에서 claim은 3 → 4행, heartbeat는 1 → 2행 쓰기로 증가했다.
 기존 완료 이력 200건에 두 인덱스를 처음 만드는 비용은 402행 읽기·2행 쓰기였다.
@@ -57,6 +73,9 @@ queued/active 행이 있으면 최초 생성 쓰기 비용은 더 커질 수 있
 cancel_requested lease 차단, 만료 후 다음 작업 선택을 테스트한다.
 기존 테스트는 앱·플랫폼 격리, 철회·owner epoch, 본문 대기 중 철회,
 credential 회전, heartbeat·실행 취소 등을 계속 검증한다.
+후속 회귀 테스트는 같은 Runner의 leased/cancel_requested 충돌, 다른 Runner 배정,
+만료 lease, 절대 실행 기한, 타 앱·종료 이력 보존, 철회된 fence와 이벤트 중복 방지를 검증한다.
+클라이언트의 대기·재조회 시간을 늘리지 않았으므로 의도적인 작업 배정 지연은 추가하지 않았다.
 
 ## 재현
 

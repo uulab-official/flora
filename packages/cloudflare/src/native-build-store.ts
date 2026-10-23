@@ -49,7 +49,8 @@ export class NativeBuildStore {
     const now = Date.now();
     this.storage.transactionSync(() => {
       fence();
-      const jobs = this.storage.sql.exec<{ data: string }>('SELECT data FROM flora_native_jobs WHERE app_id=?', appId).toArray().map(row => JSON.parse(row.data) as NativeJob);
+      const jobs = this.storage.sql.exec<{ data: string }>(`SELECT data FROM flora_native_jobs WHERE app_id=?
+        AND json_extract(data,'$.state') IN ('leased','cancel_requested')`, appId).toArray().map(row => JSON.parse(row.data) as NativeJob);
       for (const job of jobs) if (job.lease && ['leased', 'cancel_requested'].includes(job.state)
         && (job.lease.expiresAt <= now || job.claimedAt !== null && job.claimedAt + attemptMs <= now)) {
         const cancelled = job.state === 'cancel_requested', next = this.save({ ...job, state: cancelled ? 'cancelled' : 'failed', lease: null,
@@ -146,8 +147,10 @@ export class NativeBuildStore {
     return this.storage.transactionSync(() => {
       fence(); const runner = this.assertAuthority(authority), job = this.getJob(runner.appId, jobId);
       nativeCheck(job && job.platform === runner.platform, 403, 'NATIVE_RUNNER_DENIED'); nativeCheck(job.state === 'queued', 409, 'NATIVE_JOB_CONFLICT'); this.vault.assertNativePins(job.appId, job);
-      const active = this.storage.sql.exec<{ data: string }>('SELECT data FROM flora_native_jobs WHERE app_id=?', runner.appId).toArray().map(row => JSON.parse(row.data) as NativeJob);
-      nativeCheck(!active.some(other => other.lease?.runnerId === runner.id && other.lease.expiresAt > Date.now() && ['leased', 'cancel_requested'].includes(other.state)), 409, 'NATIVE_RUNNER_BUSY');
+      const active = this.storage.sql.exec<{ id: string }>(`SELECT id FROM flora_native_jobs WHERE app_id=?
+        AND json_extract(data,'$.lease.runnerId')=? AND json_extract(data,'$.state') IN ('leased','cancel_requested')
+        AND json_extract(data,'$.lease.expiresAt')>? LIMIT 1`, runner.appId, runner.id, Date.now()).toArray()[0];
+      nativeCheck(!active, 409, 'NATIVE_RUNNER_BUSY');
       const now = Date.now(), lease: NativeLease = { jobId: job.id, appId: job.appId, platform: job.platform, runnerId: runner.id,
         attemptId: 'native_attempt_' + crypto.randomUUID(), credentialEpoch: runner.credentialEpoch, fence: 1, expiresAt: now + leaseMs };
       const claimed = this.save({ ...job, state: 'leased', lease, claimedAt: now, updatedAt: now }); this.event(claimed, 'claimed', runner.id); return { job: claimed, lease: copy(lease) };

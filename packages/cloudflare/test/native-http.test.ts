@@ -109,6 +109,8 @@ test('native idle HTTP polling does not scan completed job history or change aut
   assert.ok(profile.upgradedHistory200!.rowsRead < profile.legacyHistory200!.rowsRead / 5, 'upgrade must reduce the same idle request by at least 80%');
   assert.equal(profile.restart!.indexWrites, 0, 'existing indexes must not be rebuilt on each constructor');
   assert.equal(profile.presenceRepeat!.rowsWritten, 0, 'existing presence write coalescing must remain effective');
+  assert.ok(profile.claim!.rowsRead <= 50, 'claim must not scan completed job history to check runner occupancy');
+  assert.ok(profile.historyList!.rowsRead <= 230, 'listing may read returned history, but expiry must not reread terminal jobs');
 });
 test('native HTTP flow binds GitHub commit, leaves OTA history untouched and requires separate native capability', async t => {
   const h = await harness(t), [a, b] = h.apps;
@@ -123,7 +125,9 @@ test('native HTTP flow binds GitHub commit, leaves OTA history untouched and req
   const bState = await (await h.call(`/api/apps/${b}/native`)).json() as any; assert.equal(bState.jobs.length, 0); assert.equal(bState.credentialUses.length, 0);
   const done = await h.machine(enrollment.token, 'complete', { lease: leased.lease, artifact: { fileName: job.id + '.apk', sha256: 'c'.repeat(64), byteLength: 4321, appIdentifier: 'app.synthetic', platform: 'android', signerFingerprint: 'd'.repeat(64) } }); assert.equal(done.status, 200); assert.equal((await done.json() as any).artifactVerification, 'runner_reported');
   assert.deepEqual(await (await h.call(`/api/apps/${a}/operations`)).json(), before);
-  const ota = await h.runtime.fetch(origin + '/api/runner/presence', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + enrollment.token }, body: '{}' }); assert.equal(ota.status, 403); await ota.json();
+  // The denied POST intentionally leaves its body unread. Close that transport
+  // connection so its reset cannot become the following GET's outcome.
+  const ota = await h.runtime.fetch(origin + '/api/runner/presence', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + enrollment.token, Connection: 'close' }, body: '{}' }); assert.equal(ota.status, 403); await ota.json();
   const publicState = await (await h.call(`/api/apps/${a}/native`)).json(); assert.doesNotMatch(JSON.stringify(publicState), /tokenHash|fileBase64|sensitive-QA-password|synthetic-keystore/);
 });
 test('native management requires session and CSRF and token authentication precedes unread body admission', async t => {
