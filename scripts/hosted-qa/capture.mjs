@@ -317,6 +317,9 @@ try {
     checks.push("observed-cdp-twofold-page-scale-with-usable-controls");
   }
   async function authenticate(page, setup, token = harness.token) {
+    // Metadata bootstrap clears password fields before enabling submission.
+    // Wait for that boundary before filling, including after navigation.
+    await page.locator("#auth-submit:enabled").waitFor();
     await page.locator("#email").fill(harness.email); await page.locator("#password").fill(harness.password);
     if (setup) { await page.locator("#token").fill(token); await page.locator("#confirmation").fill(harness.password); }
     const response = page.waitForResponse(value => new URL(value.url()).pathname === "/api/auth/" + (setup ? "enroll" : "login"));
