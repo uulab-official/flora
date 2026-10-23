@@ -24,6 +24,14 @@ jobs:
         with:
           node-version: 24.19.0
       - run: node --version
+      - name: Pin npm beside the selected Node on every OS
+        run: >-
+          node --input-type=module -e
+          "import { execFileSync } from 'node:child_process';
+          import { dirname } from 'node:path';
+          import { resolveNpmCLI } from './scripts/pack-ota-sdk.mjs';
+          const prefix = process.platform === 'win32' ? dirname(process.execPath) : dirname(dirname(process.execPath));
+          execFileSync(process.execPath, [await resolveNpmCLI(), 'install', '--global', 'npm@10.9.8', '--ignore-scripts', '--prefix', prefix], { stdio: 'inherit' });"
       - run: npm --version
       - run: git --version
       - run: npm exec --yes --package=pnpm@11.19.0 -- pnpm --version
