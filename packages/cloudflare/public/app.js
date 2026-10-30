@@ -4,6 +4,7 @@ import { createOnboarding } from "./onboarding.js";
 import { createDeploymentDevices } from "./deployment-devices.js";
 import { createAutoRollback } from "./auto-rollback.js";
 import { createBuildProviderPanel } from "./build-provider-panel.js";
+import { appendNativeReceiptDownload } from "./native-artifact-receipt.js";
 import { ADMIN_PAGES, adminPath, parseAdminPath } from "./admin-routes.js";
 import { renderProjectRows, renderOperationalOverview, renderCompactOtaHistory, renderCompactAutomationJobs, renderWorkspaceStatus, technicalDetails, isValidSdkTelemetry } from "./project-views.js";
 const LABELS = { passed: "통과", failed: "실패", invalid: "증거 불충분", blocked: "차단됨", interrupted: "중단됨" };
@@ -355,6 +356,8 @@ export function createNativePanel(env, context) {
         card.append(cancel);
       }
       card.append(technicalDetails(document, [["작업", job.id], ["Commit", job.commitSha], ...(job.artifact ? [["산출물 SHA-256", job.artifact.sha256], ["서명자 SHA-256", job.artifact.signerFingerprint]] : [])]));
+      // App-scoped public metadata only; the actual binary stays on the Runner.
+      appendNativeReceiptDownload(document, card, context.appId(), job);
       node("native-jobs").append(card);
     }
     for (const runner of view.runners) {

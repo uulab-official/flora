@@ -52,3 +52,7 @@ Flora의 단일 소유자 셀프호스팅 콘솔에서 **앱 → 네이티브 �
 연결된 앱의 GitHub owner/repository와 소스 동기화로 확인한 40자리 commit SHA가 있으면, 빌드 Provider의 **GitHub Actions** 화면에서 해당 비공개 저장소의 Actions 링크를 제공합니다. 화면은 외부 GitHub 저장소의 run/상태/Artifact API를 읽지 않으며, GitHub의 비공개 저장소 로그인 권한으로 직접 실행 페이지에서 다운로드해야 합니다.
 
 Actions ZIP을 직접 압축 해제한 뒤 **검증 명령 복사**로 본인 PC에서 SHA-256 검사를 수행할 수 있습니다. 정확한 Run ID를 확인한 뒤 선택 입력으로 붙이기를 권장합니다. 이 결과는 파일 무결성만 의미하며, GitHub의 서명 증명이나 스토어 배포·기기 OTA 성공을 의미하지 않습니다. [오프라인 검증 안내](github-native-artifact-integrity.ko.md)를 참고하세요.
+
+## Native Runner 영수증·파일 검증
+
+자체 PC Runner에서 실제 빌드하고 서명된 APK/AAB/IPA의 성공 Job에는 **검증 영수증 JSON 받기** 링크가 표시됩니다. 바이너리는 사용자 PC에 그대로 남으며 Flora에 업로드되지 않습니다. 다운로드한 영수증과 해당 PC의 바이너리를 한 폴더에 두고 [로컬 SHA-256 검증](native-artifact-integrity.ko.md)을 실행합니다. `runnerReported: true`는 Runner 보고이며, 플랫폼 서명이나 실제 기기 OTA 적용을 독립 검증한 것이 아닙니다.
