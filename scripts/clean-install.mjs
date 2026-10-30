@@ -60,10 +60,17 @@ function run(command, args, cwd, env) {
     maxBuffer: 8 * 1024 * 1024,
     shell: false,
   });
-  if (result.error || result.status !== 0)
-    throw Error(
-      (result.stderr || result.stdout || "COMMAND_FAILED").slice(-12000),
-    );
+  if (result.error || result.status !== 0) {
+    // pnpm writes script headers to stderr, while Node's actual test failures
+    // are on stdout. Using `stderr || stdout` masked CI failures for 7 minutes.
+    // This is a clean, synthetic test workspace: emit bounded diagnostics only
+    // on failure, without logging environment values or command arguments.
+    const output = typeof result.stdout === "string" ? result.stdout.slice(-20000) : "";
+    const errors = typeof result.stderr === "string" ? result.stderr.slice(-2000) : "";
+    throw Error("CLEAN_INSTALL_SUBPROCESS_FAILED status=" + String(result.status ?? "signal") +
+      (result.error ? " exec=" + String(result.error.code ?? "unknown") : "") +
+      "\\nSTDOUT_TAIL:\\n" + output + "\\nSTDERR_TAIL:\\n" + errors);
+  }
   return result.stdout;
 }
 export async function verifyClean() {
