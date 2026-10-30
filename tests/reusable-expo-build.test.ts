@@ -46,11 +46,12 @@ test("sample caller is manual-only, scoped and requires pinning the reviewed Flo
 });
 
 test("example native builder rejects invalid targets and unsigned Android production before compilation", () => {
-  for (const [platform, profile, error] of [
+  const invalidCases: Array<[string, string, string]> = [
     ["web", "preview", "FLORA_TARGET_INVALID"],
     ["android", "staging", "FLORA_TARGET_INVALID"],
     ["android", "production", "FLORA_ANDROID_PRODUCTION_SIGNING_REQUIRED"],
-  ]) {
+  ];
+  for (const [platform, profile, error] of invalidCases) {
     const run = spawnSync(process.execPath, [resolve(helper), platform], {
       encoding: "utf8", env: { ...process.env, FLORA_PROFILE: profile }
     });
