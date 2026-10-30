@@ -1,6 +1,9 @@
 name: Foundation checks
+# Avoid running the same expensive OS matrix twice on every feature-branch
+# push. Main pushes and pull requests remain fully tested.
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 permissions:
