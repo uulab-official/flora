@@ -13,6 +13,8 @@ GitHub push → Flora's app-scoped policy and job queue → Docker export on you
 
 Flora is currently a single-owner self-hosting preview. The SDK is not published to npm. A local CLI and authenticated web wizard guide initial installation. This guide uses **D1 asset storage and an independent PC Runner**. It does not assume UULab's dedicated GitHub Release repository or LaunchAgent is a general installation feature.
 
+> **Optional GitHub Actions native-build MVP:** private Expo repositories can call Flora's public reusable Workflow to compile Android preview APKs or signed iOS IPAs. The private caller owns the run and its quota. Hosted one-click builds and multi-user SaaS are not yet supported. [Private caller guide (Korean)](docs/development/reusable-expo-build.ko.md) · [Multi-tenant plan](docs/architecture/hosted-multitenant-build-ota.md)
+
 ## Follow the path to your first OTA
 
 | Step | Completion check |
