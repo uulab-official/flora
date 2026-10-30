@@ -22,3 +22,15 @@ export interface SdkTelemetry { source: "sdk-self-report"; observedInstallations
 export function isValidSdkTelemetry(value: unknown, platform: string): boolean;
 
 export function isValidSdkIssueResolution(value: unknown): boolean;
+
+export type BuildProviderKind = "flora-native" | "local-script" | "github-hosted" | "github-selfhosted" | "expo-eas" | "codemagic" | "bitrise";
+export interface BuildProviderPreview {
+  key: BuildProviderKind; title: string; execution: "local-pc" | "github-actions" | "external";
+  intro: string; guidance: string; command: string; docs: string; usable: boolean;
+}
+export const BUILD_PROVIDER_OPTIONS: Readonly<Record<BuildProviderKind, { label: string; execution: BuildProviderPreview["execution"] }>>;
+export function buildProviderPreview(value: string, platform: string, profile: string): BuildProviderPreview | null;
+export function createBuildProviderConsole(
+  env: { document: Document; navigator?: { clipboard?: { writeText(command: string): Promise<void> } } },
+  context: { appId(): string | null; ready(): boolean }
+): { render(): BuildProviderPreview | null; clear(): void };
