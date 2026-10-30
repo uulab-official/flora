@@ -58,7 +58,7 @@ export function selectedAndroidTask(profile) {
   // reviewed signing script to produce a store-uploadable production AAB.
   if (profile === 'production') throw new Error('FLORA_ANDROID_PRODUCTION_SIGNING_REQUIRED');
   if (profile !== 'preview') throw new Error('FLORA_TARGET_INVALID');
-  return 'assembleRelease';
+  return 'assembleDebug';
 }
 function androidBuild(root, profile) {
   const task = selectedAndroidTask(profile);
@@ -68,7 +68,7 @@ function androidBuild(root, profile) {
   chmodSync(gradle, statSync(gradle).mode | 0o100);
   execute(gradle, [task, '--no-daemon'], join(root, 'android'));
   const output = join(root, 'android', 'app', 'build', 'outputs', 'apk');
-  const files = listArtifacts(output, '.apk').filter(file => /(^|[/\\])release([/\\]|$)/i.test(file));
+  const files = listArtifacts(output, '.apk').filter(file => /(^|[/\\])debug([/\\]|$)/i.test(file));
   stage(root, files);
 }
 function iosBuild(root) {
