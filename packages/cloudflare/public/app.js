@@ -4,7 +4,7 @@ import { createOnboarding } from "./onboarding.js";
 import { createDeploymentDevices } from "./deployment-devices.js";
 import { createAutoRollback } from "./auto-rollback.js";
 import { ADMIN_PAGES, adminPath, parseAdminPath } from "./admin-routes.js";
-import { renderProjectRows, renderOperationalOverview, renderCompactOtaHistory, renderCompactAutomationJobs, renderWorkspaceStatus, technicalDetails, isValidSdkTelemetry } from "./project-views.js";
+import { renderProjectRows, renderOperationalOverview, renderCompactOtaHistory, renderCompactAutomationJobs, renderWorkspaceStatus, technicalDetails, isValidSdkTelemetry, createBuildProviderConsole } from "./project-views.js";
 const LABELS = { passed: "통과", failed: "실패", invalid: "증거 불충분", blocked: "차단됨", interrupted: "중단됨" };
 const PRIVATE_FIELDS = ["app-name", "freshness", "snapshot-select", "snapshot-page", "source-meta", "trust-note", "source-details", "flavor-count", "flavor-select", "flavor-detail", "runtime", "profile", "provider", "history-page", "baseline-history", "empty", "app-count", "source-count", "app-rows", "app-pagination", "app-page-number", "app-search", "app-source-filter", "mobile-source-name", "mobile-flavor-count", "detail-title", "history-scope", "recent-history"];
 function safe(value, max = 2048) {
@@ -448,6 +448,7 @@ export async function startClient(env) {
   const requests = new Set(); const logs = new Map();
   const credentialsPanel = createCredentialPanel(env, { appId: () => selectedAppId, appName: () => data?.selectedApplication?.name, active, ready: () => !closed && Boolean(csrf) && !busy && !reading && active(), api, expire });
   const nativePanel = createNativePanel(env, { appId: () => selectedAppId, appName: () => data?.selectedApplication?.name, commitSha: () => operationsAppId === selectedAppId ? currentDetection(operations)?.commitSha : null, active, ready: () => !closed && Boolean(csrf) && !busy && !reading && active(), api, expire });
+  const buildProviderConsole = createBuildProviderConsole(env, { appId: () => selectedAppId, ready: () => !closed && Boolean(csrf) });
   const deploymentDevices = createDeploymentDevices(env, { route: () => currentRoute, active: () => !closed && Boolean(csrf) && active(), api, expire });
   const autoRollback = createAutoRollback(env, { route: () => currentRoute, active: () => !closed && Boolean(csrf) && active(), api, expire });
   let wizardPolling = false;
@@ -504,7 +505,7 @@ export async function startClient(env) {
   }
   function erase(preserveProjects = false) {
     stopProjectsPoll(); projectEpoch++; if (!preserveProjects) { projectSummary = null; projectStatus = "loading"; projectLastAttempt = -Infinity; node("workspace-status")?.replaceChildren(); } projectLoading = false; node("project-summary-status")?.replaceChildren();
-    credentialsPanel.clear(); nativePanel.clear(); deploymentDevices.clear(); autoRollback.clear(); onboardingPanel.leave();
+    credentialsPanel.clear(); nativePanel.clear(); buildProviderConsole.clear(); deploymentDevices.clear(); autoRollback.clear(); onboardingPanel.leave();
     ciBinding = null; ciAppId = null; ciKnown = false; ciIdentity = null; ciEpoch++; ciConflict = false; clearCI(document);
     githubCallback = null; githubEpoch++; githubInstallations = []; githubRepositories = []; githubCursor = null; githubSelection = null; githubRepositoryPages = 0;
     for (const id of ["github-installation-select", "github-repository-select", "github-managed-status", "github-repository-scope", "github-repository-count", "signing-key-status"]) node(id)?.replaceChildren();
@@ -594,6 +595,7 @@ export async function startClient(env) {
   function renderRoute(focus = false) {
     const meta = ADMIN_PAGES[currentRoute.page];
     const appReady = Boolean(currentRoute.appId && data?.selectedApplication?.id === currentRoute.appId);
+    buildProviderConsole.render();
     document.body.setAttribute("data-admin-page", currentRoute.page);
     document.title = `${meta.title}${appReady ? " · " + safe(data.selectedApplication.name) : ""} · Flora`;
     node("view-title").textContent = meta.title; node("view-label").textContent = appReady ? `${safe(data.selectedApplication.name)} / ${meta.title}` : meta.title; node("view-description").textContent = meta.description;
