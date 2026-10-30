@@ -398,6 +398,7 @@ try {
 
   phase = "real-enrollment-and-empty-state";
   assert.equal((await authenticate(page, true)).status(), 200);
+  // Subphase markers reveal no account details or credentials.
   phase = "real-enrollment-navigation";
   await page.waitForURL(harness.origin + "/");
   phase = "real-enrollment-workspace";
