@@ -96,10 +96,27 @@ export function summarizeOtaPublications(appId, result) {
     android: items.filter(item => item.platform === "android").length };
 }
 
+/** Verified app-specific GitHub source. No token or remote API access is used. */
+export function linkedGithubBuild(appId, connection, commitSha) {
+  const owner = connection?.owner, repository = connection?.repository;
+  if (!scopedId(appId) || connection?.appId !== appId ||
+      typeof owner !== "string" || typeof repository !== "string" ||
+      !/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/.test(owner) ||
+      !/^[A-Za-z0-9_.-]{1,100}$/.test(repository) ||
+      ["..", "."].includes(repository) || repository.endsWith(".lock") ||
+      typeof commitSha !== "string" || !/^[a-f0-9]{40}$/.test(commitSha)) return null;
+  const fullName = owner + "/" + repository;
+  return {
+    appId, repository: fullName, commitSha,
+    actionsUrl: "https://github.com/" + fullName + "/actions",
+    verifyCommand: "node /PATH/TO/FLORA/packages/cli/dist/main.js builds verify --dir /PATH/TO/EXTRACTED-ARTIFACT --repository " + fullName + " --commit " + commitSha,
+  };
+}
+
 /** The selected app is an authority boundary for display and callbacks. */
 export function createBuildProviderPanel(env, context) {
   const node = id => env.document.getElementById(id);
-  let app = null, native = null, ota = null, selection = "flora-pc-native", notice = "";
+  let app = null, native = null, ota = null, github = null, selection = "flora-pc-native", notice = "";
   const current = () => context.active() && scopedId(app) && app === context.appId();
   function render() {
     const authorized = current();
@@ -123,6 +140,17 @@ export function createBuildProviderPanel(env, context) {
     const link = node("build-provider-docs");
     if (authorized) { link.setAttribute("href", DOC); link.hidden = false; }
     else { link.hidden = true; link.removeAttribute("href"); }
+    const githubLink = node("build-provider-github-actions");
+    const verify = node("build-provider-verify-command");
+    const verifierCopy = node("build-provider-verify-copy");
+    const githubReady = authorized && selection === "github-actions-native" && github?.appId === app;
+    if (githubReady) githubLink.setAttribute("href", github.actionsUrl);
+    else githubLink.removeAttribute("href");
+    githubLink.hidden = !githubReady;
+    verify.hidden = !githubReady;
+    verify.textContent = githubReady ? github.verifyCommand : "";
+    verifierCopy.hidden = !githubReady;
+    verifierCopy.disabled = !githubReady;
     const otaText = node("build-provider-ota-summary");
     otaText.hidden = !authorized;
     otaText.textContent = authorized ? ota?.appId === app ?
@@ -143,11 +171,11 @@ export function createBuildProviderPanel(env, context) {
   }
   function open(nextApp) {
     if (!scopedId(nextApp) || !context.active() || nextApp !== context.appId()) { clear(); return; }
-    if (app !== nextApp) { app = nextApp; native = null; ota = null; selection = "flora-pc-native"; notice = ""; }
+    if (app !== nextApp) { app = nextApp; native = null; ota = null; github = null; selection = "flora-pc-native"; notice = ""; }
     render();
   }
   function clear() {
-    app = null; native = null; ota = null; selection = "flora-pc-native"; notice = ""; render();
+    app = null; native = null; ota = null; github = null; selection = "flora-pc-native"; notice = ""; render();
   }
   function setNativeView(nextApp, view) {
     if (!current() || nextApp !== app) return false;
@@ -159,6 +187,24 @@ export function createBuildProviderPanel(env, context) {
     if (!current() || nextApp !== app) return false;
     try { ota = summarizeOtaPublications(nextApp, result); } catch { ota = null; }
     render(); return Boolean(ota);
+  }
+  function setGithubSource(nextApp, connection, commitSha) {
+    if (!current() || nextApp !== app) return false;
+    github = linkedGithubBuild(nextApp, connection, commitSha);
+    render(); return Boolean(github);
+  }
+  async function copyVerifier() {
+    if (!current() || selection !== "github-actions-native" || github?.appId !== app) return false;
+    const sourceApp = app, source = github.verifyCommand;
+    try {
+      if (typeof env.navigator?.clipboard?.writeText !== "function") return false;
+      await env.navigator.clipboard.writeText(source);
+      if (current() && app === sourceApp && selection === "github-actions-native") {
+        notice = "검증 명령을 복사했습니다. GitHub Actions의 실제 Run에서 ZIP을 내려받아 로컬에서 실행하세요. SHA-256은 서명 증명이 아닙니다.";
+        render();
+      }
+      return true;
+    } catch { return false; }
   }
   function select(id) {
     if (!current() || !OPTIONS.some(item => item.id === id)) { if (current()) render(); return false; }
@@ -188,9 +234,10 @@ export function createBuildProviderPanel(env, context) {
   }
   node("build-provider-select").addEventListener("change", event => select(event?.target?.value));
   node("build-provider-copy").addEventListener("click", () => { void copy(); });
+  node("build-provider-verify-copy").addEventListener("click", () => { void copyVerifier(); });
   node("build-provider-native").addEventListener("click", nativeForm);
   node("build-provider-runners").addEventListener("click", () => { void go("runners"); });
   node("build-provider-ota").addEventListener("click", () => { void go("ota"); });
   clear();
-  return { open, clear, setNativeView, setOTAView, select, copy, go, state: () => ({ appId: app, selection, native, ota }) };
+  return { open, clear, setNativeView, setOTAView, setGithubSource, select, copy, copyVerifier, go, state: () => ({ appId: app, selection, native, ota, github }) };
 }
