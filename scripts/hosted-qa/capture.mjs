@@ -537,7 +537,10 @@ try {
   assert.equal(rows.length, 10);
   for (const row of rows) {
     assert.ok(row.includes("1.2.3") && row.includes("example/synthetic-app"));
-    assert.equal(row.match(/미연결/g)?.length, 3, "UNKNOWN_DEPLOYMENT_ERROR_REVENUE_REQUIRED");
+    // The current app table links deployment status to the selected app OTA
+    // rather than pretending that the snapshot itself knows deployment health.
+    assert.ok(row.includes("선택 앱 OTA에서 확인"), "DEPLOYMENT_NOT_INFERRED_FROM_SNAPSHOT");
+    assert.equal(row.match(/미연결/g)?.length, 2, "UNKNOWN_ERROR_AND_REVENUE_REQUIRED");
   }
   await page.locator("#app-sort").selectOption("name-asc");
   checks.push("search-clear-and-empty-results", "source-filter-and-name-sort", "ten-row-flavor-pagination", "app-detail-selection-and-close", "declared-version-and-unknown-operations-metrics");
