@@ -10,6 +10,11 @@ on:
         type: choice
         required: true
         options: [android, ios]
+      runner-type:
+        description: Compute location (self-hosted labels flora-android or flora-ios)
+        type: choice
+        required: true
+        options: [github-hosted, self-hosted]
       profile:
         description: Build profile
         type: choice
@@ -24,6 +29,7 @@ jobs:
     with:
       platform: ${{ inputs.platform }}
       profile: ${{ inputs.profile }}
+      runner-type: ${{ inputs.runner-type }}
       project-directory: .
       install-directory: .
       node-version: '24.19.0'
