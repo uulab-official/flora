@@ -4,7 +4,7 @@ export interface BuildProviderHelp { description: string; status: string; comman
 export interface NativeBuildView {
   appId: string;
   runners: Array<{ appId: string; revokedAt: number | null; lastSeenAt?: number | null }>;
-  jobs: Array<{ appId: string; platform: "ios" | "android"; state: string; artifact?: { fileName: string; sha256: string } }>;
+  jobs: Array<{ appId: string; platform: string; state: string; artifact?: { fileName: string; sha256: string } }>;
 }
 export interface NativeBuildSummary {
   appId: string;
