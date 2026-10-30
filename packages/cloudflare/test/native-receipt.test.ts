@@ -33,12 +33,12 @@ test("any foreign app, incomplete receipt or unsafe platform filename fails clos
   assert.equal(createNativePublicReceipt(appId,{...build,artifactVerification:null}),null);
   assert.equal(createNativePublicReceipt(appId,{...build,commitSha:"bad"}),null);
   assert.equal(createNativePublicReceipt(appId,{...build,artifact:{...build.artifact,fileName:"../secret.aab"}}),null);
-  assert.equal(createNativePublicReceipt(appId,{...build,artifact:{...build.artifact,platform:"ios"}}),null);
+  assert.equal(createNativePublicReceipt(appId,{...build,artifact:{...build.artifact,platform:"ios" as const}}),null);
   assert.equal(createNativePublicReceipt(appId,{...build,artifact:{...build.artifact,byteLength:0}}),null);
   assert.equal(createNativePublicReceipt(appId,{...build,artifact:{...build.artifact,sha256:"bad"}}),null);
 });
 test("iOS reports optional public Team ID but never accepts it for Android",()=>{
-  const ios={...build,platform:"ios",artifact:{...build.artifact,platform:"ios",fileName:"sample.ipa",teamId:"ABCDE12345"}};
+  const ios={...build,platform:"ios",artifact:{...build.artifact,platform:"ios" as const,fileName:"sample.ipa",teamId:"ABCDE12345"}};
   const receipt=createNativePublicReceipt(appId,ios);
   assert.ok(receipt);
   assert.equal(JSON.parse(receipt).artifact.teamId,"ABCDE12345");
