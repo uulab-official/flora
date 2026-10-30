@@ -39,7 +39,7 @@ const builtIns: readonly IntegrationProvider[] = Object.freeze([
     ["build"], ["ios", "android"], "runner-token", "docs/development/native-build-signing.ko.md"),
   descriptor("github-actions-native", "GitHub Actions private caller", "github-actions", "workflow-template",
     ["build"], ["ios", "android"], "none", "docs/development/reusable-expo-build.ko.md"),
-  descriptor("expo-eas", "Expo EAS (future adapter)", "external-api", "planned",
+  descriptor("expo-eas", "Expo EAS (local CLI adapter)", "external-api", "manual-setup",
     ["build", "ota.publish"], ["ios", "android"], "user-api-key", "docs/development/build-provider-options.ko.md"),
   descriptor("codemagic", "Codemagic (local CLI API adapter)", "external-api", "manual-setup",
     ["build"], ["ios", "android"], "user-api-key", "docs/development/build-provider-options.ko.md"),
