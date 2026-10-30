@@ -66,6 +66,31 @@ test('credential deep link selects its app before private reads and restores on 
 
 test('every management page has one visible wrapper and app details exclude the project list',async()=>{const s=await setup();for(const page of Object.keys(ADMIN_PAGES)){await s.client.navigate(page==='ota-detail'?adminPath(page,'app_a',deployment)!:page,'app_a');visiblePage(s,page);assert.equal(s.location.pathname,adminPath(page,'app_a',deployment));if(!['projects','register','settings'].includes(page))assert.equal(s.document.getElementById('application-panel').hidden,true);}s.client.close();});
 
+test('native builds deep link keeps provider, Runner and OTA summaries bound to the selected app',async()=>{
+  const s=await setup('/apps/app_a/builds',url=>url==='/api/apps/app_a/native'?response({
+    appId:'app_a',credentialUses:[],events:[],
+    runners:[{appId:'app_a',id:'native_runner_a',name:'Owned Mac',platform:'ios',revokedAt:null,lastSeenAt:at}],
+    jobs:[{appId:'app_a',id:'native_job_a',platform:'ios',state:'succeeded',appIdentifier:'kr.co.test.a',createdAt:at,
+      artifact:{fileName:'app-a.ipa',sha256:'b'.repeat(64),signerFingerprint:'c'.repeat(64)}}],
+  }):undefined);
+  visiblePage(s,'builds');
+  assert.equal(s.document.getElementById('build-provider-select').value,'flora-pc-native');
+  assert.match(s.document.getElementById('build-provider-summary').textContent,/app-a\.ipa/);
+  assert.match(s.document.getElementById('build-provider-ota-summary').textContent,/OTA 게시 이력 0건/);
+  assert.equal(s.document.getElementById('build-provider-native').disabled,false);
+  assert.equal(s.document.getElementById('native-enqueue').disabled,true,'missing signing keys must not be bypassed by provider selection');
+  const chooser=s.document.getElementById('build-provider-select');
+  chooser.value='codemagic';await chooser.dispatch('change');
+  assert.equal(s.document.getElementById('native-editor').hidden,true,'unrelated provider must hide the native submit form');
+  assert.ok(!s.calls.some(call=>call.url.includes('codemagic')),'remote build must never be triggered by the web');
+  await s.client.navigate('builds','app_b');
+  assert.equal(s.document.getElementById('native-editor').hidden,false);
+  assert.equal(s.document.getElementById('build-provider-select').value,'flora-pc-native');
+  assert.ok(!s.document.getElementById('build-provider-summary').textContent.includes('app-a.ipa'));
+  assert.ok(s.calls.some(call=>call.url==='/api/apps/app_b/native'));
+  s.client.close();
+});
+
 test('history back restores the app and page without creating another history entry',async()=>{const s=await setup('/apps/app_a/credentials');await s.client.navigate('credentials','app_b');await s.client.navigate('builds','app_b');const count=s.entries.length;await s.back();assert.equal(s.client.route().appId,'app_b');assert.equal(s.client.route().page,'credentials');await s.back();assert.equal(s.client.route().appId,'app_a');assert.equal(s.entries.length,count);visiblePage(s,'credentials');assert.ok(s.calls.some(c=>c.url==='/api/apps/app_a/credentials'));s.client.close();});
 
 test('app switch and page leave erase file passwords and one-time native token',async()=>{const s=await setup('/apps/app_a/credentials');for(const id of ['credential-file','credential-password','credential-key-password'])s.document.getElementById(id).value='private draft';await s.client.navigate('credentials','app_b');for(const id of ['credential-file','credential-password','credential-key-password'])assert.equal(s.document.getElementById(id).value,'');s.document.getElementById('credential-password').value='second draft';await s.client.navigate('overview','app_b');assert.equal(s.document.getElementById('credential-password').value,'');assert.equal(s.document.getElementById('native-runner-token').textContent,'');s.client.close();});
