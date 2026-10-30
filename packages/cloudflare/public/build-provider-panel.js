@@ -102,6 +102,8 @@ export function createBuildProviderPanel(env, context) {
     node("build-provider-copy").hidden = !authorized || !help.command;
     node("build-provider-native").hidden = !authorized || selection !== "flora-pc-native";
     node("build-provider-native").disabled = !authorized || selection !== "flora-pc-native";
+    // Do not leave an active native submit form visible under a different provider.
+    node("native-editor").hidden = authorized && selection !== "flora-pc-native";
     node("build-provider-runners").disabled = !authorized;
     node("build-provider-ota").disabled = !authorized;
     const link = node("build-provider-docs");
