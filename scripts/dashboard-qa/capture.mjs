@@ -37,14 +37,19 @@ try {
   const fontCdp = await context.newCDPSession(page); await fontCdp.send("DOM.enable"); await fontCdp.send("CSS.enable");
   const files = []; const captures = []; const checks = [];
   async function capture(name, fullPage = false) {
+    phase = "capture-url-" + name;
     assert.ok(!new URL(page.url()).hash || new URL(page.url()).hash === "#workspace");
+    phase = "capture-overflow-" + name;
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false, "horizontal overflow");
     await page.evaluate(() => document.fonts.ready);
     const root = await fontCdp.send("DOM.getDocument");
     const heading = await fontCdp.send("DOM.querySelector", { nodeId: root.root.nodeId, selector: "h1" });
     const actualFonts = await fontCdp.send("CSS.getPlatformFontsForNode", { nodeId: heading.nodeId });
+    phase = "capture-font-" + name;
     const koreanFont = verifyKoreanFontUsage(actualFonts.fonts, await page.locator("h1").innerText());
+    phase = "capture-surface-" + name;
     const surfaceDepth = await verifySurfaceDepth(page);
+    phase = "capture-screenshot-" + name;
     const bytes = await page.screenshot({ type: "png", fullPage, animations: "disabled" });
     assert.ok(bytes.length <= LIMITS.fileBytes, "SCREENSHOT_BYTE_LIMIT"); files.push({ name: `synthetic-${name}.png`, bytes });
     assert.ok(files.reduce((sum, file) => sum + file.bytes.length, 0) <= LIMITS.totalBytes, "EVIDENCE_TOTAL_BYTE_LIMIT");
