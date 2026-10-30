@@ -22,36 +22,36 @@ async function fixture(t:test.TestContext){
  const compiler=async(_c:NativeConfig,_j:NativeJob,directory:string)=>{const unsigned=join(directory,"unsigned.apk");await writeFile(unsigned,"synthetic unsigned fixture");return unsigned;};
  return {root,config,job,lease,grant,artifact,client,order,signer,compiler};
 }
-test("native controller compiles before requesting only pinned signing material and clears temporary data",async t=>{
+test("native controller compiles before requesting only pinned signing material and clears temporary data",{skip:process.platform!=="darwin"},async t=>{
  const f=await fixture(t);await runNativeJob(f.config,f.client,f.job.id,{compile:async(_c,_j,d)=>{f.order.push("compile");const p=join(d,"unsigned.apk");await writeFile(p,"synthetic unsigned fixture");return p;},sign:async(...args)=>{f.order.push("sign");return f.signer(...args);}});
  assert.deepEqual(f.order.filter(stage=>stage!=="heartbeat"),["claim","compile","credentials","sign","complete"]);assert.ok(f.order.includes("heartbeat"));assert.equal(f.grant.credentials[0]!.payload.fileBase64,"");assert.equal(f.grant.credentials[0]!.payload.password,"");assert.ok(!(await readdir(f.config.artifactDirectory)).some(p=>p.startsWith(".native-")));
 });
-test("changed source is rejected before any credential grant",async t=>{
+test("changed source is rejected before any credential grant",{skip:process.platform!=="darwin"},async t=>{
  const f=await fixture(t);await writeFile(join(f.config.sourceDirectory,"source.txt"),"modified\n");await assert.rejects(runNativeJob(f.config,f.client,f.job.id),/NATIVE_BUILD_FAILED/);assert.ok(!f.order.includes("credentials"));assert.ok(f.order.includes("fail"));
 });
-test("repository and commit substitution fail closed",async t=>{
+test("repository and commit substitution fail closed",{skip:process.platform!=="darwin"},async t=>{
  const f=await fixture(t);await assert.rejects(verifyNativeSource(f.config,{...f.job,commitSha:"a".repeat(40)}),/NATIVE_SOURCE_MISMATCH/);await assert.rejects(verifyNativeSource(f.config,{...f.job,source:{...f.job.source,repository:"other"}}),/NATIVE_SOURCE_MISMATCH/);
 });
 test("other app, version, and unrelated push credential grants are rejected",async t=>{
  const f=await fixture(t);assert.throws(()=>verifyNativeGrant(f.job,{...f.grant,appId:"app_other"}),/NATIVE_GRANT_INVALID/);assert.throws(()=>verifyNativeGrant(f.job,{...f.grant,credentials:[{...f.grant.credentials[0]!,version:2}]}),/NATIVE_GRANT_INVALID/);assert.throws(()=>verifyNativeGrant(f.job,{...f.grant,credentials:[{...f.grant.credentials[0]!,kind:"apns"}]}),/NATIVE_GRANT_INVALID/);
 });
-test("lost heartbeat cancels compilation and prevents grant/signing",async t=>{
+test("lost heartbeat cancels compilation and prevents grant/signing",{skip:process.platform!=="darwin"},async t=>{
  const f=await fixture(t);f.client.heartbeat=async()=>{throw new Error("PRIVATE_SERVER_DETAIL");};await assert.rejects(runNativeJob(f.config,f.client,f.job.id,{heartbeatMs:5,compile:async(_c,_j,_d,signal)=>{await new Promise<void>(resolve=>signal.addEventListener("abort",()=>resolve(),{once:true}));throw new Error("private compiler output");}}),/NATIVE_CANCELLED/);assert.ok(!f.order.includes("credentials"));assert.ok(!(await readdir(f.config.artifactDirectory)).some(p=>p.startsWith(".native-")));
 });
-test("rejected grant is scrubbed and never reaches signer",async t=>{
+test("rejected grant is scrubbed and never reaches signer",{skip:process.platform!=="darwin"},async t=>{
  const f=await fixture(t);f.grant.credentials[0]!.version=9;let signed=false;
  await assert.rejects(runNativeJob(f.config,f.client,f.job.id,{compile:f.compiler,sign:async()=>{signed=true;return f.artifact;}}),/NATIVE_BUILD_FAILED/);
  assert.equal(signed,false);assert.equal(f.grant.credentials[0]!.payload.fileBase64,"");assert.equal(f.grant.credentials[0]!.payload.password,"");
 });
-test("compiler failure does not grant credentials or report raw output",async t=>{
+test("compiler failure does not grant credentials or report raw output",{skip:process.platform!=="darwin"},async t=>{
  const f=await fixture(t);await assert.rejects(runNativeJob(f.config,f.client,f.job.id,{compile:async()=>{throw new Error("PRIVATE_COMPILER_CREDENTIAL");}}),/^Error: NATIVE_BUILD_FAILED$/);assert.ok(!f.order.includes("credentials"));assert.ok(!f.order.includes("complete"));
 });
-test("lost completion keeps a public pending receipt and does not report terminal failure",async t=>{
+test("lost completion keeps a public pending receipt and does not report terminal failure",{skip:process.platform!=="darwin"},async t=>{
  const f=await fixture(t);f.client.complete=async()=>{throw new Error("transport lost");};
  await assert.rejects(runNativeJob(f.config,f.client,f.job.id,{compile:f.compiler,sign:f.signer}),/NATIVE_COMPLETION_UNKNOWN/);
  const receipt=JSON.parse(await readFile(join(f.config.artifactDirectory,f.artifact.fileName+".receipt.json"),"utf8"));assert.equal(receipt.completionConfirmed,false);assert.equal(receipt.sha256,f.artifact.sha256);assert.ok(!f.order.includes("fail"));assert.ok(!JSON.stringify(receipt).includes("PRIVATE_PASSWORD"));assert.equal(await readFile(join(f.config.artifactDirectory,".pending",f.job.id+"."+f.lease.attemptId+".apk"),"utf8"),"synthetic artifact");assert.ok(!(await readdir(f.config.artifactDirectory)).includes(f.artifact.fileName));
 });
-test("revocation while signing deletes staged binary and never releases final APK",async t=>{
+test("revocation while signing deletes staged binary and never releases final APK",{skip:process.platform!=="darwin"},async t=>{
  const f=await fixture(t);let signing=false;f.client.heartbeat=async()=>{if(signing)throw new Error("revoked");return {...f.lease,expiresAt:Date.now()+120000};};
  await assert.rejects(runNativeJob(f.config,f.client,f.job.id,{heartbeatMs:5,compile:f.compiler,sign:async(c,j,g,u,d,signal)=>{const artifact=await f.signer(c,j,g,u,d);signing=true;await new Promise<void>(resolve=>{if(signal.aborted)resolve();else signal.addEventListener("abort",()=>resolve(),{once:true});});return artifact;}}),/NATIVE_CANCELLED/);
  assert.ok(!f.order.includes("complete"));assert.ok(!(await readdir(f.config.artifactDirectory)).includes(f.artifact.fileName));assert.ok(!(await readdir(f.config.artifactDirectory)).some(p=>p.startsWith(".native-")));
@@ -184,13 +184,13 @@ ${A(2)}={isa=PBXGroup;children=();sourceTree="<group>";};${A(3)}={isa=PBXAggrega
  for(const args of [["/bin/sh","-c",'printf changed > "$1"',"probe",join(tools.directory,"xcodebuild")],["/bin/sh","-c",'printf changed > "$1"',"probe",tools.startup],["/bin/mv",tools.directory,tools.directory+"-swapped"],["/bin/mv",directory,directory+"-swapped"],["/bin/mv",f.root,f.root+"-swapped"]])assert.throws(()=>execFileSync("/usr/bin/sandbox-exec",["-f",profile,...args],{stdio:"ignore"}));
 });
 
-test("native heartbeat transient transport and BUSY renew without interrupting compile",async t=>{
+test("native heartbeat transient transport and BUSY renew without interrupting compile",{skip:process.platform!=="darwin"},async t=>{
  for(const transient of [new Error("NATIVE_TRANSPORT_UNAVAILABLE"),new NativeHttpFailure(409,"BUSY")]){const f=await fixture(t);let calls=0,renewed=false;f.client.heartbeat=async()=>{if(++calls===1)throw transient;renewed=true;return {...f.lease,expiresAt:Date.now()+120000};};await runNativeJob(f.config,f.client,f.job.id,{heartbeatMs:5,sign:f.signer,compile:async(c,j,d,signal)=>{while(!renewed){assert.ok(!signal.aborted);await new Promise(resolve=>setTimeout(resolve,10));}return f.compiler(c,j,d);}});assert.ok(calls>=2);assert.ok(f.order.includes("credentials"));assert.ok(f.order.includes("complete"));}
 });
-test("native heartbeat hard authority rejection cancels with no credential grant",async t=>{
+test("native heartbeat hard authority rejection cancels with no credential grant",{skip:process.platform!=="darwin"},async t=>{
  for(const error of [new NativeHttpFailure(401),new NativeHttpFailure(403),new NativeHttpFailure(409),new Error("NATIVE_LEASE_EXPIRED")]){const f=await fixture(t);let calls=0;f.client.heartbeat=async()=>{calls++;throw error;};await assert.rejects(runNativeJob(f.config,f.client,f.job.id,{heartbeatMs:5,compile:async(_c,_j,_d,signal)=>{if(!signal.aborted)await new Promise<void>(resolve=>signal.addEventListener("abort",()=>resolve(),{once:true}));throw new Error("NATIVE_CANCELLED");}}),/NATIVE_CANCELLED/);assert.equal(calls,1);assert.ok(!f.order.includes("credentials"));}
 });
-test("native heartbeat retry and hung request stay bounded by live lease and abort",async t=>{
+test("native heartbeat retry and hung request stay bounded by live lease and abort",{skip:process.platform!=="darwin"},async t=>{
  const f=await fixture(t);let calls=0;f.client.heartbeat=async()=>{calls++;throw new Error("NATIVE_TRANSPORT_UNAVAILABLE");};await assert.rejects(renewNativeLease(f.client,{...f.lease,expiresAt:Date.now()+20},new AbortController().signal),/NATIVE_LEASE_EXPIRED/);assert.equal(calls,1);
  f.client.heartbeat=async()=>{calls++;return new Promise(()=>{});};const start=Date.now();await assert.rejects(renewNativeLease(f.client,{...f.lease,expiresAt:Date.now()+30},new AbortController().signal),/NATIVE_LEASE_EXPIRED/);assert.ok(Date.now()-start<500);const abort=new AbortController();setTimeout(()=>abort.abort(),10);await assert.rejects(renewNativeLease(f.client,f.lease,abort.signal),/NATIVE_CANCELLED/);
  calls=0;f.client.heartbeat=async()=>{calls++;throw new NativeHttpFailure(503);};await assert.rejects(renewNativeLease(f.client,f.lease,new AbortController().signal),NativeHttpFailure);assert.equal(calls,3);
