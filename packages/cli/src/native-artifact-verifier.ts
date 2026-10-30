@@ -20,7 +20,7 @@ const SLUG = /^[a-z][a-z0-9_-]{2,95}$/;
 const HEX40 = /^[a-f0-9]{40}$/;
 const HEX64 = /^[a-f0-9]{64}$/;
 const NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,179}\.(?:apk|aab|ipa)$/;
-const IDENTIFIER = /^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+$/;
+const IDENTIFIER = /^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*){1,15}$/;
 const RECEIPT_NAME = "flora-native-build-receipt.json";
 
 export interface NativeVerifyOptions {
