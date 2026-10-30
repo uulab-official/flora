@@ -63,6 +63,10 @@ export async function verifySurfaceDepth(page) {
     await page.emulateMedia({ reducedMotion: null });
   }
   const normal = await page.evaluate(read);
+  if (JSON.stringify(normal.map(value => value.bounds)) !== JSON.stringify(surfaces.map(value => value.bounds))) {
+    const mismatches = normal.flatMap((value, index) => value.bounds.some((n, axis) => Math.abs(n - (surfaces[index]?.bounds[axis] ?? NaN)) > 0.01) ? [{ selector: value.selector, index }] : []);
+    console.error("FLORA_QA_SURFACE_LAYOUT_MISMATCH " + JSON.stringify(mismatches.slice(0, 8)));
+  }
   assert.deepEqual(normal.map(value => value.bounds), surfaces.map(value => value.bounds), "ELEVATION_MUST_NOT_CHANGE_LAYOUT");
   return { reducedMotionVerified: true, layoutStable: true, interactionChecks, surfaces };
 }
