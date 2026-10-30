@@ -397,7 +397,11 @@ try {
   assert.equal((await first.context.cookies()).length, 0); checks.push("invalid-setup-rejected-by-authority");
 
   phase = "real-enrollment-and-empty-state";
-  assert.equal((await authenticate(page, true)).status(), 200); await page.waitForURL(harness.origin + "/"); await ready(page);
+  assert.equal((await authenticate(page, true)).status(), 200);
+  phase = "real-enrollment-navigation";
+  await page.waitForURL(harness.origin + "/");
+  phase = "real-enrollment-workspace";
+  await ready(page);
   await page.getByText("첫 소스 snapshot을 가져오세요").waitFor(); await both(page, "empty");
   const firstSession = await cookieProof(first.context, page); checks.push("real-scrypt-enrollment", "secure-httponly-strict-host-cookies", "no-browser-credential-storage");
   phase = "source-predispatch-abort-explicit-recovery";
