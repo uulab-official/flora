@@ -4,10 +4,11 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, symlinkSync, linkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import {
   parseBuildVerifyOptions, verifyDownloadedBuild,
-} from "../src/build-verifier.js";
+} from "../dist/build-verifier.js";
 
 const repo = "uulab-official/private-application";
 const sha = "a".repeat(40);
@@ -138,7 +139,7 @@ test("strict flag parser rejects missing or ambiguous input without reading arbi
 test("CLI exposes bounded JSON with offline verification only; never prints private input",async t=>{
   const f=fixture(t);
   // The CLI binary is compiled by the workspace build before Node tests run.
-  const result=spawnSync(process.execPath,[new URL("../dist/main.js",import.meta.url).pathname,
+  const result=spawnSync(process.execPath,[fileURLToPath(new URL("../dist/main.js",import.meta.url)),
     "builds","verify","--dir",f.directory,"--repository",repo,"--commit",sha,
   ],{encoding:"utf8",timeout:15000});
   assert.equal(result.status,0,result.stderr);
