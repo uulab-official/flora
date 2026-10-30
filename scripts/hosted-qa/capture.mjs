@@ -399,9 +399,18 @@ try {
   phase = "real-enrollment-and-empty-state";
   assert.equal((await authenticate(page, true)).status(), 200);
   phase = "real-enrollment-navigation";
-  await page.waitForURL(harness.origin + "/");
+  // Enrollment goes to /onboarding by design, not to the legacy root.
+  await page.waitForURL(harness.origin + "/onboarding");
+  phase = "real-enrollment-owner-session";
+  const sessionProof = await page.evaluate(async () => {
+    const response = await fetch("/api/auth/session", { credentials: "same-origin", cache: "no-store" });
+    return { status: response.status, body: response.ok ? await response.json() : null };
+  });
+  assert.equal(sessionProof.status, 200);
+  assert.equal(typeof sessionProof.body?.csrfToken, "string");
   phase = "real-enrollment-workspace";
-  await ready(page);
+  await page.goto(harness.origin + "/projects");
+  await page.locator("#workspace[aria-busy=false]").waitFor();
   await page.getByText("첫 소스 snapshot을 가져오세요").waitFor(); await both(page, "empty");
   const firstSession = await cookieProof(first.context, page); checks.push("real-scrypt-enrollment", "secure-httponly-strict-host-cookies", "no-browser-credential-storage");
   phase = "source-predispatch-abort-explicit-recovery";
