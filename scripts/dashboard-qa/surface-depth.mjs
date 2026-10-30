@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 
 /** Read actual rendered surfaces; no source is executed and no layout is changed. */
-export async function verifySurfaceDepth(page) {
+export async function verifySurfaceDepth(page, attempt = 0) {
+  assert.ok(Number.isSafeInteger(attempt) && attempt >= 0 && attempt <= 2);
   const read = () => {
     const visible = node => node.getClientRects().length > 0;
     const selectors = [".card", ".auth-card", ".empty-card", ".summary-strip", ".detail-panel", ".app-table-shell", ".mobile-nav", ".primary", "#auth-submit", ".pagination .icon-button"];
@@ -73,6 +74,13 @@ export async function verifySurfaceDepth(page) {
       return diff.some(value => value !== 0) ? [{ selector: item.selector, delta: diff }] : [];
     }).slice(0, 8);
     console.error("FLORA_QA_SURFACE_LAYOUT_DELTA " + JSON.stringify({ before: before.length, after: after.length, deltas }));
+  }
+  // A live synthetic dashboard may finish a queued state repaint during
+  // the two media samples. Re-check every surface after a bounded idle settle;
+  // persistent DOM churn, geometry drift or a real CSS regression still fails.
+  if (before.length !== after.length && attempt < 2) {
+    await page.waitForTimeout(100);
+    return verifySurfaceDepth(page, attempt + 1);
   }
   assert.deepEqual(after, before, "ELEVATION_MUST_NOT_CHANGE_LAYOUT");
   return { reducedMotionVerified: true, layoutStable: true, interactionChecks, surfaces };

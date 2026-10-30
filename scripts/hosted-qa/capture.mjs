@@ -434,7 +434,10 @@ try {
   await page.locator("#application-root").fill("apps/sample");
   await page.locator("#application-register").click();
   await page.waitForURL(url => /^\/apps\/[a-z][a-z0-9_-]{2,95}(?:\/|$)/.test(url.pathname));
-  await navigate(page, "sources");
+  await page.locator("#nav-sources").click();
+  await page.waitForURL(url => /^\/apps\/[a-z][a-z0-9_-]{2,95}\/source$/.test(url.pathname));
+  // The snapshot/detail sections are intentionally hidden until an actual
+  // source has been imported for this registered application.
   await ready(page);
   checks.push("synthetic-application-registered-with-repository-root");
   phase = "source-predispatch-abort-explicit-recovery";
