@@ -404,7 +404,10 @@ try {
   phase = "real-enrollment-navigation";
   await page.waitForURL(harness.origin + "/onboarding");
   phase = "real-enrollment-register-synthetic-application";
-  const enrolledSession = await enrollment.json();
+  // Read the live first-party session after navigation, not a response body
+  // already consumed when the enrollment form closed its request lifecycle.
+  const enrolledSession = await page.evaluate(async () => (await fetch("/api/auth/session", { credentials: "same-origin", cache: "no-store" })).json());
+  assert.match(enrolledSession.csrfToken ?? "", /^[A-Za-z0-9_-]{32,256}$/);
   const created = await page.evaluate(async csrf => {
     const response = await fetch("/api/apps", {
       method: "POST", credentials: "same-origin", cache: "no-store",
