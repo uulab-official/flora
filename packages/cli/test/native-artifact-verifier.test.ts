@@ -70,7 +70,8 @@ test("invalid or foreign native job never exports a receipt, including unsanitiz
   assert.equal(createNativePublicReceipt(appId,{...job,artifactVerification:null}),null);
   assert.equal(createNativePublicReceipt(appId,{...job,artifact:{...job.artifact,fileName:"../secret.apk"}}),null);
   assert.equal(createNativePublicReceipt(appId,{...job,artifact:{...job.artifact,platform:"ios"}}),null);
-  const publicBody=JSON.parse(createNativePublicReceipt(appId,{...job,token:"private-token",credentials:[{privateKey:"never-send"}]})!);
+  const maliciousReport={...job,token:"private-token",credentials:[{privateKey:"never-send"}]};
+  const publicBody=JSON.parse(createNativePublicReceipt(appId,maliciousReport)!);
   assert.equal("token" in publicBody,false);assert.equal("credentials" in publicBody,false);
   assert.equal("token" in publicBody.artifact,false);
 });
