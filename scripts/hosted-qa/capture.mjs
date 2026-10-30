@@ -148,6 +148,7 @@ try {
     // Use visible authenticated controls rather than hidden legacy mobile nav.
     const target = ({ apps: "sources", sources: "sources", history: "history", account: "account" })[view];
     assert.ok(target, "UNKNOWN_SYNTHETIC_VIEW");
+    const previousViewport = page.viewportSize();
     await page.setViewportSize({ width: 1487, height: 1058 });
     await page.locator("#nav-" + target).click();
     const expected = view === "apps" ? "view-apps" : "view-" + view;
@@ -161,6 +162,7 @@ try {
       assert.equal(await page.locator("#view-apps").isHidden(), true);
       assert.equal(await page.locator("#view-sources").isHidden(), true);
     }
+    await page.setViewportSize(previousViewport);
   }
   async function mobileTargets(page, state, selectors) {
     assert.equal(page.viewportSize().width, 390, "MOBILE_VIEWPORT_REQUIRED");
