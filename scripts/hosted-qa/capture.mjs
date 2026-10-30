@@ -145,10 +145,19 @@ try {
     await page.waitForFunction(() => document.getElementById("workspace")?.getAttribute("aria-busy") === "false" && document.getElementById("source-file")?.disabled === false);
   }
   async function navigate(page, view) {
-    const mobile = page.locator("#mobile-" + view);
-    await (await mobile.isVisible() ? mobile : page.locator("#nav-" + view)).click();
+    // The current console puts source snapshots and flavor rows together on
+    // the app's Source route. The legacy two-tabs harness expected the Apps
+    // mobile navigation to render flavor rows, but it now opens Projects.
+    const sourceRoute = view === "apps" || view === "sources";
+    if (!sourceRoute || !await page.locator("#view-" + view).isVisible()) {
+      const destination = sourceRoute ? "sources" : view;
+      const mobile = page.locator("#mobile-" + destination);
+      await (await mobile.isVisible() ? mobile : page.locator("#nav-" + destination)).click();
+    }
     await page.locator("#view-" + view).waitFor({ state: "visible" });
-    for (const other of ["apps", "sources", "history", "account"].filter(value => value !== view)) assert.equal(await page.locator("#view-" + other).isHidden(), true);
+    const permitted = sourceRoute ? ["apps", "sources"] : [view];
+    for (const other of ["apps", "sources", "history", "account"].filter(value => !permitted.includes(value)))
+      assert.equal(await page.locator("#view-" + other).isHidden(), true);
   }
   async function mobileTargets(page, state, selectors) {
     assert.equal(page.viewportSize().width, 390, "MOBILE_VIEWPORT_REQUIRED");
