@@ -12,7 +12,9 @@ const helper = "examples/github-actions/flora-expo-build.mjs";
 test("Flora reusable native build is called by a private repo, not triggered on Flora pushes", () => {
   assert.match(workflow, /on:\s*\n  workflow_call:/);
   assert.doesNotMatch(workflow, /pull_request_target:|^\s{2}push:|^\s{2}workflow_dispatch:/m);
-  assert.match(workflow, /github\.event_name == 'workflow_dispatch' \|\| github\.event_name == 'push'/);
+  assert.match(workflow, /github\.event_name == 'workflow_dispatch'/);
+  assert.match(workflow, /github\.event\.repository\.default_branch/);
+  assert.match(workflow, /github\.ref_protected/);
   assert.match(workflow, /runs-on:.*inputs\.platform == 'ios'.*macos-latest.*ubuntu-latest/);
   assert.match(workflow, /persist-credentials: false/);
   assert.match(workflow, /permissions:\s*\n  contents: read/);
