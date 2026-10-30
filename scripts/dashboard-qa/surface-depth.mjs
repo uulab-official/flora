@@ -70,12 +70,15 @@ export async function verifySurfaceDepth(page) {
   // Live app controls can move as a poll replaces the current snapshot while
   // this check toggles reduced-motion. A shadow must not change intrinsic size.
   // Static panels still require exact position and size stability.
+  if (normal.length !== surfaces.length) console.error("FLORA_QA_SURFACE_SET_COUNTS " + JSON.stringify({before:surfaces.length,after:normal.length}));
   assert.equal(normal.length, surfaces.length, "SURFACE_SET_CHANGED");
   for (let index = 0; index < normal.length; index++) {
     const before = surfaces[index], after = normal[index];
+    if (after.selector !== before.selector) console.error("FLORA_QA_SURFACE_SET_SELECTOR " + JSON.stringify({index,before:before.selector,after:after.selector}));
     assert.equal(after.selector, before.selector, "SURFACE_SET_CHANGED");
     const beforeBounds = before.selector === ".primary" ? before.bounds.slice(2) : before.bounds;
     const afterBounds = after.selector === ".primary" ? after.bounds.slice(2) : after.bounds;
+    if (!afterBounds.every((value, axis) => Math.abs(value - beforeBounds[axis]) <= 0.1)) console.error("FLORA_QA_SURFACE_SIZE_CHANGE " + JSON.stringify({index,selector:before.selector}));
     assert.ok(afterBounds.every((value, axis) => Math.abs(value - beforeBounds[axis]) <= 0.1), "ELEVATION_MUST_NOT_CHANGE_LAYOUT");
   }
   return { reducedMotionVerified: true, layoutStable: true, interactionChecks, surfaces };
