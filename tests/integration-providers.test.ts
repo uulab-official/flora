@@ -20,8 +20,8 @@ test("built-in integrations report real maturity and do not imply connection", (
   assert.equal(byId("flora-pc-native").maturity, "manual-setup");
   assert.equal(byId("github-actions-native").maturity, "workflow-template");
   assert.equal(byId("expo-eas").maturity, "planned");
-  assert.equal(byId("codemagic").maturity, "planned");
-  assert.equal(byId("bitrise").maturity, "planned");
+  assert.equal(byId("codemagic").maturity, "manual-setup");
+  assert.equal(byId("bitrise").maturity, "manual-setup");
   assert.ok(providers.every(item => item.capabilities.length && item.setupDocument.startsWith("docs/")));
   providers[0]!.capabilities = ["store.submit"];
   assert.deepEqual(listIntegrationProviders()[0]!.capabilities, ["ota.publish"]);
