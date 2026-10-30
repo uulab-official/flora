@@ -18,7 +18,7 @@ Flora의 단일 소유자 셀프호스팅 콘솔에서 **앱 → 네이티브 �
 
 1. 소유자로 로그인하고 **프로젝트 → 대상 앱 → 네이티브 빌드**로 이동한다.
 2. **빌드 실행 환경**에서 Provider를 선택한다.
-3. **내 PC · Flora Native Runner**를 선택하면 기존 PC Runner의 앱 범위 권한으로 설정·실행한다. 활성 iOS 인증서/프로파일 또는 Android Keystore, 고정된 GitHub commit SHA와 앱 ID를 확인하고 **이 앱의 네이티브 빌드 요청**을 누른다. 작업이 서버에 큐잉되면 PC가 가져가며, 실제 서명 결과는 별도 검증 대상이다.
+3. **내 PC · Flora Native Runner**를 선택하면 기존 PC Runner의 앱 범위 권한으로 설정·실행한다. 외부 Provider를 선택하면 잘못된 Native 요청을 방지하도록 아래 로컬 빌드 양식은 숨기며, PC Runner를 다시 선택하면 복구한다. 활성 iOS 인증서/프로파일 또는 Android Keystore, 고정된 GitHub commit SHA와 앱 ID를 확인하고 **이 앱의 네이티브 빌드 요청**을 누른다. 작업이 서버에 큐잉되면 PC가 가져가며, 실제 서명 결과는 별도 검증 대상이다.
 4. **GitHub Actions / EAS / Codemagic / Bitrise**를 선택하면 별도 계정에 연결하는 안내와 안전한 예제만 표시한다. **실행 예제 복사**는 기본 dry-run 명령만 복사하며 \`--execute\`, API 토큰, 결제·빌드 실행 요청은 포함하지 않는다. 실제 계정 권한과 비용 한도를 검토한 뒤 본인 PC/비공개 저장소에서 명시적으로 실행한다.
 5. 빌드가 성공하더라도 **OTA 배포와 적용 현황**을 통해 기존 Flora OTA 채널, runtime 및 기기 적용을 별도로 확인한다. OTA는 JS/assets 업데이트이며 네이티브 코드 변경에는 새 바이너리가 필요하다.
 

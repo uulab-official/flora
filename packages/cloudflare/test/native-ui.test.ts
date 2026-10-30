@@ -7,14 +7,14 @@ class Node {
   setAttribute(k:string,v:string){this.attributes[k]=v;} append(...n:any[]){this.children.push(...n);} replaceChildren(...n:any[]){this.children=n;this.textContent='';}
   addEventListener(k:string,v:any){this.handlers[k]=v;} get text():string{return this.textContent+this.children.map(n=>n.text).join('');}
 }
-function setup(){
+function setup(onView?:(app:string,view:any)=>void){
   const nodes=new Map<string,Node>(); for(const m of readFileSync(new URL('../public/index.html',import.meta.url),'utf8').matchAll(/id="([^"]+)"/g))nodes.set(m[1]!,new Node());
   const document={getElementById:(id:string)=>{assert.ok(nodes.has(id),id);return nodes.get(id)!;},createElement:()=>new Node()};
   let app='a',active=true;const calls:any[]=[],copies:string[]=[];
   const registry=()=>({appId:app,configured:true,credentials:[{kind:'android_keystore',activeVersion:2,metadata:{appIdentifier:'kr.co.a'}},{kind:'apns',activeVersion:4,metadata:{}},{kind:'google_play',activeVersion:3,metadata:{}}]});
   let responder:any=(url:string)=>url.endsWith('/credentials')?registry():{appId:app,jobs:[],runners:[],credentialUses:[]};
   nodes.get('native-platform')!.value='android'; nodes.get('native-runner-platform')!.value='android';
-  const panel=createNativePanel({document,crypto:{randomUUID:()=> '1abc1234-1234-1234-1234-123456789abc'},navigator:{clipboard:{writeText:async(s:string)=>{copies.push(s);}}}},{appId:()=>app,commitSha:()=> 'a'.repeat(40),active:()=>active,ready:()=>active,api:async(url:string,body:any)=>{calls.push({url,body});return responder(url,body);},expire:()=>{active=false;panel.clear();}});
+  const panel=createNativePanel({document,crypto:{randomUUID:()=> '1abc1234-1234-1234-1234-123456789abc'},navigator:{clipboard:{writeText:async(s:string)=>{copies.push(s);}}}},{onView,appId:()=>app,commitSha:()=> 'a'.repeat(40),active:()=>active,ready:()=>active,api:async(url:string,body:any)=>{calls.push({url,body});return responder(url,body);},expire:()=>{active=false;panel.clear();}});
   return {nodes,panel,calls,copies,registry,setApp:(v:string)=>{app=v;panel.clear();},respond:(v:any)=>{responder=v;},node:(id:string)=>nodes.get(id)!};
 }
 const deferred=()=>{let resolve:any;const promise=new Promise(r=>{resolve=r;});return {promise,resolve};};
@@ -28,3 +28,20 @@ test('missing signing pins and 401 block enqueue and clear private token',async(
 test('native UI separates signing from Google and push permission and store distribution',()=>{const html=readFileSync(new URL('../public/index.html',import.meta.url),'utf8');assert.match(html,/id="native-editor"/);assert.match(html,/Google Play·APNs·FCM 키는 이 서명 요청에 포함하지/);assert.match(html,/빌드 성공은 스토어 제출이나 기기 설치를 뜻하지/);});
 
 test('native credential use audit renders scoped pins and artifact signature receipt',async()=>{const s=setup();s.respond((url:string)=>url.endsWith('/credentials')?s.registry():{appId:'a',jobs:[{appId:'a',id:'job',platform:'android',state:'succeeded',appIdentifier:'kr.co.a',commitSha:'a'.repeat(40),createdAt:1,artifact:{fileName:'app.apk',sha256:'b'.repeat(64),signerFingerprint:'c'.repeat(64)}}],runners:[],credentialUses:[{appId:'a',jobId:'job',runnerId:'runner',createdAt:1,credentials:[{kind:'android_keystore',version:2}]}]});await s.panel.load();assert.match(s.node('native-credential-uses').text,/Android Keystore · 버전 2/);assert.match(s.node('native-jobs').text,/app.apk/);assert.match(s.node('native-jobs').text,/'?c{64}/);});
+
+
+test("authenticated native panel reports scoped metadata to the build provider chooser only after a valid load", async()=>{
+  const seen:{app:string;view:any}[]=[];
+  const s=setup((app,view)=>seen.push({app,view}));
+  await s.panel.load();
+  assert.equal(seen.length,1);
+  assert.equal(seen[0]!.app,"a");
+  assert.equal(seen[0]!.view.appId,"a");
+  const pending=deferred();
+  s.respond((url:string)=>url.endsWith("/credentials")?s.registry():pending.promise);
+  const loading=s.panel.load();
+  s.setApp("b");
+  pending.resolve({appId:"a",jobs:[],runners:[],credentialUses:[]});
+  await loading;
+  assert.equal(seen.length,1,"late responses from an older app must never reach the build chooser");
+});

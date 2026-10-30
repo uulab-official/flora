@@ -76,6 +76,7 @@ test("external providers display only inert, no-token local commands and never c
     assert.ok(!command.includes("--execute"));
     assert.ok(!/EXPO_TOKEN|CODEMAGIC_API_TOKEN|BITRISE_API_TOKEN|secret|Bearer /.test(command));
     assert.equal(s.node("build-provider-native").hidden,true);
+    assert.equal(s.node("native-editor").hidden,true,"other provider must not leave the local submit form available");
     await s.panel.copy();
   }
   assert.equal(s.commands.length,4);
@@ -91,6 +92,7 @@ test("local form and OTA/Runner links work only for the authorized selected app"
   s.panel.open("app_alpha");
   s.panel.select("flora-pc-native");
   assert.equal(s.node("build-provider-native").hidden,false);
+  assert.equal(s.node("native-editor").hidden,false);
   await s.node("build-provider-native").dispatch("click");
   assert.equal(s.node("native-editor").open,true);
   assert.equal(s.node("native-platform").focused,true);
