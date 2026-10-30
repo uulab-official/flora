@@ -43,10 +43,11 @@ test("sample caller is manual-only, scoped and requires pinning the reviewed Flo
   assert.match(caller, /FLORA_IOS_P12_BASE64/);
 });
 
-test("example native builder rejects invalid targets before native tool invocation", () => {
+test("example native builder rejects invalid targets and unsigned Android production before compilation", () => {
   for (const [platform, profile, error] of [
     ["web", "preview", "FLORA_TARGET_INVALID"],
     ["android", "staging", "FLORA_TARGET_INVALID"],
+    ["android", "production", "FLORA_ANDROID_PRODUCTION_SIGNING_REQUIRED"],
   ]) {
     const run = spawnSync(process.execPath, [resolve(helper), platform], {
       encoding: "utf8", env: { ...process.env, FLORA_PROFILE: profile }
