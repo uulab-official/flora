@@ -17,3 +17,4 @@ export interface NativePublicJob {
   artifact: NativePublicArtifact | null;
 }
 export function createNativePublicReceipt(appId: string, job: NativePublicJob): string | null;
+export function appendNativeReceiptDownload(document: {createElement(tag: string): any}, target: {append(...nodes: any[]): void}, appId: string, job: NativePublicJob): boolean;
