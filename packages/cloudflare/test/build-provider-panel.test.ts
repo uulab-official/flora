@@ -58,7 +58,7 @@ test("only the selected app's trusted native view contributes to the summary",()
   assert.ok(!s.node("build-provider-summary").textContent.includes("http"));
   assert.equal(s.panel.setNativeView("app_beta",appView("app_beta")),false);
   assert.throws(()=>summarizeNativeBuilds("app_alpha",appView("app_beta")) ,/INVALID_BUILD_PROVIDER_SCOPE/);
-  assert.throws(()=>summarizeNativeBuilds("app_alpha",{...appView("app_alpha"),jobs:[{appId:"app_beta"}]}) ,/INVALID_BUILD_PROVIDER_SCOPE/);
+  assert.throws(()=>summarizeNativeBuilds("app_alpha",{...appView("app_alpha"),jobs:[{...data.jobs[0],appId:"app_beta"}]}) ,/INVALID_BUILD_PROVIDER_SCOPE/);
   s.app("app_beta"); s.panel.open("app_beta");
   assert.equal(s.node("build-provider-summary").textContent.includes("signed.apk"),false);
   assert.equal(s.panel.state().native,null);
