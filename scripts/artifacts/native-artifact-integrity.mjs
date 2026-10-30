@@ -6,11 +6,7 @@ const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const PLATFORMS = new Set(["android", "ios"]);
 const MAX_BYTES = 2 * 1024 * 1024 * 1024;
 
-// Explicitly validates local bytes against independently supplied build-job
-// identity. A digest match proves integrity, NOT code signing or installation.
-export function verifyNativeArtifact({ bytes, manifest, expected }) {
-  if (!Buffer.isBuffer(bytes) || bytes.length === 0 || bytes.length > MAX_BYTES)
-    throw new Error("ARTIFACT_SIZE_INVALID");
+export function validateArtifactMetadata({ manifest, expected, byteCount }) {
   if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)
     || !expected || typeof expected !== "object" || Array.isArray(expected))
     throw new Error("ARTIFACT_CONTEXT_INVALID");
@@ -22,12 +18,19 @@ export function verifyNativeArtifact({ bytes, manifest, expected }) {
     || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(manifest.repository)
     || !SHA.test(manifest.sourceSha) || !PLATFORMS.has(manifest.platform))
     throw new Error("ARTIFACT_IDENTITY_INVALID");
-  if (!Number.isSafeInteger(manifest.byteCount) || manifest.byteCount !== bytes.length)
+  if (!Number.isSafeInteger(byteCount) || byteCount <= 0 || byteCount > MAX_BYTES)
+    throw new Error("ARTIFACT_SIZE_INVALID");
+  if (!Number.isSafeInteger(manifest.byteCount) || manifest.byteCount !== byteCount)
     throw new Error("ARTIFACT_SIZE_MISMATCH");
   if (typeof manifest.sha256 !== "string" || !SHA256.test(manifest.sha256))
     throw new Error("ARTIFACT_DIGEST_INVALID");
-  const actual = createHash("sha256").update(bytes).digest();
-  if (!timingSafeEqual(actual, Buffer.from(manifest.sha256, "hex")))
+}
+
+// Digest alone proves byte integrity, not signature or installation.
+export function verifyNativeArtifact({ bytes, manifest, expected }) {
+  if (!Buffer.isBuffer(bytes)) throw new Error("ARTIFACT_SIZE_INVALID");
+  validateArtifactMetadata({ manifest, expected, byteCount: bytes.length });
+  if (!timingSafeEqual(createHash("sha256").update(bytes).digest(), Buffer.from(manifest.sha256, "hex")))
     throw new Error("ARTIFACT_HASH_MISMATCH");
   return Object.freeze({
     appId: manifest.appId, jobId: manifest.jobId,
