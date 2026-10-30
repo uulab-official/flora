@@ -1,6 +1,6 @@
-# Flora Hosted SaaS: multi-tenant Build + OTA migration
+# Flora deployment modes: self-hosted first, hosted multi-tenant later
 
-> Implementation plan only. Not a declaration that multi-user login or tenant-isolated OTA has shipped.
+> **Later-stage, optional** hosted SaaS implementation plan. It does not declare multi-user login or tenant-isolated OTA shipped. UULab's demo stays single-owner; every open-source user can operate their own single-owner instance with their own local Runner, private GitHub repo and optional external provider account.\n\n## Current priority: self-hosting and providers\n\n- Keep the existing Cloudflare owner-only app and OTA operations working. No shared login to UULab's demo for external users.\n- Offer local PC OTA/Native runners and a private-caller GitHub Actions workflow with **either GitHub-hosted or user-controlled self-hosted compute**.\n- Add an explicit provider metadata catalog, then implement reviewed external adapters (EAS/Codemagic/Bitrise) with per-installation credentials and clear cost limits.\n- Implement multi-user tenant membership only if Flora later offers a shared hosted SaaS; it is **not** a prerequisite for independently deployed open-source installs. See [provider options](../development/build-provider-options.ko.md).
 
 ## Principle
 
