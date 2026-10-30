@@ -15,9 +15,9 @@
 
 ## 구성 파일
 
-- `.github/workflows/reusable-expo-build.yml`: 다른 저장소에서 `workflow_call`로 실행. `android`는 Ubuntu, `ios`는 macOS; Node/Java, npm/pnpm 잠금 설치, 검증된 경로 내 고정 `flora:build:<platform>` script 실행, IPA/APK/AAB와 SHA256 receipt 업로드.
+- `.github/workflows/reusable-expo-build.yml`: 다른 저장소에서 `workflow_call`로 실행. `github-hosted`(Android Ubuntu / iOS macOS) 또는 `self-hosted`(자체 Linux/Mac Runner). Node/Java, npm/pnpm 잠금 설치, 검증된 경로 내 고정 `flora:build:<platform>` script 실행, IPA/APK/AAB와 SHA256 receipt 업로드.
 - `examples/github-actions/private-expo-build.yml`: 비공개 호출 저장소에 복사할 `workflow_dispatch` 예제. 앱 저장소에서 실행하며 `contents: read`만 요청.
-- `examples/github-actions/flora-expo-build.mjs`: Expo CLI/Gradle/Xcode 예제. 계정 없이 기본 로컬 네이티브 컴파일; **Android preview APK**, **iOS 서명 IPA** 예제 제공. Android production 서명은 앱별 스크립트에서 별도 구현해야 한다.
+- `examples/github-actions/flora-expo-build.mjs`: Expo CLI/Gradle/Xcode 예제. EAS 계정 없이 기본 로컬 네이티브 컴파일; **Android preview Debug APK**, **iOS 서명 IPA** 예제 제공. Android production 서명은 앱별 스크립트에서 별도 구현해야 한다.
 - `tests/reusable-expo-build.test.ts`: Workflow 호출 범위, SHA pin, 경로 제한, 최소 권한, 개인정보/비밀값 회피 계약 검증.
 
 ## 비공개 Expo 프로젝트에 연결하기
@@ -37,7 +37,7 @@
 ```
 
 5. Expo 앱 lockfile(`package-lock.json` 또는 `pnpm-lock.yaml`)을 함께 커밋한다. pnpm은 설치 루트의 `package.json`에 `"packageManager": "pnpm@X.Y.Z"`가 필요하다. Node 및 Gradle/Expo/AGP 버전은 호출 앱에서 맞추고 Workflow의 `node-version` 입력으로 Node를 고정한다.
-6. 비공개 저장소의 **Actions → Flora native build → Run workflow**에서 `android`, `preview`를 선택한다. 성공 시 *해당 비공개 실행*의 Artifacts에서 APK와 `flora-build-receipt.json`을 받는다. Expo/SDK/네이티브 의존성에 따라 Android SDK/NDK 또는 Java 버전 조정이 필요할 수 있다.
+6. 비공개 저장소의 **Actions → Flora native build → Run workflow**에서 `android`, `preview`와 `runner-type`을 선택한다. `github-hosted`는 비공개 저장소 쿼터를 사용하고, `self-hosted`는 사용자 PC를 사용한다. 성공 시 *해당 비공개 실행*의 Artifacts에서 Debug APK와 `flora-build-receipt.json`을 받는다. [자체 PC와 외부 Provider 선택 가이드](build-provider-options.ko.md)를 참고한다. Expo/SDK/네이티브 의존성에 따라 Android SDK/NDK 또는 Java 버전 조정이 필요할 수 있다.
 
 ### iOS 서명 IPA
 
@@ -52,7 +52,7 @@ Apple Developer 배포 인증서, 해당 앱의 프로비저닝 프로파일, Xc
 
 공유 Workflow의 iOS 전용 단계가 일시적인 Keychain과 프로비저닝 프로파일을 설정하고, 완료 또는 실패 시 삭제한다. 선택한 Xcode Scheme이 `.xcworkspace`와 다르면 비공개 프로젝트의 `flora:build:ios` script에서 `FLORA_IOS_SCHEME=... node ... ios`로 명시한다. `flutter`나 모든 Expo 버전/네이티브 템플릿을 자동으로 지원한다는 뜻은 아니다.
 
-**Android production:** 제공된 예제는 의도적으로 production 빌드를 거절한다. 각 앱의 서명 정책/키와 `bundleRelease` 태스크를 검증해, 비공개 앱의 `flora:build:android` script가 실제로 서명된 AAB를 `dist/flora`에 남기게 해야 한다. 키는 해당 앱 Secrets/보안 Runner에 보관한다. 공개 템플릿이나 Flora OTA SDK에 Keystore 원문을 넣지 않는다.
+**Android production:** 제공된 예제는 의도적으로 production 빌드를 거절한다. Preview는 Android SDK 기본 debug 키로 서명하는 Debug APK다. 각 앱의 서명 정책/키와 `bundleRelease` 태스크를 검증해, 비공개 앱의 `flora:build:android` script가 실제로 서명된 AAB를 `dist/flora`에 남기게 해야 한다. 키는 해당 앱 Secrets/보안 Runner에 보관한다. 공개 템플릿이나 Flora OTA SDK에 Keystore 원문을 넣지 않는다.
 
 ### 아티팩트와 로그
 
