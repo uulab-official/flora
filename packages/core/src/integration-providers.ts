@@ -41,9 +41,9 @@ const builtIns: readonly IntegrationProvider[] = Object.freeze([
     ["build"], ["ios", "android"], "none", "docs/development/reusable-expo-build.ko.md"),
   descriptor("expo-eas", "Expo EAS (future adapter)", "external-api", "planned",
     ["build", "ota.publish"], ["ios", "android"], "user-api-key", "docs/development/build-provider-options.ko.md"),
-  descriptor("codemagic", "Codemagic (future adapter)", "external-api", "planned",
+  descriptor("codemagic", "Codemagic (local CLI API adapter)", "external-api", "manual-setup",
     ["build"], ["ios", "android"], "user-api-key", "docs/development/build-provider-options.ko.md"),
-  descriptor("bitrise", "Bitrise (future adapter)", "external-api", "planned",
+  descriptor("bitrise", "Bitrise (local CLI API adapter)", "external-api", "manual-setup",
     ["build"], ["ios", "android"], "user-api-key", "docs/development/build-provider-options.ko.md"),
 ]);
 
