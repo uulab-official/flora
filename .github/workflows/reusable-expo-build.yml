@@ -59,6 +59,7 @@ jobs:
       FLORA_PROFILE: ${{ inputs.profile }}
       FLORA_PROJECT_DIRECTORY: ${{ inputs.project-directory }}
       FLORA_INSTALL_DIRECTORY: ${{ inputs.install-directory }}
+      FLORA_RUNNER_TYPE: ${{ inputs.runner-type }}
     steps:
       - name: Checkout private caller repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -78,7 +79,7 @@ jobs:
           const platform = process.env.FLORA_PLATFORM;
           const profile = process.env.FLORA_PROFILE;
           if (!['android', 'ios'].includes(platform) || !['preview', 'production'].includes(profile) ||
-              !['self-hosted', 'github-hosted'].includes('${{ inputs.runner-type }}')) {
+              !['self-hosted', 'github-hosted'].includes(process.env.FLORA_RUNNER_TYPE)) {
             throw new Error('FLORA_BUILD_INPUT_INVALID');
           }
           const root = fs.realpathSync(process.env.GITHUB_WORKSPACE);
@@ -149,12 +150,19 @@ jobs:
           chmod 600 "$SIGNING_DIR"/*
           KEYCHAIN="$SIGNING_DIR/flora.keychain-db"
           KEYCHAIN_PASSWORD="$(openssl rand -hex 32)"
+          security list-keychains -d user > "$SIGNING_DIR/previous-keychains"
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
           security set-keychain-settings -lut 7200 "$KEYCHAIN"
           security import "$SIGNING_DIR/certificate.p12" -k "$KEYCHAIN" -P "$CERT_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          security list-keychains -d user -s "$KEYCHAIN"
+          ORIGINAL_KEYCHAINS=()
+          while IFS= read -r LINE; do
+            LINE="${LINE#*\"}"
+            LINE="${LINE%\"*}"
+            [[ -z "$LINE" ]] || ORIGINAL_KEYCHAINS+=("$LINE")
+          done < "$SIGNING_DIR/previous-keychains"
+          security list-keychains -d user -s "$KEYCHAIN" "${ORIGINAL_KEYCHAINS[@]}"
           UUID="$(security cms -D -i "$SIGNING_DIR/profile.mobileprovision" | plutil -extract UUID raw -o - -)"
           if [[ ! "$UUID" =~ ^[A-Fa-f0-9-]{36}$ ]]; then
             echo "::error::Invalid provisioning profile UUID."
@@ -257,6 +265,17 @@ jobs:
                 rm -f "$PROFILE_PATH" ;;
               *) echo "::warning::Refused to remove a profile outside its expected directory." ;;
             esac
+          fi
+          if [[ -f "$SIGNING_DIR/previous-keychains" ]]; then
+            ORIGINAL_KEYCHAINS=()
+            while IFS= read -r LINE; do
+              LINE="${LINE#*\"}"
+              LINE="${LINE%\"*}"
+              [[ -z "$LINE" ]] || ORIGINAL_KEYCHAINS+=("$LINE")
+            done < "$SIGNING_DIR/previous-keychains"
+            if (( ${#ORIGINAL_KEYCHAINS[@]} > 0 )); then
+              security list-keychains -d user -s "${ORIGINAL_KEYCHAINS[@]}"
+            fi
           fi
           if [[ -f "$SIGNING_DIR/flora.keychain-db" ]]; then
             security delete-keychain "$SIGNING_DIR/flora.keychain-db"
