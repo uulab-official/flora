@@ -33,11 +33,12 @@ test("EAS build flags are bounded and reject unexpected actions or shell-like va
 });
 test("EAS requires local configuration and own token; does not download CLI on demand", () => {
   const plan = parseEASBuildPlan([...args, "--execute"]);
-  assert.throws(() => runEASBuild(plan, {}), /PROVIDER_TOKEN_MISSING/);
   if (process.platform === "win32") {
+    assert.throws(() => runEASBuild(plan, {}), /PROVIDER_LOCAL_EXECUTOR_UNSUPPORTED/);
     assert.throws(() => runEASBuild(plan, { EXPO_TOKEN: "sample-secret" }), /PROVIDER_LOCAL_EXECUTOR_UNSUPPORTED/);
     return;
   }
+  assert.throws(() => runEASBuild(plan, {}), /PROVIDER_TOKEN_MISSING/);
   assert.throws(() => runEASBuild(plan, { EXPO_TOKEN: "sample-secret" }, join(tmpdir(), "missing-flora-expo")), /PROVIDER_LOCAL_SETUP_REQUIRED/);
 });
 test("pinned installed EAS executable is invoked without shell and results are normalized", () => {
