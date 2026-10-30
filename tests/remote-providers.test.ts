@@ -129,5 +129,5 @@ test("CLI lists provider capabilities, offers dry-run and fails on missing crede
   assert.equal(attempted.status, 1);
   assert.ok(attempted.stderr.includes("PROVIDER_TOKEN_MISSING"));
   assert.equal(attempted.stdout, "");
-  assert.equal(cmd("codemagic", "start", "--bad").status, 1);
+  assert.equal(cmd("codemagic", "start", "--bad").status, 2);
 });

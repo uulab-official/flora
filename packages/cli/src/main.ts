@@ -167,7 +167,7 @@ export async function runCli(
             : e instanceof RemoteProviderError ? e.code : "INPUT_OR_OPERATION_FAILED",
       }) + "\n",
     );
-    return 1;
+    return e instanceof RemoteProviderError && e.code === "PROVIDER_INVALID_INPUT" ? 2 : 1;
   }
 }
 export async function main(): Promise<void> {

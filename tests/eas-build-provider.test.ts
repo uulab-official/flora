@@ -67,7 +67,7 @@ test("pinned installed EAS executable is invoked without shell and results are n
     assert.deepEqual(result, { provider: "expo-eas", operation: "start", state: "requested", buildIds: ["9cc8abc4-504a-4ccb-93e7-eab65a1c681f"] });
     assert.ok(!JSON.stringify(result).includes(secret));
     const failed = ((..._args: unknown[]) => ({ status: 1, stdout: secret, stderr: secret, error: undefined })) as unknown as typeof spawnSync;
-    assert.throws(() => runEASBuild(parseEASBuildPlan([...args, "--execute"]), { EXPO_TOKEN: secret }, dir, failed), /^Error: PROVIDER_LOCAL_EXECUTION_UNAVAILABLE$/);
+    assert.throws(() => runEASBuild(parseEASBuildPlan([...args, "--execute"]), { EXPO_TOKEN: secret }, dir, failed), { name: "RemoteProviderError", message: "PROVIDER_LOCAL_EXECUTION_UNAVAILABLE" });
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 test("EAS CLI command offers a credential-free plan from a different working directory", () => {
