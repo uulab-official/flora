@@ -123,13 +123,16 @@ pnpm flora providers bitrise cancel --app YOUR_APP_SLUG --build ACTUAL_BUILD_SLU
 4. 아래 명령으로 계획 확인 후 실행한다.
 
 ```sh
-# 사용자가 자신의 Expo 앱 루트에서 실행
+# 사용자가 자신의 비공개 Expo 앱 루트에서 실행
+cd /ABSOLUTE/PATH/TO/YOUR-PRIVATE-EXPO-APP
 export EXPO_TOKEN='YOUR_PRIVATE_EXPO_TOKEN'
-flora providers eas start --platform android --profile preview
-flora providers eas start --platform android --profile preview --execute
+# Flora 저장소를 미리 빌드한 상태여야 함. (공개 npm CLI 설치를 가정하지 않음)
+FLORA_CLI=/ABSOLUTE/PATH/TO/FLORA/packages/cli/dist/main.js
+node "$FLORA_CLI" providers eas start --platform android --profile preview
+node "$FLORA_CLI" providers eas start --platform android --profile preview --execute
 
-# iOS 네이티브 바이너리도 사용자 EAS 계정의 인증서/용량 사용
-flora providers eas start --platform ios --profile production --execute
+# iOS: 같은 앱의 EAS 프로젝트/인증서를 먼저 본인 계정에서 설정
+node "$FLORA_CLI" providers eas start --platform ios --profile production --execute
 ```
 
 실제 실행은 자동 설치·자동 로그인 없이 로컬 `eas build --non-interactive --no-wait --json` 명령을 사용한다. 빌드 결과에 신뢰 가능한 ID가 있어야 `requested`로 기록하고, CLI 성공에도 ID를 확인할 수 없다면 `submitted_unverified`로 표시하여 실제 EAS 대시보드에서 확인하도록 한다. 오류 출력·원문 로그·토큰은 Flora 출력에 포함되지 않는다. 현재는 macOS/Linux 로컬 CLI 경로만 제공하며 Windows 실행은 검증 전 지원하지 않는다.
