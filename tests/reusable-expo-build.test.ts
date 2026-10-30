@@ -15,7 +15,9 @@ test("Flora reusable native build is called by a private repo, not triggered on 
   assert.match(workflow, /github\.event_name == 'workflow_dispatch'/);
   assert.match(workflow, /github\.event\.repository\.default_branch/);
   assert.match(workflow, /github\.ref_protected/);
-  assert.match(workflow, /runs-on:.*inputs\.platform == 'ios'.*macos-latest.*ubuntu-latest/);
+  assert.match(workflow, /runs-on:.*inputs\.runner-type.*self-hosted.*flora-ios.*flora-android/);
+  assert.match(workflow, /macos-latest/);
+  assert.match(workflow, /ubuntu-latest/);
   assert.match(workflow, /persist-credentials: false/);
   assert.match(workflow, /permissions:\s*\n  contents: read/);
 });
@@ -43,6 +45,7 @@ test("sample caller is manual-only, scoped and requires pinning the reviewed Flo
   assert.doesNotMatch(caller, /pull_request_target:|secrets: inherit/);
   assert.match(caller, /uulab-official\/flora\/\.github\/workflows\/reusable-expo-build\.yml@FLORA_COMMIT_SHA/);
   assert.match(caller, /FLORA_IOS_P12_BASE64/);
+  assert.match(caller, /runner-type:.*\$\{\{ inputs\.runner-type \}\}/);
 });
 
 test("example native builder rejects invalid targets and unsigned Android production before compilation", () => {
