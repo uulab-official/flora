@@ -77,11 +77,17 @@ try {
   await both("empty"); await upload("소스 JSON 가져오기", "synthetic-invalid.json", "{");
   await page.getByRole("alert").filter({ hasText: "INVALID_INPUT" }).waitFor(); await both("input-error");
   phase = "imports-and-blocked-request";
+  phase = "imports-source-upload";
   await upload("소스 JSON 가져오기", "synthetic-source.json", harness.source());
+  phase = "imports-source-render";
   await page.locator("#app-name").filter({ hasText: "synthetic" }).waitFor(); assert.equal(await page.locator("#flavor-select option").count(), 11);
+  phase = "imports-flavor-select";
   await page.locator("#flavor-select").selectOption({ index: 3 });
+  phase = "imports-baseline-upload";
   await upload("개발 baseline 가져오기", "synthetic-baseline.json", await harness.baseline()); await page.locator("#baseline-history").getByText("통과", { exact: true }).waitFor();
+  phase = "imports-blocked-execution";
   await page.getByRole("button", { name: "실행 가능 여부 확인", exact: true }).click(); await page.locator("#run-history").getByText("실행 차단", { exact: true }).waitFor();
+  phase = "imports-populated-capture";
   await both("populated-blocked", true); checks.push("source-baseline-file-import", "eleven-flavors", "blocked-is-not-execution");
   phase = "anchor-cookie-reload";
   await page.locator(".skip").focus(); await page.keyboard.press("Enter"); assert.equal(new URL(page.url()).hash, "#workspace");
