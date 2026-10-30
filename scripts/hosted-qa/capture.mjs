@@ -542,7 +542,8 @@ try {
   assert.equal(rows.length, 10);
   for (const row of rows) {
     assert.ok(row.includes("1.2.3") && row.includes("example/synthetic-app"));
-    assert.equal(row.match(/미연결/g)?.length, 3, "UNKNOWN_DEPLOYMENT_ERROR_REVENUE_REQUIRED");
+    assert.ok(row.includes("선택 앱 OTA에서 확인"), "DEPLOYMENT_LINKED_TO_APP_OTA_VIEW");
+    assert.equal(row.match(/미연결/g)?.length, 2, "ERROR_AND_REVENUE_UNCONNECTED_REQUIRED");
   }
   await page.locator("#app-sort").selectOption("name-asc");
   checks.push("search-clear-and-empty-results", "source-filter-and-name-sort", "ten-row-flavor-pagination", "app-detail-selection-and-close", "declared-version-and-unknown-operations-metrics");
