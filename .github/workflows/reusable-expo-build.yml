@@ -76,7 +76,7 @@ jobs:
           }
           const root = fs.realpathSync(process.env.GITHUB_WORKSPACE);
           function verify(value) {
-            if (!value || value.startsWith('/') || value.includes('\\\\') || !/^[A-Za-z0-9._/-]+$/.test(value) ||
+            if (!value || value.startsWith('/') || value.includes('\\') || !/^[A-Za-z0-9._/-]+$/.test(value) ||
                 value.split('/').some(part => part === '..' || part === '')) throw new Error('FLORA_BUILD_PATH_INVALID');
             const resolved = fs.realpathSync(path.resolve(root, value));
             if (resolved !== root && !resolved.startsWith(root + path.sep)) throw new Error('FLORA_BUILD_PATH_OUTSIDE_REPOSITORY');
@@ -204,15 +204,18 @@ jobs:
             cp "$FILE" "$FLORA_ARTIFACT_DIRECTORY/"
             shasum -a 256 "$FILE"
           done
-          node <<'JS'
-          const { readdirSync, readFileSync, writeFileSync } = require('node:fs');
-          const { join } = require('node:path');
-          const { createHash } = require('node:crypto');
+          node --input-type=module <<'JS'
+          import { createReadStream } from 'node:fs';
+          import { readdirSync, writeFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          import { createHash } from 'node:crypto';
           const dir = process.env.FLORA_ARTIFACT_DIRECTORY;
-          const files = readdirSync(dir).sort().map(name => ({
-            name,
-            sha256: createHash('sha256').update(readFileSync(join(dir, name))).digest('hex')
-          }));
+          const files = [];
+          for (const name of readdirSync(dir).sort()) {
+            const sha = createHash('sha256');
+            for await (const chunk of createReadStream(join(dir, name))) sha.update(chunk);
+            files.push({ name, sha256: sha.digest('hex') });
+          }
           writeFileSync(join(dir, 'flora-build-receipt.json'), JSON.stringify({
             schemaVersion: 1,
             source: 'github-actions-caller',
