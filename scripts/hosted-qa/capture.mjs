@@ -433,7 +433,10 @@ try {
     console.error("FLORA_HOSTED_QA_READINESS " + JSON.stringify(state));
     throw error;
   }
-  await page.getByText("첫 소스 snapshot을 가져오세요").waitFor(); await both(page, "empty");
+  // The modern app-specific Source route shows the empty app placeholder;
+  // it no longer contains the legacy global-workspace onboarding sentence.
+  await page.locator("#empty").waitFor({ state: "visible" });
+  await both(page, "empty");
   const firstSession = await cookieProof(first.context, page); checks.push("real-scrypt-enrollment", "secure-httponly-strict-host-cookies", "no-browser-credential-storage");
   phase = "source-predispatch-abort-explicit-recovery";
   const sourceBytes = harness.source(), emptyState = await storedState(page);
