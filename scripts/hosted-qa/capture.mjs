@@ -397,13 +397,27 @@ try {
   assert.equal((await first.context.cookies()).length, 0); checks.push("invalid-setup-rejected-by-authority");
 
   phase = "real-enrollment-and-empty-state";
-  assert.equal((await authenticate(page, true)).status(), 200);
-  // Subphase markers reveal no account details or credentials.
+  const enrollment = await authenticate(page, true);
+  assert.equal(enrollment.status(), 200);
+  // Actual first registration redirects to /onboarding; importing a source
+  // now requires explicitly registering an application before accessing /source.
   phase = "real-enrollment-navigation";
-  // Successful first registration intentionally redirects to onboarding.
   await page.waitForURL(harness.origin + "/onboarding");
+  phase = "real-enrollment-register-synthetic-application";
+  const enrolledSession = await enrollment.json();
+  const created = await page.evaluate(async csrf => {
+    const response = await fetch("/api/apps", {
+      method: "POST", credentials: "same-origin", cache: "no-store",
+      headers: { "Content-Type": "application/json", "X-Flora-CSRF": csrf },
+      body: JSON.stringify({ name: "Synthetic Sample", repositoryId: "repo_synthetic", rootDirectory: "apps/sample" })
+    });
+    const receipt = await response.json();
+    return { status: response.status, appId: receipt?.id };
+  }, enrolledSession.csrfToken);
+  assert.equal(created.status, 201);
+  assert.match(created.appId ?? "", /^[a-z][a-z0-9_-]{2,95}$/);
   phase = "real-enrollment-workspace";
-  await page.goto(harness.origin + "/");
+  await page.goto(harness.origin + "/apps/" + created.appId + "/source");
   await ready(page);
   await page.getByText("첫 소스 snapshot을 가져오세요").waitFor(); await both(page, "empty");
   const firstSession = await cookieProof(first.context, page); checks.push("real-scrypt-enrollment", "secure-httponly-strict-host-cookies", "no-browser-credential-storage");
