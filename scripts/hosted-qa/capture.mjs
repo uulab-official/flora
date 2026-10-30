@@ -21,7 +21,7 @@ let phase = "preflight", harness, browser, temporary;
 const timeout = setTimeout(() => { console.error("FLORA_HOSTED_QA_FAILURE deadline"); process.exit(1); }, 360_000);
 try {
   assert.equal(process.env.GITHUB_ACTIONS, "true"); assert.equal(process.platform, "linux"); assert.notEqual(process.getuid(), 0);
-  assert.ok(process.env.GITHUB_REF === "refs/heads/main" || process.env.GITHUB_REF?.startsWith("refs/heads/verify/flora-hosted-"));
+  assert.ok(process.env.GITHUB_REF === "refs/heads/main" || process.env.GITHUB_REF?.startsWith("refs/heads/verify/flora-hosted-") || process.env.GITHUB_REF?.startsWith("refs/heads/verify/flora-dogfood-"));
   assert.match(process.env.GITHUB_SHA ?? "", /^[a-f0-9]{40}$/);
   assert.ok(process.env.FLORA_QA_PLAYWRIGHT_MODULE); assert.ok(process.env.FLORA_QA_FONTCONFIG);
   const fontConfig = resolve(process.env.FLORA_QA_FONTCONFIG); await access(fontConfig);
@@ -396,8 +396,14 @@ try {
   for (const id of ["password", "confirmation", "token"]) assert.equal(await page.locator("#" + id).inputValue(), "");
   assert.equal((await first.context.cookies()).length, 0); checks.push("invalid-setup-rejected-by-authority");
 
+  phase = "real-enrollment-onboarding-redirect";
+  // A successful first-owner enrollment intentionally redirects to
+  // /onboarding, not /. Exercise that real route before opening the dashboard.
+  assert.equal((await authenticate(page, true)).status(), 200);
+  await page.waitForURL(harness.origin + "/onboarding");
   phase = "real-enrollment-and-empty-state";
-  assert.equal((await authenticate(page, true)).status(), 200); await page.waitForURL(harness.origin + "/"); await ready(page);
+  await page.goto(harness.origin + "/");
+  await ready(page);
   await page.getByText("첫 소스 snapshot을 가져오세요").waitFor(); await both(page, "empty");
   const firstSession = await cookieProof(first.context, page); checks.push("real-scrypt-enrollment", "secure-httponly-strict-host-cookies", "no-browser-credential-storage");
   phase = "source-predispatch-abort-explicit-recovery";
