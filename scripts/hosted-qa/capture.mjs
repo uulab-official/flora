@@ -400,8 +400,10 @@ try {
   assert.equal((await authenticate(page, true)).status(), 200);
   // Subphase markers reveal no account details or credentials.
   phase = "real-enrollment-navigation";
-  await page.waitForURL(harness.origin + "/");
+  // Successful first registration intentionally redirects to onboarding.
+  await page.waitForURL(harness.origin + "/onboarding");
   phase = "real-enrollment-workspace";
+  await page.goto(harness.origin + "/");
   await ready(page);
   await page.getByText("첫 소스 snapshot을 가져오세요").waitFor(); await both(page, "empty");
   const firstSession = await cookieProof(first.context, page); checks.push("real-scrypt-enrollment", "secure-httponly-strict-host-cookies", "no-browser-credential-storage");
