@@ -55,15 +55,15 @@ function fakePanel() {
   }]));
   let selectedApp: string | null = "app_synthetic";
   let authenticated = true;
-  let pending: ((value: unknown) => void) | null = null;
+  let pending: (() => void) | null = null;
   let calls = 0;
   const env = { document: { getElementById(id: string) { return controls[id]; } },
     navigator: { clipboard: { writeText(_message: string) { calls++;
-      return new Promise<void>(resolve => { pending = resolve; });
+      return new Promise<void>(resolve => { pending = () => resolve(); });
     } } } };
   const scope = { appId: () => selectedApp, ready: () => authenticated };
   const panel = createBuildProviderConsole(env as unknown as Parameters<typeof createBuildProviderConsole>[0], scope);
-  return { panel, controls, get calls() { return calls; }, complete() { pending?.(undefined); pending = null; },
+  return { panel, controls, get calls() { return calls; }, complete() { pending?.(); pending = null; },
     setApp(value: string | null) { selectedApp = value; },
     logout() { authenticated = false; },
   };
