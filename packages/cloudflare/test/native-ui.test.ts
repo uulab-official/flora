@@ -7,10 +7,10 @@ class Node {
   setAttribute(k:string,v:string){this.attributes[k]=v;} append(...n:any[]){this.children.push(...n);} replaceChildren(...n:any[]){this.children=n;this.textContent='';}
   addEventListener(k:string,v:any){this.handlers[k]=v;} get text():string{return this.textContent+this.children.map(n=>n.text).join('');}
 }
-function setup(onView?:(app:string,view:any)=>void){
+function setup(onView?:(app:string,view:any)=>void, initialApp="a"){
   const nodes=new Map<string,Node>(); for(const m of readFileSync(new URL('../public/index.html',import.meta.url),'utf8').matchAll(/id="([^"]+)"/g))nodes.set(m[1]!,new Node());
   const document={getElementById:(id:string)=>{assert.ok(nodes.has(id),id);return nodes.get(id)!;},createElement:()=>new Node()};
-  let app='a',active=true;const calls:any[]=[],copies:string[]=[];
+  let app=initialApp,active=true;const calls:any[]=[],copies:string[]=[];
   const registry=()=>({appId:app,configured:true,credentials:[{kind:'android_keystore',activeVersion:2,metadata:{appIdentifier:'kr.co.a'}},{kind:'apns',activeVersion:4,metadata:{}},{kind:'google_play',activeVersion:3,metadata:{}}]});
   let responder:any=(url:string)=>url.endsWith('/credentials')?registry():{appId:app,jobs:[],runners:[],credentialUses:[]};
   nodes.get('native-platform')!.value='android'; nodes.get('native-runner-platform')!.value='android';
@@ -73,4 +73,42 @@ test('foreign or stale native cancellations are denied and uncertain outcome nev
  s.setApp('b');
  await s.panel.cancelJob(job.id);
  assert.equal(s.calls.filter(x=>x.url.endsWith('/cancel')).length,1);
+});
+
+
+test("completed native job exposes public receipt download only for its authenticated app",async()=>{
+  const s=setup(undefined,"app_native");
+  const job={
+    appId:"app_native",id:"native_job_signed",commitSha:"b".repeat(40),
+    platform:"android",state:"succeeded",appIdentifier:"co.example.native",createdAt:1,
+    artifactVerification:"runner_reported",
+    artifact:{fileName:"signed.aab",sha256:"a".repeat(64),byteLength:1234,
+      appIdentifier:"co.example.native",platform:"android",signerFingerprint:"c".repeat(64)},
+  };
+  s.respond((url:string)=>url.endsWith("/credentials")?s.registry():
+    {appId:"app_native",jobs:[job],runners:[],credentialUses:[]});
+  await s.panel.load();
+  const card=s.node("native-jobs").children[0]!;
+  const links=card.children.filter((item:any)=>item.attributes?.href?.startsWith("data:application/json"));
+  assert.equal(links.length,1);
+  const link=links[0]!;
+  assert.equal(link.attributes.download,"flora-native-build-receipt.json");
+  const receipt=JSON.parse(decodeURIComponent(link.attributes.href.split(",")[1]));
+  assert.equal(receipt.appId,"app_native");
+  assert.equal(receipt.artifact.fileName,"signed.aab");
+  assert.equal(receipt.artifactVerification,"runner_reported");
+  assert.ok(!link.attributes.href.includes("privateKey"));
+  s.setApp("app_other");
+  assert.equal(s.node("native-jobs").children.length,0);
+});
+test("native receipt download never appears for jobs without confirmed Runner report",async()=>{
+  const s=setup(undefined,"app_native");
+  const job={appId:"app_native",id:"native_job_unknown",commitSha:"b".repeat(40),
+    platform:"android",state:"succeeded",appIdentifier:"co.example.native",createdAt:1,
+    artifactVerification:null,artifact:{fileName:"app.apk",sha256:"a".repeat(64),byteLength:123,
+      appIdentifier:"co.example.native",platform:"android",signerFingerprint:"c".repeat(64)}};
+  s.respond((url:string)=>url.endsWith("/credentials")?s.registry():
+    {appId:"app_native",jobs:[job],runners:[],credentialUses:[]});
+  await s.panel.load();
+  assert.equal(s.node("native-jobs").children[0]!.children.some((x:any)=>x.attributes?.download),false);
 });
