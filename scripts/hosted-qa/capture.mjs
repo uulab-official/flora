@@ -404,7 +404,11 @@ try {
   phase = "real-enrollment-and-empty-state";
   await page.goto(harness.origin + "/");
   await ready(page);
-  await page.getByText("첫 소스 snapshot을 가져오세요").waitFor(); await both(page, "empty");
+  // The current hosted '/' is the projects dashboard, not the legacy
+  // snapshot-import view. Assert the visible empty project workspace.
+  await page.locator("#application-panel").waitFor({ state: "visible" });
+  await page.getByRole("button", { name: "새 프로젝트", exact: true }).waitFor();
+  await both(page, "empty");
   const firstSession = await cookieProof(first.context, page); checks.push("real-scrypt-enrollment", "secure-httponly-strict-host-cookies", "no-browser-credential-storage");
   phase = "source-predispatch-abort-explicit-recovery";
   const sourceBytes = harness.source(), emptyState = await storedState(page);
