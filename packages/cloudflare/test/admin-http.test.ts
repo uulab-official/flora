@@ -22,6 +22,10 @@ test("explicit admin documents are admitted with no fallback or changed body rul
     assert.throws(() => routeRequest(new Request(origin + path)), (error: unknown) => error instanceof HttpFailure && error.status === 404, path);
   }
   assert.equal(routeRequest(new Request(origin + "/admin-routes.js")).kind, "public-asset");
+  const route = routeRequest(new Request(origin + "/native-artifact-receipt.js"));
+  assert.equal(route.kind, "private-asset");
+  assert.equal(route.path, "/native-artifact-receipt.js");
+  assert.throws(() => routeRequest(new Request(origin + "/native-artifact-receipt.js", { method:"POST" })), (e:unknown) => e instanceof HttpFailure && e.status === 405);
 });
 
 test("build provider source is a private authenticated module and cannot accept mutations", () => {
