@@ -61,11 +61,12 @@ export function selectedAndroidTask(profile) {
   return 'assembleRelease';
 }
 function androidBuild(root, profile) {
+  const task = selectedAndroidTask(profile);
   prebuild(root, 'android');
   const gradle = join(root, 'android', 'gradlew');
   if (!existsSync(gradle)) throw new Error('FLORA_GRADLE_WRAPPER_MISSING');
   chmodSync(gradle, statSync(gradle).mode | 0o100);
-  execute(gradle, [selectedAndroidTask(profile), '--no-daemon'], join(root, 'android'));
+  execute(gradle, [task, '--no-daemon'], join(root, 'android'));
   const output = join(root, 'android', 'app', 'build', 'outputs', 'apk');
   const files = listArtifacts(output, '.apk').filter(file => /(^|[/\\])release([/\\]|$)/i.test(file));
   stage(root, files);
