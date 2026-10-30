@@ -143,12 +143,10 @@ export async function runRemoteBuild(
       ...(plan.method === "POST" ? { body: JSON.stringify(payload ?? {}) } : {}),
     });
   } catch { return bad("PROVIDER_NETWORK_UNAVAILABLE"); }
-  if (response.status < 200 || response.status >= 300) {
-    if (plan.provider === "codemagic" && plan.operation === "cancel" && response.status === 208) {
-      return { provider: plan.provider, operation: plan.operation, state: "already_finished", buildId: plan.buildId! };
-    }
-    mapFailure(response.status);
+  if (plan.provider === "codemagic" && plan.operation === "cancel" && response.status === 208) {
+    return { provider: plan.provider, operation: plan.operation, state: "already_finished", buildId: plan.buildId! };
   }
+  if (response.status < 200 || response.status >= 300) mapFailure(response.status);
   const body = await readBoundedResponse(response);
   if (plan.operation === "cancel") return { provider: plan.provider, operation: "cancel", state: "cancel_requested", buildId: plan.buildId! };
   const data = record(body);
