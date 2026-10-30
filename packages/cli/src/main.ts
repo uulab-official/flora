@@ -3,6 +3,7 @@ import {createSetupIO} from "./setup/terminal.js";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 import { DomainError, ensure, listIntegrationProviders } from "@app-ops/core";
+import { parseRemoteBuildPlan, runRemoteBuild, RemoteProviderError } from "./providers-external.js";
 import { resolveSnapshot } from "@app-ops/config";
 import { readInputFile, decodeWorkflow } from "./config-command.js";
 import { runSetupCommand } from "./setup-command.js";
@@ -22,7 +23,7 @@ const productName = (process.env.PRODUCT_NAME || "Flora")
 const help =
   productName +
   " — " +
-  "Local App Operations Foundation\nplatform doctor [--json] [--strict] [--runner-service <absolute-service.json>]\nflora providers list [--json]\nplatform config validate --file <json>\nplatform job simulate --file <json> [--scenario happy-path|runner-replacement|unsafe-expiry]\nflora dogfood --help\nflora setup [runner | --resume <private-state> | renew --state <private-state> | inspect --state <private-state> --json]\nDoctor --strict exits 1 when required prerequisites or selected local Runner checks are not verified.\nRunner doctor only reads local files and the configured local Docker socket; server connectivity and native builds remain unverified.\nFoundation commands are local. setup can provision a new Cloudflare server and guide a PC Runner; review its explicit resource scope.\n";
+  "Local App Operations Foundation\nplatform doctor [--json] [--strict] [--runner-service <absolute-service.json>]\nflora providers list [--json]\nflora providers codemagic start --app ID --workflow ID --branch BRANCH [--execute]\nflora providers codemagic cancel --build ID [--execute]\nflora providers bitrise start --app ID --workflow ID --branch BRANCH [--execute]\nflora providers bitrise status|cancel --app ID --build ID [--execute]\nplatform config validate --file <json>\nplatform job simulate --file <json> [--scenario happy-path|runner-replacement|unsafe-expiry]\nflora dogfood --help\nflora setup [runner | --resume <private-state> | renew --state <private-state> | inspect --state <private-state> --json]\nDoctor --strict exits 1 when required prerequisites or selected local Runner checks are not verified.\nRunner doctor only reads local files and the configured local Docker socket; server connectivity and native builds remain unverified.\nFoundation commands are local. setup can provision a new Cloudflare server and guide a PC Runner; review its explicit resource scope.\n";
 function doctorOptions(argv: readonly string[]): { strict: boolean; runnerService?: string } | null {
   const seen = new Set<string>();
   let runnerService: string | undefined;
@@ -54,17 +55,23 @@ export async function runCli(
       return 0;
     }
     if (argv[0] === "providers") {
-      if (argv[1] !== "list" || (argv.length !== 2 && !(argv.length === 3 && argv[2] === "--json"))) {
-        io.stderr("USAGE_ERROR\n" + help); return 2;
+      if (argv[1] === "list") {
+        if (argv.length !== 2 && !(argv.length === 3 && argv[2] === "--json")) {
+          io.stderr("USAGE_ERROR\n" + help); return 2;
+        }
+        const providers = listIntegrationProviders();
+        // This catalog is NOT proof of connection or a successful build.
+        if (argv[2] === "--json") {
+          io.stdout(JSON.stringify({ schemaVersion: 1, connected: false, providers }, null, 2) + "\n");
+        } else {
+          io.stdout("Flora build/OTA integrations (connected status not checked)\n" +
+            providers.map(item => item.id + "\t" + item.execution + "\t" + item.maturity + "\t" + item.platforms.join(",") + "\n").join(""));
+        }
+        return 0;
       }
-      const providers = listIntegrationProviders();
-      // These are integration capabilities, NOT service connection or build status.
-      if (argv[2] === "--json") {
-        io.stdout(JSON.stringify({ schemaVersion: 1, connected: false, providers }, null, 2) + "\n");
-      } else {
-        io.stdout("Flora build/OTA integrations (connected status not checked)\n" +
-          providers.map(item => item.id + "\t" + item.execution + "\t" + item.maturity + "\t" + item.platforms.join(",") + "\n").join(""));
-      }
+      const plan = parseRemoteBuildPlan(argv.slice(1));
+      const result = await runRemoteBuild(plan, process.env);
+      io.stdout(JSON.stringify(result, null, 2) + "\n");
       return 0;
     }
     if (argv[0] === "doctor") {
@@ -151,7 +158,7 @@ export async function runCli(
         error:
           e instanceof DomainError
             ? e.safeMessage
-            : "INPUT_OR_OPERATION_FAILED",
+            : e instanceof RemoteProviderError ? e.code : "INPUT_OR_OPERATION_FAILED",
       }) + "\n",
     );
     return 1;
