@@ -36,6 +36,7 @@ const assets: Record<string, { kind: "public-asset" | "private-asset"; file: str
   "/": { kind: "private-asset", file: "/index.html" }, "/app.js": { kind: "private-asset", file: "/app.js" }, "/project-views.js": { kind: "private-asset", file: "/project-views.js" }, "/app.css": { kind: "private-asset", file: "/app.css" },
   "/deployment-devices.js": { kind: "private-asset", file: "/deployment-devices.js" },
   "/auto-rollback.js": { kind: "private-asset", file: "/auto-rollback.js" },
+  "/build-provider-panel.js": { kind: "private-asset", file: "/build-provider-panel.js" },
 };
 export function routeRequest(request: Request, internal = false): Route {
   const url = new URL(request.url), path = url.pathname;
