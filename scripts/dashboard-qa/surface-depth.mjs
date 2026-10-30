@@ -63,6 +63,17 @@ export async function verifySurfaceDepth(page) {
     await page.emulateMedia({ reducedMotion: null });
   }
   const normal = await page.evaluate(read);
-  assert.deepEqual(normal.map(value => value.bounds), surfaces.map(value => value.bounds), "ELEVATION_MUST_NOT_CHANGE_LAYOUT");
+  const before = surfaces.map(value => value.bounds), after = normal.map(value => value.bounds);
+  // This CI fixture uses synthetic content only. Report bounded geometry
+  // deltas, never private text, URLs, source files or browser state.
+  if (JSON.stringify(before) !== JSON.stringify(after)) {
+    const deltas = normal.slice(0, 32).flatMap((item, index) => {
+      const prior = surfaces[index]; if (!prior || prior.selector !== item.selector) return [{ selector: item.selector, state: "selection-changed" }];
+      const diff = item.bounds.map((value, i) => Math.round((value - prior.bounds[i]) * 100) / 100);
+      return diff.some(value => value !== 0) ? [{ selector: item.selector, delta: diff }] : [];
+    }).slice(0, 8);
+    console.error("FLORA_QA_SURFACE_LAYOUT_DELTA " + JSON.stringify({ before: before.length, after: after.length, deltas }));
+  }
+  assert.deepEqual(after, before, "ELEVATION_MUST_NOT_CHANGE_LAYOUT");
   return { reducedMotionVerified: true, layoutStable: true, interactionChecks, surfaces };
 }

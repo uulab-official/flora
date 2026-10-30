@@ -139,10 +139,23 @@ try {
     await page.waitForFunction(() => document.getElementById("workspace")?.getAttribute("aria-busy") === "false" && document.getElementById("source-file")?.disabled === false);
   }
   async function navigate(page, view) {
-    const mobile = page.locator("#mobile-" + view);
-    await (await mobile.isVisible() ? mobile : page.locator("#nav-" + view)).click();
-    await page.locator("#view-" + view).waitFor({ state: "visible" });
-    for (const other of ["apps", "sources", "history", "account"].filter(value => value !== view)) assert.equal(await page.locator("#view-" + other).isHidden(), true);
+    // New app-scoped routes replace the former single legacy-view navigation.
+    // Use visible authenticated controls rather than hidden legacy mobile nav.
+    const target = ({ apps: "sources", sources: "sources", history: "history", account: "account" })[view];
+    assert.ok(target, "UNKNOWN_SYNTHETIC_VIEW");
+    await page.setViewportSize({ width: 1487, height: 1058 });
+    await page.locator("#nav-" + target).click();
+    const expected = view === "apps" ? "view-apps" : "view-" + view;
+    await page.locator("#" + expected).waitFor({ state: "visible" });
+    if (view === "apps" || view === "sources") {
+      // The source page now deliberately shows both declared apps and metadata.
+      assert.equal(await page.locator("#view-apps").isVisible(), true);
+      assert.equal(await page.locator("#view-sources").isVisible(), true);
+      assert.equal(await page.locator("#view-history").isHidden(), true);
+    } else {
+      assert.equal(await page.locator("#view-apps").isHidden(), true);
+      assert.equal(await page.locator("#view-sources").isHidden(), true);
+    }
   }
   async function mobileTargets(page, state, selectors) {
     assert.equal(page.viewportSize().width, 390, "MOBILE_VIEWPORT_REQUIRED");
@@ -410,6 +423,20 @@ try {
   await page.getByRole("button", { name: "새 프로젝트", exact: true }).waitFor();
   await both(page, "empty");
   const firstSession = await cookieProof(first.context, page); checks.push("real-scrypt-enrollment", "secure-httponly-strict-host-cookies", "no-browser-credential-storage");
+  // Real registration maps synthetic repository/root to an application before
+  // using the current app-scoped Source/History pages.
+  phase = "register-synthetic-app";
+  await page.setViewportSize({ width: 1487, height: 1058 });
+  await page.locator("#project-register-open").click();
+  await page.locator("#application-form").waitFor({ state: "visible" });
+  await page.locator("#application-name").fill("Synthetic QA App");
+  await page.locator("#application-repository").fill("repo_synthetic");
+  await page.locator("#application-root").fill("apps/sample");
+  await page.locator("#application-register").click();
+  await page.waitForURL(url => /^\/apps\/[a-z][a-z0-9_-]{2,95}(?:\/|$)/.test(url.pathname));
+  await navigate(page, "sources");
+  await ready(page);
+  checks.push("synthetic-application-registered-with-repository-root");
   phase = "source-predispatch-abort-explicit-recovery";
   const sourceBytes = harness.source(), emptyState = await storedState(page);
   const beforeAbort = uploadPosts.source; abortNextSourceBeforeDispatch = true;
