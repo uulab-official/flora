@@ -59,7 +59,7 @@ Apple Developer 배포 인증서, 해당 앱의 프로비저닝 프로파일, Xc
 - 각 앱의 build script는 자신의 프로젝트 루트에 `dist/flora/*.apk`, `*.aab` 또는 `*.ipa` 중 해당 플랫폼 파일을 **1~10개** 생성해야 한다. 다른 파일·심볼릭 링크는 아티팩트로 가져가지 않는다.
 - `flora-build-receipt.json`은 소스 SHA, 호출 저장소, run ID, 플랫폼·프로필, 파일별 SHA256을 기록한다. `signingVerified: false`는 **서버가 독립 검증하지 않았음**을 뜻하며, 스토어 업로드 적합성을 증명하지 않는다.
 - 파일과 실행 로그는 GitHub 비공개 저장소에 속한다. Artifacts는 기본 7일 보존이며 Actions 및 저장소 권한 정책을 따른다.
-- `pull_request`, `pull_request_target`에서 서명된 실행을 요청하지 않는다. 예제는 수동 실행만 허용한다. 본인이 추가한 push 트리거도 보호된 branch만 허용해야 한다.
+- `pull_request`, `pull_request_target`에서 서명된 실행을 요청하지 않는다. 예제는 **기본 브랜치에서 수동 실행**만 허용한다. 추가 push 트리거는 GitHub가 보호된 branch로 표시한 경우에만 실행된다. 다른 ref에서 호출하면 Job은 건너뛴다.
 
 ## OTA와의 관계
 
