@@ -25,7 +25,7 @@ Hard requirements:
 2. Identity: email/password or external login, secure account recovery and sessions, CSRF/origin guard, team roles, invitation flows, rate limits. Keep legacy self-host auth untouched until cutover is tested.
 3. GitHub: customer-approved installation selection and precise repo access. Separate read permissions from optional Actions:write; no blanket personal access tokens.
 4. Native build: call the reusable workflow in **each private source repository**, not in Flora's public Actions context. For users without GitHub Actions quotas allow their own Mac/Linux/Windows runner; iOS requires macOS/Xcode. Observe run/job IDs and verify artifacts before marking complete.
-5. OTA: preserve existing \`@flora/ota\` engine and device rollback, then add tenant-scoped signing keys, channel/runtime compatibility, per-tenant storage and limits, BYOC adapters. No auto migration or deletion of existing releases.
+5. OTA: preserve existing `@flora/ota` engine and device rollback, then add tenant-scoped signing keys, channel/runtime compatibility, per-tenant storage and limits, BYOC adapters. No auto migration or deletion of existing releases.
 6. Store delivery: explicit separately authorized Apple/Google credentials, app signing checks, idempotent review/submission transitions, human confirmation for irreversible changes.
 7. Rollout: synthetic adversarial cross-tenant tests, quota and cost caps, upgrade/downgrade/rollback rehearsals, and real private-project device pilots before enabling any hosted account.
 
@@ -40,12 +40,12 @@ Hard requirements:
 
 ## Existing source boundaries
 
-- \`packages/cloudflare/src/auth-state.ts\`, \`auth-do.ts\`: existing single owner auth/state, must be migrated carefully.
-- \`packages/cloudflare/src/managed-connections.ts\`: GitHub App installation/owner assumptions.
-- \`packages/cloudflare/src/managed-ci.ts\`, \`github-oidc.ts\`: owner-specific OTA CI admission.
-- \`packages/ota-runner\`, \`packages/ota-sdk\`: working job and signed OTA implementations to preserve.
-- \`docs/architecture/control-plane-and-runners.ko.md\`: runner trust and lease/fence architecture.
-- \`docs/development/reusable-expo-build.ko.md\`: initial private-caller native Actions implementation.
+- `packages/cloudflare/src/auth-state.ts`, `auth-do.ts`: existing single owner auth/state, must be migrated carefully.
+- `packages/cloudflare/src/managed-connections.ts`: GitHub App installation/owner assumptions.
+- `packages/cloudflare/src/managed-ci.ts`, `github-oidc.ts`: owner-specific OTA CI admission.
+- `packages/ota-runner`, `packages/ota-sdk`: working job and signed OTA implementations to preserve.
+- `docs/architecture/control-plane-and-runners.ko.md`: runner trust and lease/fence architecture.
+- `docs/development/reusable-expo-build.ko.md`: initial private-caller native Actions implementation.
 
 ## Release gate
 
