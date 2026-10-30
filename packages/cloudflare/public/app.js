@@ -349,6 +349,11 @@ export function createNativePanel(env, context) {
       if (job.updatedAt) card.append(pair(document, "최근 변경", date(job.updatedAt)));
       if (job.code) card.append(pair(document, "결과 코드", job.code));
       if (job.artifact) card.append(pair(document, "서명 산출물", job.artifact.fileName));
+      if (["queued", "leased"].includes(job.state) && /^[a-z][a-z0-9_-]{2,95}$/.test(job.id)) {
+        const cancel = element(document, "button", job.state === "leased" ? "Runner 작업 취소 요청" : "대기 빌드 취소", "button secondary small");
+        cancel.type = "button"; cancel.setAttribute("data-native-cancel", job.id); cancel.disabled = loading || writing;
+        card.append(cancel);
+      }
       card.append(technicalDetails(document, [["작업", job.id], ["Commit", job.commitSha], ...(job.artifact ? [["산출물 SHA-256", job.artifact.sha256], ["서명자 SHA-256", job.artifact.signerFingerprint]] : [])]));
       node("native-jobs").append(card);
     }
@@ -407,6 +412,27 @@ export function createNativePanel(env, context) {
       else { known = false; status("처리 결과를 확인하지 못했습니다. 이력을 새로 확인한 뒤 진행하세요. 자동으로 다시 요청하지 않습니다."); }
     } finally { if (version === epoch) { writing = false; controls(); } }
   }
+  async function cancelJob(jobId) {
+    if (!known || loading || writing || !context.ready() || !context.appId() ||
+        !/^[a-z][a-z0-9_-]{2,95}$/.test(jobId) ||
+        !view?.jobs?.some(job => job.appId === context.appId() && job.id === jobId && ["queued","leased"].includes(job.state))) return;
+    const app = context.appId(), version = ++epoch;
+    writing = true; hideToken(); controls(); status("이 앱의 빌드 취소 처리 중…");
+    try {
+      const receipt = await context.api(`/api/apps/${encodeURIComponent(app)}/native/jobs/${encodeURIComponent(jobId)}/cancel`, "{}");
+      if (!current(app, version)) return;
+      if (receipt?.appId !== app || receipt?.id !== jobId ||
+          !["cancelled", "cancel_requested", "succeeded", "failed"].includes(receipt.state)) throw new Error("INVALID_NATIVE_CANCEL_RECEIPT");
+      writing = false;
+      await load();
+      if (current(app, epoch)) status(receipt.state === "cancel_requested" ? "취소 요청을 전달했습니다. Runner 완료 여부는 이력에서 다시 확인하세요." :
+        receipt.state === "cancelled" ? "대기 작업 취소를 확인했습니다." : "작업이 이미 종료되었습니다. 최신 이력을 확인하세요.");
+    } catch (error) {
+      if (!current(app, version)) return;
+      if (error.status === 401) context.expire();
+      else { known = false; status("취소 완료 여부를 확인하지 못했습니다. 빌드 이력을 다시 확인하세요. 자동으로 재요청하지 않습니다."); }
+    } finally { if (version === epoch) { writing = false; controls(); } }
+  }
   async function enqueue() {
     const platform = node("native-platform").value, commitSha = node("native-commit").value.trim(), appIdentifier = node("native-app-identifier").value.trim(), teamId = node("native-team-id").value.trim(), selected = selectedCredentials();
     if (!known || selected.some(item => !item) || !["ios", "android"].includes(platform) || !/^[a-f0-9]{40}$/.test(commitSha) || !/^[a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z0-9_]+)+$/.test(appIdentifier) || platform === "ios" && !/^[A-Z0-9]{10}$/.test(teamId)) { status("GitHub Commit SHA, 앱 식별자와 활성 서명 키를 확인하세요. iOS는 Apple Team ID가 필요합니다."); return; }
@@ -424,6 +450,10 @@ export function createNativePanel(env, context) {
     try { await env.navigator.clipboard.writeText(token); if (current(app, version)) status("네이티브 Runner 토큰을 복사했습니다. 안전한 설정에 저장하세요."); }
     catch { if (current(app, version)) status("복사하지 못했습니다. 표시된 토큰을 안전하게 보관하세요."); }
   }
+  node("native-jobs").addEventListener("click", event => {
+    const id = event.target?.getAttribute?.("data-native-cancel");
+    if (id) void cancelJob(id);
+  });
   node("native-refresh").addEventListener("click", () => { void load(); });
   node("native-editor").addEventListener("toggle", () => { if (node("native-editor").open && !node("page-builds")?.hidden) void load(); else if (!node("native-editor").open) hideToken(); });
   node("native-platform").addEventListener("change", () => { requestKey = null; node("native-app-identifier").value = ""; node("native-team-id").value = ""; defaults(); });
@@ -432,7 +462,7 @@ export function createNativePanel(env, context) {
   node("native-runner-form").addEventListener("submit", event => { event.preventDefault(); void enroll(); });
   node("native-runner-copy").addEventListener("click", () => { void copyToken(); });
   node("native-runner-hide").addEventListener("click", hideToken);
-  controls(); return { load, clear, controls, enqueue, enroll, copyToken, hideToken };
+  controls(); return { load, clear, controls, enqueue, cancelJob, enroll, copyToken, hideToken };
 }
 
 export async function startClient(env) {
