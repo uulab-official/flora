@@ -59,10 +59,10 @@ function fakePanel() {
   let calls = 0;
   const env = { document: { getElementById(id: string) { return controls[id]; } },
     navigator: { clipboard: { writeText(_message: string) { calls++;
-      return new Promise(resolve => { pending = resolve; });
+      return new Promise<void>(resolve => { pending = resolve; });
     } } } };
   const scope = { appId: () => selectedApp, ready: () => authenticated };
-  const panel = createBuildProviderConsole(env, scope);
+  const panel = createBuildProviderConsole(env as unknown as Parameters<typeof createBuildProviderConsole>[0], scope);
   return { panel, controls, get calls() { return calls; }, complete() { pending?.(undefined); pending = null; },
     setApp(value: string | null) { selectedApp = value; },
     logout() { authenticated = false; },
@@ -71,26 +71,26 @@ function fakePanel() {
 
 test("web provider chooser never executes remote builds; changing app or logging out clears private guidance", async () => {
   const state = fakePanel();
-  assert.match(state.controls["build-provider-command"].textContent, /gh workflow run/);
-  assert.equal(state.controls["build-provider-copy"].disabled, false);
-  state.controls["build-provider-copy"].dispatch("click");
+  assert.match(state.controls["build-provider-command"]!.textContent, /gh workflow run/);
+  assert.equal(state.controls["build-provider-copy"]!.disabled, false);
+  state.controls["build-provider-copy"]!.dispatch("click");
   assert.equal(state.calls, 1);
   state.setApp("app_next");
   state.panel.render();
   state.complete();
   await Promise.resolve();
-  assert.doesNotMatch(state.controls["build-provider-status"].textContent, /복사 완료/);
-  state.controls["build-provider-choice"].value = "local-script";
-  state.controls["build-provider-profile"].value = "production";
-  state.controls["build-provider-choice"].dispatch("change");
-  assert.equal(state.controls["build-provider-copy"].disabled, true);
-  assert.equal(state.controls["build-provider-command"].textContent, "");
+  assert.doesNotMatch(state.controls["build-provider-status"]!.textContent, /복사 완료/);
+  state.controls["build-provider-choice"]!.value = "local-script";
+  state.controls["build-provider-profile"]!.value = "production";
+  state.controls["build-provider-choice"]!.dispatch("change");
+  assert.equal(state.controls["build-provider-copy"]!.disabled, true);
+  assert.equal(state.controls["build-provider-command"]!.textContent, "");
   state.logout();
   state.panel.clear();
   state.panel.render();
-  assert.equal(state.controls["build-provider-copy"].disabled, true);
-  assert.equal(state.controls["build-provider-app"].textContent, "앱을 선택한 뒤 연결 방법을 확인하세요.");
-  assert.equal(state.controls["build-provider-command"].textContent, "");
+  assert.equal(state.controls["build-provider-copy"]!.disabled, true);
+  assert.equal(state.controls["build-provider-app"]!.textContent, "앱을 선택한 뒤 연결 방법을 확인하세요.");
+  assert.equal(state.controls["build-provider-command"]!.textContent, "");
 });
 
 test("hosted page serves a bounded, token-free copy-only provider chooser with required DOM IDs", () => {
