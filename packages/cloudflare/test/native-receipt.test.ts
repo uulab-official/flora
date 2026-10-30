@@ -12,9 +12,8 @@ const build={
   },
 };
 test("authenticated native success receipt exports only fixed allowlisted public metadata",()=>{
-  const receipt=createNativePublicReceipt(appId, {...build,
-    bearerToken:"private", privateKey:"secret", lease:{ runnerId:"secret" },
-  });
+  const untrusted={...build,bearerToken:"private",privateKey:"secret",lease:{runnerId:"secret"}};
+  const receipt=createNativePublicReceipt(appId,untrusted);
   assert.ok(receipt);
   const result=JSON.parse(receipt);
   assert.deepEqual(Object.keys(result).sort(),[
