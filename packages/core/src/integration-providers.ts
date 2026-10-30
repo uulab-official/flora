@@ -38,7 +38,7 @@ const builtIns: readonly IntegrationProvider[] = Object.freeze([
   descriptor("flora-pc-native", "Flora native build runner", "local-pc", "manual-setup",
     ["build"], ["ios", "android"], "runner-token", "docs/development/native-build-signing.ko.md"),
   descriptor("github-actions-native", "GitHub Actions private caller", "github-actions", "workflow-template",
-    ["build"], ["ios", "android"], "github-app", "docs/development/reusable-expo-build.ko.md"),
+    ["build"], ["ios", "android"], "none", "docs/development/reusable-expo-build.ko.md"),
   descriptor("expo-eas", "Expo EAS (future adapter)", "external-api", "planned",
     ["build", "ota.publish"], ["ios", "android"], "user-api-key", "docs/development/build-provider-options.ko.md"),
   descriptor("codemagic", "Codemagic (future adapter)", "external-api", "planned",
