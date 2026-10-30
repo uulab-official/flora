@@ -9,6 +9,98 @@ function node(document, tag, text, className = "") { const value = document.crea
 function stamp(value) { if (!Number.isSafeInteger(value) || value < 0) return "시각 미확인"; return new Date(value).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) + " KST"; }
 function platform(value) { return value === "ios" ? "iOS" : value === "android" ? "Android" : "플랫폼 미확인"; }
 function pair(document, label, value) { const row = node(document, "div", undefined, "fact-row"); row.append(node(document, "span", label, "fact-label"), node(document, "span", value, "fact-value")); return row; }
+
+/** Inert provider choices for self-hosted installations. This is not a
+ * connection status, build dispatcher, token form, or proof of native signing.
+ * Never interpolate a repo name, token or command from untrusted app metadata. */
+export const BUILD_PROVIDER_OPTIONS = Object.freeze({
+  "flora-native": { label: "Flora PC 네이티브 Runner", execution: "local-pc" },
+  "local-script": { label: "내 PC에서 Expo CLI 직접 실행", execution: "local-pc" },
+  "github-hosted": { label: "내 비공개 GitHub Actions", execution: "github-actions" },
+  "github-selfhosted": { label: "내 PC의 GitHub self-hosted Runner", execution: "github-actions" },
+  "expo-eas": { label: "Expo EAS · 내 계정", execution: "external" },
+  "codemagic": { label: "Codemagic · 내 계정", execution: "external" },
+  "bitrise": { label: "Bitrise · 내 계정", execution: "external" },
+});
+
+/** Returned commands are intentionally dry-run or explicit copy-only examples.
+ * A copy operation never starts a billable cloud build. */
+export function buildProviderPreview(value, platform, profile) {
+  if (!Object.hasOwn(BUILD_PROVIDER_OPTIONS, value) ||
+      !["android", "ios"].includes(platform) ||
+      !["preview", "production"].includes(profile)) return null;
+  const intro = "명령 안내만 표시합니다. Flora가 실행하지 않으며 각 제공자의 요금·권한을 확인하세요.";
+  const docs = "https://github.com/uulab-official/flora/blob/main/docs/development/build-provider-options.ko.md";
+  let guidance = "", command = "", usable = true;
+  if (value === "flora-native") {
+    guidance = "아래 네이티브 Runner·서명 폼에서 앱의 GitHub SHA와 인증서를 고정해 직접 요청하세요. PC 실행 상태와 실제 서명 결과는 별도로 확인합니다.";
+    usable = false;
+  } else if (value === "local-script") {
+    if (platform === "android" && profile === "production") {
+      guidance = "예제는 Android Debug APK 전용입니다. Play Store용 서명 AAB는 앱별 Keystore와 검증된 production 스크립트를 먼저 준비해야 합니다.";
+      usable = false;
+    } else {
+      guidance = platform === "ios" ? "Mac/Xcode·CocoaPods·Apple 인증서와 ExportOptions.plist가 필요합니다. 원본 앱 폴더에서 실행하세요." :
+        "Android SDK·Java와 앱별 의존성이 필요합니다. 이 예제는 설치용 Debug APK를 만듭니다.";
+      command = (platform === "ios" ? "FLORA_IOS_EXPORT_OPTIONS_PLIST=/PRIVATE/PATH/ExportOptions.plist " : "") +
+        "FLORA_PROFILE=" + profile + " node scripts/flora-expo-build.mjs " + platform;
+    }
+  } else if (value === "github-hosted" || value === "github-selfhosted") {
+    guidance = "비공개 앱 저장소에 Flora 호출 Workflow를 먼저 설치하세요. 이 명령은 GitHub CLI가 실행될 경우 실제 Actions 작업을 생성할 수 있으며, Flora에서는 복사만 합니다.";
+    command = "gh workflow run flora-build.yml --ref main -f platform=" + platform +
+      " -f profile=" + profile + " -f runner-type=" + (value === "github-hosted" ? "github-hosted" : "self-hosted");
+  } else if (value === "expo-eas") {
+    guidance = "본인 Expo 계정·EAS 프로젝트·고정 eas-cli 버전·EXPO_TOKEN이 필요합니다. 아래 명령은 --execute가 없는 사전 확인용입니다.";
+    command = "node /ABSOLUTE/PATH/TO/FLORA/packages/cli/dist/main.js providers eas start --platform " + platform + " --profile " + profile;
+  } else if (value === "codemagic") {
+    guidance = "본인 CODEMAGIC_API_TOKEN과 Codemagic 앱·Workflow 식별자가 필요합니다. 아래는 실제 API를 호출하지 않는 dry-run입니다.";
+    command = "node /ABSOLUTE/PATH/TO/FLORA/packages/cli/dist/main.js providers codemagic start --app YOUR_CODEMAGIC_APP_ID --workflow YOUR_WORKFLOW --branch main";
+  } else {
+    guidance = "본인 BITRISE_API_TOKEN과 Bitrise 앱 슬러그·Workflow 식별자가 필요합니다. 아래는 실제 API를 호출하지 않는 dry-run입니다.";
+    command = "node /ABSOLUTE/PATH/TO/FLORA/packages/cli/dist/main.js providers bitrise start --app YOUR_BITRISE_APP_SLUG --workflow YOUR_WORKFLOW --branch main";
+  }
+  return Object.freeze({ key: value, title: BUILD_PROVIDER_OPTIONS[value].label,
+    execution: BUILD_PROVIDER_OPTIONS[value].execution, intro, guidance, command, docs, usable });
+}
+
+/** Scoped to the authenticated current app. Text-only, no mutable backend or
+ * secrets; stale clipboard writes cannot paint a different app's success. */
+export function createBuildProviderConsole(env, context) {
+  const { document } = env;
+  const byId = id => document.getElementById(id);
+  const type = byId("build-provider-choice"), os = byId("build-provider-platform"), profile = byId("build-provider-profile");
+  const appName = byId("build-provider-app"), description = byId("build-provider-description");
+  const command = byId("build-provider-command"), copy = byId("build-provider-copy"), status = byId("build-provider-status");
+  let epoch = 0;
+  function render() {
+    ++epoch;
+    const appId = context.appId(), active = context.ready() && /^[a-z][a-z0-9_-]{2,95}$/.test(appId ?? "");
+    const plan = buildProviderPreview(type.value, os.value, profile.value);
+    appName.textContent = active ? "현재 앱: " + clean(appId) : "앱을 선택한 뒤 연결 방법을 확인하세요.";
+    description.textContent = plan ? plan.guidance + " " + plan.intro : "지원하지 않는 빌드 조합입니다.";
+    command.textContent = active && plan?.usable ? plan.command : "";
+    copy.disabled = !active || !plan?.usable || !plan.command;
+    status.textContent = active ? "선택한 실행 방식: " + (plan?.title ?? "지원하지 않음") + " · 실제 빌드 실행 및 비용 발생 없음" : "앱 미선택 · 실행 및 외부 계정 연결 없음";
+    return plan;
+  }
+  async function copyCommand() {
+    if (copy.disabled) return;
+    const appId = context.appId(), version = epoch, plan = buildProviderPreview(type.value, os.value, profile.value);
+    if (!context.ready() || !plan?.usable || !plan.command) return;
+    try {
+      if (!env.navigator?.clipboard) throw Error("CLIPBOARD_UNAVAILABLE");
+      await env.navigator.clipboard.writeText(plan.command);
+      if (version === epoch && context.appId() === appId && context.ready()) status.textContent = "명령 복사 완료 · Flora에서 실행하거나 과금하지 않았습니다.";
+    } catch {
+      if (version === epoch && context.appId() === appId && context.ready()) status.textContent = "클립보드를 사용할 수 없습니다. 표시된 명령을 직접 복사하세요.";
+    }
+  }
+  for (const control of [type, os, profile]) control.addEventListener("change", render);
+  copy.addEventListener("click", () => { void copyCommand(); });
+  render();
+  return { render, clear() { epoch++; appName.textContent = ""; description.textContent = ""; command.textContent = ""; status.textContent = ""; copy.disabled = true; } };
+}
+
 export function technicalDetails(document, entries, label = "기술 정보 · 식별자") {
   const detail = node(document, "details", undefined, "technical-details"); detail.append(node(document, "summary", label));
   for (const [key, value] of entries) detail.append(pair(document, key, value));

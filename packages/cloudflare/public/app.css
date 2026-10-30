@@ -78,3 +78,6 @@ button:disabled,.primary:disabled:hover,.pagination .icon-button:disabled,.impor
 .device-journey-entry p { margin:7px 0 10px; }
 .device-journey-entry .button { white-space:normal; }
 @media (max-width:640px) { .device-journey { padding:16px 12px; } .device-journey-entry { padding-left:12px; } }
+
+/* Self-hosted provider chooser is read-only. No secret entry or implicit jobs. */
+.build-provider-picker{margin-bottom:20px}.build-provider-fields{display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px;margin:12px 0}.build-provider-fields .field{min-width:0}.build-provider-fields select{width:100%}.build-provider-picker .log{min-height:46px;white-space:pre-wrap;overflow-wrap:anywhere}.build-provider-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.build-provider-picker .section-top{margin-bottom:6px}@media(max-width:700px){.build-provider-fields{grid-template-columns:1fr}.build-provider-picker{margin-bottom:14px}}
