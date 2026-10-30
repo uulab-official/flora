@@ -30,38 +30,38 @@ const tokenEnvironment = { codemagic: "CODEMAGIC_API_TOKEN", bitrise: "BITRISE_A
 const labels = /^(?!\.{1,2}$)[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const safeBranch = /^[A-Za-z0-9][A-Za-z0-9_./-]{0,127}$/;
 function identifier(value: string | undefined): string {
-  if (typeof value !== "string" || !labels.test(value)) bad();
+  if (typeof value !== "string" || !labels.test(value)) return bad();
   return value;
 }
 function branchName(value: string | undefined): string {
   if (typeof value !== "string" || !safeBranch.test(value) || value.includes("..") ||
-      value.includes("//") || value.endsWith("/") || value.endsWith(".lock")) bad();
+      value.includes("//") || value.endsWith("/") || value.endsWith(".lock")) return bad();
   return value;
 }
 /** No command strings, arbitrary URLs, environment overrides, or secret values. */
 export function parseRemoteBuildPlan(args: readonly string[]): RemoteBuildPlan {
   const [provider, operation, ...rest] = args;
-  if (provider !== "codemagic" && provider !== "bitrise") bad();
-  if (operation !== "start" && operation !== "status" && operation !== "cancel") bad();
-  if (provider === "codemagic" && operation === "status") bad("PROVIDER_UNSUPPORTED");
+  if (provider !== "codemagic" && provider !== "bitrise") return bad();
+  if (operation !== "start" && operation !== "status" && operation !== "cancel") return bad();
+  if (provider === "codemagic" && operation === "status") return bad("PROVIDER_UNSUPPORTED");
   const flags = new Map<string, string>();
   let execute = false;
   for (let i = 0; i < rest.length; i++) {
     const name = rest[i]!;
     if (name === "--execute") {
-      if (execute) bad();
+      if (execute) return bad();
       execute = true;
     } else if (["--app", "--workflow", "--branch", "--build"].includes(name)) {
-      if (flags.has(name)) bad();
+      if (flags.has(name)) return bad();
       const value = rest[++i];
-      if (!value || value.startsWith("--") || value.length > 128) bad();
+      if (!value || value.startsWith("--") || value.length > 128) return bad();
       flags.set(name, value);
-    } else bad();
+    } else return bad();
   }
   const app = flags.get("--app"), workflow = flags.get("--workflow");
   const selectedBranch = flags.get("--branch"), build = flags.get("--build");
   if (operation === "start") {
-    if (flags.size !== 3 || build) bad();
+    if (flags.size !== 3 || build) return bad();
     const appId = identifier(app), workflowId = identifier(workflow), branch = branchName(selectedBranch);
     const endpoint = provider === "codemagic" ?
       "https://api.codemagic.io/builds" : "https://api.bitrise.io/v0.1/apps/" + encodeURIComponent(appId) + "/builds";
@@ -70,11 +70,11 @@ export function parseRemoteBuildPlan(args: readonly string[]): RemoteBuildPlan {
     return { provider, operation, endpoint, method: "POST", payload, appId, workflow: workflowId, branch, execute };
   }
   if (provider === "codemagic") {
-    if (operation !== "cancel" || flags.size !== 1 || !build) bad();
+    if (operation !== "cancel" || flags.size !== 1 || !build) return bad();
     const buildId = identifier(build);
     return { provider, operation, endpoint: "https://api.codemagic.io/builds/" + encodeURIComponent(buildId) + "/cancel", method: "POST", buildId, execute };
   }
-  if (flags.size !== 2 || !app || !build) bad();
+  if (flags.size !== 2 || !app || !build) return bad();
   const appId = identifier(app), buildId = identifier(build);
   return {
     provider, operation, appId, buildId, execute,
@@ -85,7 +85,7 @@ export function parseRemoteBuildPlan(args: readonly string[]): RemoteBuildPlan {
 }
 async function readBoundedResponse(response: Response): Promise<unknown> {
   const length = response.headers.get("content-length");
-  if (length && (!/^\d{1,8}$/.test(length) || Number(length) > 65536)) bad("PROVIDER_RESPONSE_INVALID");
+  if (length && (!/^\d{1,8}$/.test(length) || Number(length) > 65536)) return bad("PROVIDER_RESPONSE_INVALID");
   if (!response.body) return null;
   const reader = response.body.getReader();
   let size = 0;
@@ -95,7 +95,7 @@ async function readBoundedResponse(response: Response): Promise<unknown> {
       const part = await reader.read();
       if (part.done) break;
       size += part.value.byteLength;
-      if (size > 65536) bad("PROVIDER_RESPONSE_INVALID");
+      if (size > 65536) return bad("PROVIDER_RESPONSE_INVALID");
       chunks.push(part.value);
     }
   } finally { void reader.cancel().catch(() => {}); }
@@ -106,18 +106,18 @@ async function readBoundedResponse(response: Response): Promise<unknown> {
   catch { return bad("PROVIDER_RESPONSE_INVALID"); }
 }
 function record(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) bad("PROVIDER_RESPONSE_INVALID");
+  if (!value || typeof value !== "object" || Array.isArray(value)) return bad("PROVIDER_RESPONSE_INVALID");
   return value as Record<string, unknown>;
 }
 function responseId(value: unknown): string {
-  if (typeof value !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{1,127}$/.test(value)) bad("PROVIDER_RESPONSE_INVALID");
+  if (typeof value !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{1,127}$/.test(value)) return bad("PROVIDER_RESPONSE_INVALID");
   return value;
 }
 function mapFailure(status: number): never {
-  if (status === 401 || status === 403) bad("PROVIDER_PERMISSION_DENIED");
-  if (status === 429) bad("PROVIDER_RATE_LIMITED");
-  if (status === 408 || status === 504) bad("PROVIDER_TIMEOUT");
-  if (status >= 300 && status < 400) bad("PROVIDER_REDIRECT_REJECTED");
+  if (status === 401 || status === 403) return bad("PROVIDER_PERMISSION_DENIED");
+  if (status === 429) return bad("PROVIDER_RATE_LIMITED");
+  if (status === 408 || status === 504) return bad("PROVIDER_TIMEOUT");
+  if (status >= 300 && status < 400) return bad("PROVIDER_REDIRECT_REJECTED");
   return bad("PROVIDER_UNAVAILABLE");
 }
 /** Only starts/cancels when caller explicitly passes --execute and owns token. */
@@ -129,11 +129,11 @@ export async function runRemoteBuild(
   if (!plan.execute) return { dryRun: true, plan: publicPlan, tokenEnvironment: tokenEnvironment[plan.provider] };
   const token = env[tokenEnvironment[plan.provider]];
   if (typeof token !== "string" || token.length < 8 || token.length > 8192 || /[\r\n\0]/.test(token))
-    bad("PROVIDER_TOKEN_MISSING");
+    return bad("PROVIDER_TOKEN_MISSING");
   const origin = plan.provider === "codemagic" ? "https://api.codemagic.io" : "https://api.bitrise.io";
   const parsed = new URL(plan.endpoint);
   if (parsed.origin !== origin || parsed.username || parsed.password || parsed.search || parsed.hash ||
-    !["GET", "POST"].includes(plan.method)) bad();
+    !["GET", "POST"].includes(plan.method)) return bad();
   let response: Response;
   try {
     response = await request(plan.endpoint, {
@@ -153,7 +153,7 @@ export async function runRemoteBuild(
   if (plan.operation === "status") {
     const detail = record(data.data);
     const n = detail.status;
-    if (typeof n !== "number" || ![0, 1, 2, 3, 4].includes(n)) bad("PROVIDER_RESPONSE_INVALID");
+    if (typeof n !== "number" || ![0, 1, 2, 3, 4].includes(n)) return bad("PROVIDER_RESPONSE_INVALID");
     const status = ["running", "succeeded", "failed", "aborted_failed", "aborted_success"][n]!;
     return { provider: plan.provider, operation: plan.operation, state: "status", buildId: plan.buildId!, status };
   }
