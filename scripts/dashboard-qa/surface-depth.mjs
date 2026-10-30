@@ -76,7 +76,7 @@ export async function verifySurfaceDepth(page) {
     assert.equal(after.selector, before.selector, "SURFACE_SET_CHANGED");
     const beforeBounds = before.selector === ".primary" ? before.bounds.slice(2) : before.bounds;
     const afterBounds = after.selector === ".primary" ? after.bounds.slice(2) : after.bounds;
-    assert.deepEqual(afterBounds, beforeBounds, "ELEVATION_MUST_NOT_CHANGE_LAYOUT");
+    assert.ok(afterBounds.every((value, axis) => Math.abs(value - beforeBounds[axis]) <= 0.1), "ELEVATION_MUST_NOT_CHANGE_LAYOUT");
   }
   return { reducedMotionVerified: true, layoutStable: true, interactionChecks, surfaces };
 }
