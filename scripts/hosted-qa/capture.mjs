@@ -99,9 +99,14 @@ try {
     assert.equal(await page.locator("svg use").evaluateAll(nodes => nodes.filter(node => node.getClientRects().length).every(node => { const box = node.getBBox(); return box.width > 0 && box.height > 0; })), true, "VISIBLE_ICON_NOT_LOADED");
     const fontCdp = await page.context().newCDPSession(page); await fontCdp.send("DOM.enable"); await fontCdp.send("CSS.enable");
     const root = await fontCdp.send("DOM.getDocument");
-    const heading = await fontCdp.send("DOM.querySelector", { nodeId: root.root.nodeId, selector: "h1" });
+    const titleText = await page.locator("h1").innerText();
+    // Some modern routes legitimately use an English-only H1 ("GitHub · SDK").
+    // Validate actual rendered Korean glyphs in the visible route description
+    // instead of requiring Hangul in every page title.
+    const fontSelector = /[가-힣]/u.test(titleText) ? "h1" : "#view-description";
+    const heading = await fontCdp.send("DOM.querySelector", { nodeId: root.root.nodeId, selector: fontSelector });
     const actualFonts = await fontCdp.send("CSS.getPlatformFontsForNode", { nodeId: heading.nodeId });
-    const koreanFont = verifyKoreanFontUsage(actualFonts.fonts, await page.locator("h1").innerText()); await fontCdp.detach();
+    const koreanFont = verifyKoreanFontUsage(actualFonts.fonts, await page.locator(fontSelector).innerText()); await fontCdp.detach();
     let appDensity;
     if (name === "mobile-apps") {
       assert.equal(await page.locator("#app-sort").inputValue(), "name-asc");
