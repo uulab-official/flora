@@ -12,7 +12,9 @@ test("EAS integration is dry-run unless explicit execute is provided", () => {
   const plan = parseEASBuildPlan(args);
   assert.deepEqual(plan, { provider: "expo-eas", operation: "start", platform: "android", profile: "preview", execute: false });
   const result = runEASBuild(plan, {});
+  assert.ok("dryRun" in result);
   assert.equal(result.dryRun, true);
+  assert.ok("tokenEnvironment" in result);
   assert.equal(result.tokenEnvironment, "EXPO_TOKEN");
   assert.ok(!JSON.stringify(result).includes("secret"));
 });
