@@ -15,6 +15,7 @@ test("dry-run validates inputs without credentials or sending network requests",
   const forbiddenRequest: typeof fetch = async () => { calls++; throw Error("unexpected request"); };
   const result = await runRemoteBuild(parseRemoteBuildPlan(cm), {}, forbiddenRequest);
   assert.equal(calls, 0);
+  assert.ok("dryRun" in result);
   assert.equal(result.dryRun, true);
   assert.ok(JSON.stringify(result).includes("CODEMAGIC_API_TOKEN"));
   assert.ok(!JSON.stringify(result).includes("x-auth-token"));
