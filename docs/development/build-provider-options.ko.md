@@ -25,6 +25,17 @@
 
 Runner가 켜져 있지 않으면 작업을 처리할 수 없다. Mac/Windows 사용자의 도커 구성, 앱 의존성 이미지, 네이티브 SDK 통합은 프로젝트 버전에 따라 다르다. 현행 일반 Runner setup은 Linux/macOS 지원 경로다. Windows 원격 Docker와 Windows 자체 서비스 실행을 검증 없이 지원한다고 표시하지 않는다.
 
+## A-2. GitHub Actions 없이 자신의 PC에서 네이티브 APK 만들기 (수동 예제)
+
+Cloudflare Runner를 준비하지 않아도 **본인이 소유한 Expo 프로젝트의 로컬 컴퓨터**에서 Android Debug APK 빌드 스크립트를 실행할 수 있다. 이 경로는 기존 Flora 서버 Job과 연결된 자동 빌드가 아니며, 빌드 성공/배포 완료를 자동으로 보고하지 않는다.
+
+1. [예제 빌드 스크립트](../../examples/github-actions/flora-expo-build.mjs)를 비공개 Expo 앱의 `scripts/flora-expo-build.mjs`에 복사한다.
+2. 해당 앱의 잠금 파일 기준으로 `npm ci` 또는 `pnpm install --frozen-lockfile`을 실행한다. Expo CLI, Android SDK/Java, Gradle이 설치되어야 한다.
+3. 앱 루트에서 `FLORA_PROFILE=preview node scripts/flora-expo-build.mjs android`를 실행한다. Android `assembleDebug`를 사용하고 실제 output은 `dist/flora/*.apk`에 저장된다.
+4. macOS/iOS는 Xcode/CocoaPods와 실제 Apple 서명 자료가 필요하다. `FLORA_IOS_EXPORT_OPTIONS_PLIST` 등 별도 서명 설정이 준비되기 전에는 IPA가 만들어지지 않는다.
+
+수동 APK 빌드 결과를 OTA 자동 게시와 혼동하지 않는다. OTA 배포는 앱에 Flora SDK가 포함된 네이티브 바이너리를 먼저 설치하고, 별도 Runner가 각 채널과 runtime에 맞는 번들을 게시해야 한다.
+
 ## B. 내 PC를 GitHub Actions의 self-hosted 러너로 사용하기
 
 비공개 저장소의 [Flora native build Workflow](reusable-expo-build.ko.md)에서 입력 `runner-type: self-hosted`를 선택할 수 있다. 코드는 그대로 **비공개 앱 저장소에서 체크아웃**하고, 컴파일을 본인의 PC에서 수행한다. 이 경로는 기존 `@flora/runner` 데몬과 **별도 선택지**다.
