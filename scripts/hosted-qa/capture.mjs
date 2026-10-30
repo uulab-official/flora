@@ -378,7 +378,12 @@ try {
   }
   async function storedState(page, snapshotId) {
     const result = await page.evaluate(async id => {
-      const response = await fetch("/api/state" + (id ? "?snapshotId=" + encodeURIComponent(id) : ""));
+      // Match the actual scoped UI state request on per-app Source pages.
+      const match = /^\/apps\/([a-z][a-z0-9_-]{2,95})(?:\/|$)/.exec(location.pathname);
+      const query = new URLSearchParams();
+      if (match) query.set("appId", match[1]);
+      if (id) query.set("snapshotId", id);
+      const response = await fetch("/api/state" + (query.size ? "?" + query : ""));
       return { status: response.status, body: await response.json() };
     }, snapshotId);
     assert.equal(result.status, 200); return result.body;
