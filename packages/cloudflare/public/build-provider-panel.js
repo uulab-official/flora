@@ -82,10 +82,24 @@ export function summarizeNativeBuilds(appId, view) {
   };
 }
 
+/**
+ * OTA metadata is read-only: published manifests do not establish device-level
+ * download, apply, restart or Store build success.
+ */
+export function summarizeOtaPublications(appId, result) {
+  const items = result?.deployments;
+  if (!scopedId(appId) || !Array.isArray(items) || items.length > 200 ||
+      items.some(item => item?.appId !== appId || !["ios", "android"].includes(item.platform)))
+    throw new Error("INVALID_BUILD_OTA_SCOPE");
+  return { appId, total: items.length,
+    ios: items.filter(item => item.platform === "ios").length,
+    android: items.filter(item => item.platform === "android").length };
+}
+
 /** The selected app is an authority boundary for display and callbacks. */
 export function createBuildProviderPanel(env, context) {
   const node = id => env.document.getElementById(id);
-  let app = null, native = null, selection = "flora-pc-native", notice = "";
+  let app = null, native = null, ota = null, selection = "flora-pc-native", notice = "";
   const current = () => context.active() && scopedId(app) && app === context.appId();
   function render() {
     const authorized = current();
@@ -109,6 +123,11 @@ export function createBuildProviderPanel(env, context) {
     const link = node("build-provider-docs");
     if (authorized) { link.setAttribute("href", DOC); link.hidden = false; }
     else { link.hidden = true; link.removeAttribute("href"); }
+    const otaText = node("build-provider-ota-summary");
+    otaText.hidden = !authorized;
+    otaText.textContent = authorized ? ota?.appId === app ?
+      "Flora OTA 게시 이력 " + ota.total + "건 (iOS " + ota.ios + "건 / Android " + ota.android + "건). 기기 다운로드·적용·재시작은 OTA 상세에서 별도 확인하세요." :
+      "Flora OTA 게시 현황 미확인 · 이력 조회 후 확인할 수 있습니다." : "";
     const summary = node("build-provider-summary");
     if (!authorized || selection !== "flora-pc-native") { summary.textContent = ""; summary.hidden = true; return; }
     summary.hidden = false;
@@ -124,17 +143,22 @@ export function createBuildProviderPanel(env, context) {
   }
   function open(nextApp) {
     if (!scopedId(nextApp) || !context.active() || nextApp !== context.appId()) { clear(); return; }
-    if (app !== nextApp) { app = nextApp; native = null; selection = "flora-pc-native"; notice = ""; }
+    if (app !== nextApp) { app = nextApp; native = null; ota = null; selection = "flora-pc-native"; notice = ""; }
     render();
   }
   function clear() {
-    app = null; native = null; selection = "flora-pc-native"; notice = ""; render();
+    app = null; native = null; ota = null; selection = "flora-pc-native"; notice = ""; render();
   }
   function setNativeView(nextApp, view) {
     if (!current() || nextApp !== app) return false;
     try { native = summarizeNativeBuilds(nextApp, view); notice = ""; }
     catch { native = null; notice = "Runner 이력의 앱 식별자를 확인하지 못했습니다. 다른 앱의 정보를 표시하지 않습니다."; }
     render(); return Boolean(native);
+  }
+  function setOTAView(nextApp, result) {
+    if (!current() || nextApp !== app) return false;
+    try { ota = summarizeOtaPublications(nextApp, result); } catch { ota = null; }
+    render(); return Boolean(ota);
   }
   function select(id) {
     if (!current() || !OPTIONS.some(item => item.id === id)) { if (current()) render(); return false; }
@@ -168,5 +192,5 @@ export function createBuildProviderPanel(env, context) {
   node("build-provider-runners").addEventListener("click", () => { void go("runners"); });
   node("build-provider-ota").addEventListener("click", () => { void go("ota"); });
   clear();
-  return { open, clear, setNativeView, select, copy, go, state: () => ({ appId: app, selection, native }) };
+  return { open, clear, setNativeView, setOTAView, select, copy, go, state: () => ({ appId: app, selection, native, ota }) };
 }

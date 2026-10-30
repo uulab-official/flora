@@ -628,7 +628,7 @@ export async function startClient(env) {
     else if (page === "projects") await loadProjects();
     else if (page === "register") { node("application-registration").open = true; await loadGitHubConnection(); }
     else if (page === "credentials") { node("credential-editor").open = true; await credentialsPanel.load(); }
-    else if (page === "builds") { if (operationsAppId !== app) await loadOperations(); if (current()) { buildPanel.open(app); node("native-editor").open = true; await nativePanel.load(); } }
+    else if (page === "builds") { if (operationsAppId !== app) await loadOperations(); if (current()) { buildPanel.open(app); if (operationsAppId === app) buildPanel.setOTAView(app, operations); node("native-editor").open = true; await nativePanel.load(); } }
     else if (page === "runners") { node("automation-editor").open = true; await loadProjectOverview(); if (current()) await nativePanel.load(); }
     else if (page === "ota-detail") await deploymentDevices.open(currentRoute);
     else if (page === "overview") await loadProjectOverview();
@@ -1131,6 +1131,7 @@ export async function startClient(env) {
       const result = {...received, expectedRootDirectory: data?.selectedApplication?.rootDirectory};
       if (!active() || version !== generation || selectedAppId !== appId) return;
       renderOperations(document, appId, result); if (currentDetection(operations)?.id !== currentDetection(result)?.id) automationRequestKey = null; operations = result; operationsAppId = appId;
+      if (currentRoute.page === "builds" && buildPanel.state().appId === appId) buildPanel.setOTAView(appId, result);
       if (ciAppId === appId) {
         const connection = result.connection;
         const matched = trust => connection && trust && trust.connectionVersion === connection.version && trust.repository === connection.owner + "/" + connection.repository && trust.ref === "refs/heads/" + connection.ref;

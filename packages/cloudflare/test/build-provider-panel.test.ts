@@ -34,6 +34,20 @@ const appView=(appId:string)=>({
   jobs:[{id:"j1",appId,platform:"android",state:"succeeded",artifact:{fileName:"signed.apk",sha256:"b".repeat(64)}}],
 });
 
+test("OTA publication status is read-only, app-scoped and cannot imply device application",()=>{
+  const s=setup(); s.panel.open("app_alpha");
+  assert.equal(s.panel.setOTAView("app_alpha",{ deployments:[
+    {appId:"app_alpha",platform:"ios"},{appId:"app_alpha",platform:"android"}]}),true);
+  assert.match(s.node("build-provider-ota-summary").textContent,/게시 이력 2건/);
+  assert.match(s.node("build-provider-ota-summary").textContent,/기기 다운로드·적용·재시작은 OTA 상세/);
+  assert.equal(s.panel.setOTAView("app_beta",{deployments:[]}),false);
+  assert.equal(s.panel.setOTAView("app_alpha",{deployments:[{appId:"app_beta",platform:"ios"}]}),false);
+  assert.match(s.node("build-provider-ota-summary").textContent,/현황 미확인/);
+  s.panel.setOTAView("app_alpha",{deployments:[{appId:"app_alpha",platform:"ios"}]});
+  s.app("app_beta"); s.panel.open("app_beta");
+  assert.equal(s.node("build-provider-ota-summary").textContent.includes("게시 이력 1건"),false);
+});
+
 test("provider chooser is shipped with the hosted index and lists precisely the catalog's native build providers",async()=>{
   const ids=listBuildProviders().map(item=>item.id);
   assert.deepEqual(ids,["flora-pc-native","github-actions-native","expo-eas","codemagic","bitrise"]);
@@ -63,6 +77,7 @@ test("only the selected app's trusted native view contributes to the summary",()
   s.app("app_beta"); s.panel.open("app_beta");
   assert.equal(s.node("build-provider-summary").textContent.includes("signed.apk"),false);
   assert.equal(s.panel.state().native,null);
+  assert.equal(s.panel.state().ota,null);
 });
 
 test("external providers display only inert, no-token local commands and never call a remote provider",async()=>{
