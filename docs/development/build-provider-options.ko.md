@@ -9,7 +9,7 @@
 | `flora-pc-ota` | 사용자의 Linux/macOS + Docker | 기존 실행 엔진 | GitHub 고정 SHA를 export한 뒤 iOS/Android OTA 발행 (최초 SDK 바이너리는 별도) |
 | `flora-pc-native` | 신뢰하는 macOS + Xcode/Android tools | 수동 설정 preview | 로컬 소스/인증서가 준비된 환경에서 iOS/Android 네이티브 빌드·서명; 다른 사용자 PC 간단 설치 마법사는 미완성 |
 | `github-actions-native` | **호출하는 비공개 앱 저장소**의 GitHub-hosted 또는 사용자 self-hosted Runner | 재사용 Workflow 예제 | Android preview debug APK 또는 iOS 인증서 기반 IPA 예제, 아티팩트 Actions 보관. Flora 웹 실행 버튼 아직 없음 |
-| `expo-eas` | 사용자 Expo 계정 | 미연동 | EAS Build / EAS Update API 어댑터 설계 예정 (계정/사용량/과금 사용자 책임) |
+| `expo-eas` | 사용자의 Expo 프로젝트/계정 | **로컬 EAS CLI 선택형** | 본인 PC에 설치한 버전 고정 eas-cli로 Build 요청; 기존 Flora OTA와 분리. Flora 웹·EAS Update 연결은 미구현 |
 | `codemagic` | 사용자 Codemagic 계정 | **로컬 CLI API 연결** | 본인 API 토큰으로 빌드 시작·취소. Flora 웹 연결/로그/아티팩트 자동 수집은 후속 |
 | `bitrise` | 사용자 Bitrise 계정 | **로컬 CLI API 연결** | 본인 API 토큰으로 빌드 시작·상태 조회·중단. Flora 웹 연결/아티팩트 자동 수집은 후속 |
 
@@ -113,9 +113,32 @@ pnpm flora providers bitrise cancel --app YOUR_APP_SLUG --build ACTUAL_BUILD_SLU
 - [Bitrise Trigger/Abort API](https://docs.bitrise.io/en/bitrise-ci/api/triggering-and-aborting-builds)
 - [Bitrise App Build API](https://docs.bitrise.io/en/bitrise-ci/api/managing-an-app-s-builds)
 
+## C-2. EAS Build를 선택하는 경우
+
+**Flora OTA는 그대로 사용**하면서, 새 iOS/Android 네이티브 바이너리를 빌드할 때만 사용자 본인의 Expo EAS 계정을 선택할 수 있다. 이 기능은 Flora 서버가 아닌 **사용자 PC에서 `eas-cli`를 실행**하며, Cloudflare 운영 계정에는 Expo 토큰을 보내지 않는다.
+
+1. 자신의 앱에서 [Expo의 CI 사전 설정 절차](https://docs.expo.dev/build/building-on-ci/)대로 **최초 한 번** 대화형 `eas build`를 수행하여 `eas.json`, 프로젝트 ID, 인증서/프로파일을 준비한다.
+2. 해당 앱의 `package.json`에 `eas-cli`을 **정확한 버전으로** 개발 의존성에 추가하고 lockfile을 보존한다. `npm ci` 또는 잠금 파일 기반 패키지 매니저를 사용한다.
+3. 앱 루트에서 `EXPO_TOKEN`을 본인 비공개 환경변수로 지정한다. 버전이 고정된 `node_modules/.bin/eas`, `eas.json`, `package.json`이 없으면 실행을 거부한다.
+4. 아래 명령으로 계획 확인 후 실행한다.
+
+```sh
+# 사용자가 자신의 Expo 앱 루트에서 실행
+export EXPO_TOKEN='YOUR_PRIVATE_EXPO_TOKEN'
+flora providers eas start --platform android --profile preview
+flora providers eas start --platform android --profile preview --execute
+
+# iOS 네이티브 바이너리도 사용자 EAS 계정의 인증서/용량 사용
+flora providers eas start --platform ios --profile production --execute
+```
+
+실제 실행은 자동 설치·자동 로그인 없이 로컬 `eas build --non-interactive --no-wait --json` 명령을 사용한다. 빌드 결과에 신뢰 가능한 ID가 있어야 `requested`로 기록하고, CLI 성공에도 ID를 확인할 수 없다면 `submitted_unverified`로 표시하여 실제 EAS 대시보드에서 확인하도록 한다. 오류 출력·원문 로그·토큰은 Flora 출력에 포함되지 않는다. 현재는 macOS/Linux 로컬 CLI 경로만 제공하며 Windows 실행은 검증 전 지원하지 않는다.
+
+EAS 빌드는 사용자 계정의 별도 과금·자격 증명 정책을 따른다. EAS Build 성공이 Flora OTA 설치·배포 완료의 증거는 아니다. 네이티브 앱 안에 Flora SDK 설정을 정확히 포함하고 기기에서 호환 runtime의 OTA를 별도 검증해야 한다.
+
 ## 향후 우선순위
 
 1. 자체 설치에서 **Android 로컬 PC 빌드와 iOS Mac 빌드** 등록 마법사 개선, 작업 로그·산출물 로컬/선택적 BYOC 보관.
 2. Flora 웹에서 설치한 Provider 선택 → 상태/비용 추정 → 실행 → 실시간 로그/산출물/취소 제공. 현재 CLI의 catalog는 실행 연결이 아니다.
-3. EAS 플러그인과 Codemagic/Bitrise API 어댑터의 웹·Vault 통합을 별도 PR로 제공하고, 최소 권한 및 mock + 실제 계정 검증을 거친다. 현재 Codemagic/Bitrise는 사용자 PC CLI에서만 API를 호출하며, EAS는 `planned` 상태를 유지한다.
+3. EAS/Codemagic/Bitrise 어댑터의 웹·Vault 통합을 별도 PR로 제공하고, 최소 권한 및 mock + 실제 계정 검증을 거친다. 현재 세 서비스는 모두 사용자 PC CLI의 명시적 실행으로만 사용하며, Flora 웹 계정 연결과 배포 이력 자동 동기화는 아직 지원하지 않는다.
 4. 별도 공개 호스팅형 멀티테넌트 SaaS는 이후 선택 과제. 모든 사용자가 UULab 단일 소유자 인스턴스에 로그인하도록 기존 인증을 우회하지 않는다.
