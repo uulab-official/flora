@@ -401,6 +401,7 @@ try {
   phase = "real-enrollment-navigation";
   // Enrollment goes to /onboarding by design, not to the legacy root.
   await page.waitForURL(harness.origin + "/onboarding");
+  // The success response alone is insufficient: require an authenticated owner session.
   phase = "real-enrollment-owner-session";
   const sessionProof = await page.evaluate(async () => {
     const response = await fetch("/api/auth/session", { credentials: "same-origin", cache: "no-store" });
