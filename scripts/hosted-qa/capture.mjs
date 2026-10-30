@@ -169,6 +169,7 @@ try {
         if (!await control.isVisible() || !await control.isEnabled()) continue;
         await control.scrollIntoViewIfNeeded();
         const box = await control.boundingBox();
+        if (!box || box.width < 44 || box.height < 44) console.error("FLORA_HOSTED_QA_TOUCH_GEOMETRY " + JSON.stringify({ selector, index, width: box ? Math.round(box.width) : 0, height: box ? Math.round(box.height) : 0 }));
         assert.ok(box && box.width >= 44 && box.height >= 44, "MOBILE_TOUCH_TARGET_REQUIRED");
         // Trial clicks check real pointer actionability without toggling a
         // disclosure, changing a page or opening an import file chooser.
