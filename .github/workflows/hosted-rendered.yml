@@ -1,7 +1,7 @@
 name: Synthetic hosted rendering
 on:
   push:
-    branches: [main, 'verify/flora-hosted-*']
+    branches: [main, 'verify/flora-hosted-*', 'verify/flora-dogfood-*']
     paths:
       - 'package.json'
       - 'pnpm-lock.yaml'
@@ -36,7 +36,7 @@ concurrency:
 jobs:
   synthetic-render:
     # Standard Linux on a public repository only. No larger/self-hosted runner.
-    if: github.event.repository.private == false && github.event.repository.visibility == 'public' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/verify/flora-hosted-'))
+    if: github.event.repository.private == false && github.event.repository.visibility == 'public' && (github.ref == 'refs/heads/main' || (startsWith(github.ref, 'refs/heads/verify/flora-hosted-') || startsWith(github.ref, 'refs/heads/verify/flora-dogfood-')))
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     env:

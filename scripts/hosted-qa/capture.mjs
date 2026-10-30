@@ -21,7 +21,7 @@ let phase = "preflight", harness, browser, temporary;
 const timeout = setTimeout(() => { console.error("FLORA_HOSTED_QA_FAILURE deadline"); process.exit(1); }, 360_000);
 try {
   assert.equal(process.env.GITHUB_ACTIONS, "true"); assert.equal(process.platform, "linux"); assert.notEqual(process.getuid(), 0);
-  assert.ok(process.env.GITHUB_REF === "refs/heads/main" || process.env.GITHUB_REF?.startsWith("refs/heads/verify/flora-hosted-"));
+  assert.ok(process.env.GITHUB_REF === "refs/heads/main" || process.env.GITHUB_REF?.startsWith("refs/heads/verify/flora-hosted-") || process.env.GITHUB_REF?.startsWith("refs/heads/verify/flora-dogfood-"));
   assert.match(process.env.GITHUB_SHA ?? "", /^[a-f0-9]{40}$/);
   assert.ok(process.env.FLORA_QA_PLAYWRIGHT_MODULE); assert.ok(process.env.FLORA_QA_FONTCONFIG);
   const fontConfig = resolve(process.env.FLORA_QA_FONTCONFIG); await access(fontConfig);
@@ -99,9 +99,14 @@ try {
     assert.equal(await page.locator("svg use").evaluateAll(nodes => nodes.filter(node => node.getClientRects().length).every(node => { const box = node.getBBox(); return box.width > 0 && box.height > 0; })), true, "VISIBLE_ICON_NOT_LOADED");
     const fontCdp = await page.context().newCDPSession(page); await fontCdp.send("DOM.enable"); await fontCdp.send("CSS.enable");
     const root = await fontCdp.send("DOM.getDocument");
-    const heading = await fontCdp.send("DOM.querySelector", { nodeId: root.root.nodeId, selector: "h1" });
+    const titleText = await page.locator("h1").innerText();
+    // Some modern routes legitimately use an English-only H1 ("GitHub · SDK").
+    // Validate actual rendered Korean glyphs in the visible route description
+    // instead of requiring Hangul in every page title.
+    const fontSelector = /[가-힣]/u.test(titleText) ? "h1" : "#view-description";
+    const heading = await fontCdp.send("DOM.querySelector", { nodeId: root.root.nodeId, selector: fontSelector });
     const actualFonts = await fontCdp.send("CSS.getPlatformFontsForNode", { nodeId: heading.nodeId });
-    const koreanFont = verifyKoreanFontUsage(actualFonts.fonts, await page.locator("h1").innerText()); await fontCdp.detach();
+    const koreanFont = verifyKoreanFontUsage(actualFonts.fonts, await page.locator(fontSelector).innerText()); await fontCdp.detach();
     let appDensity;
     if (name === "mobile-apps") {
       assert.equal(await page.locator("#app-sort").inputValue(), "name-asc");
@@ -139,10 +144,25 @@ try {
     await page.waitForFunction(() => document.getElementById("workspace")?.getAttribute("aria-busy") === "false" && document.getElementById("source-file")?.disabled === false);
   }
   async function navigate(page, view) {
-    const mobile = page.locator("#mobile-" + view);
-    await (await mobile.isVisible() ? mobile : page.locator("#nav-" + view)).click();
-    await page.locator("#view-" + view).waitFor({ state: "visible" });
-    for (const other of ["apps", "sources", "history", "account"].filter(value => value !== view)) assert.equal(await page.locator("#view-" + other).isHidden(), true);
+    // New app-scoped routes replace the former single legacy-view navigation.
+    // Use visible authenticated controls rather than hidden legacy mobile nav.
+    const target = ({ apps: "sources", sources: "sources", history: "history", account: "account" })[view];
+    assert.ok(target, "UNKNOWN_SYNTHETIC_VIEW");
+    const previousViewport = page.viewportSize();
+    await page.setViewportSize({ width: 1487, height: 1058 });
+    await page.locator("#nav-" + target).click();
+    const expected = view === "apps" ? "view-apps" : "view-" + view;
+    await page.locator("#" + expected).waitFor({ state: "visible" });
+    if (view === "apps" || view === "sources") {
+      // The source page now deliberately shows both declared apps and metadata.
+      assert.equal(await page.locator("#view-apps").isVisible(), true);
+      assert.equal(await page.locator("#view-sources").isVisible(), true);
+      assert.equal(await page.locator("#view-history").isHidden(), true);
+    } else {
+      assert.equal(await page.locator("#view-apps").isHidden(), true);
+      assert.equal(await page.locator("#view-sources").isHidden(), true);
+    }
+    await page.setViewportSize(previousViewport);
   }
   async function mobileTargets(page, state, selectors) {
     assert.equal(page.viewportSize().width, 390, "MOBILE_VIEWPORT_REQUIRED");
@@ -396,17 +416,50 @@ try {
   for (const id of ["password", "confirmation", "token"]) assert.equal(await page.locator("#" + id).inputValue(), "");
   assert.equal((await first.context.cookies()).length, 0); checks.push("invalid-setup-rejected-by-authority");
 
+  phase = "real-enrollment-onboarding-redirect";
+  // A successful first-owner enrollment intentionally redirects to
+  // /onboarding, not /. Exercise that real route before opening the dashboard.
+  assert.equal((await authenticate(page, true)).status(), 200);
+  await page.waitForURL(harness.origin + "/onboarding");
   phase = "real-enrollment-and-empty-state";
-  assert.equal((await authenticate(page, true)).status(), 200); await page.waitForURL(harness.origin + "/"); await ready(page);
-  await page.getByText("첫 소스 snapshot을 가져오세요").waitFor(); await both(page, "empty");
+  await page.goto(harness.origin + "/");
+  await ready(page);
+  // The current hosted '/' is the projects dashboard, not the legacy
+  // snapshot-import view. Assert the visible empty project workspace.
+  await page.locator("#application-panel").waitFor({ state: "visible" });
+  await page.getByRole("button", { name: "새 프로젝트", exact: true }).waitFor();
+  await both(page, "empty");
   const firstSession = await cookieProof(first.context, page); checks.push("real-scrypt-enrollment", "secure-httponly-strict-host-cookies", "no-browser-credential-storage");
+  // Real registration maps synthetic repository/root to an application before
+  // using the current app-scoped Source/History pages.
+  phase = "register-synthetic-app";
+  await page.setViewportSize({ width: 1487, height: 1058 });
+  await page.locator("#project-register-open").click();
+  await page.locator("#application-form").waitFor({ state: "visible" });
+  await page.locator("#application-name").fill("Synthetic QA App");
+  await page.locator("#application-repository").fill("repo_synthetic");
+  await page.locator("#application-root").fill("apps/sample");
+  await page.locator("#application-register").click();
+  await page.waitForURL(url => /^\/apps\/[a-z][a-z0-9_-]{2,95}(?:\/|$)/.test(url.pathname));
+  await page.locator("#nav-sources").click();
+  await page.waitForURL(url => /^\/apps\/[a-z][a-z0-9_-]{2,95}\/source$/.test(url.pathname));
+  // The snapshot/detail sections are intentionally hidden until an actual
+  // source has been imported for this registered application.
+  await ready(page);
+  checks.push("synthetic-application-registered-with-repository-root");
   phase = "source-predispatch-abort-explicit-recovery";
   const sourceBytes = harness.source(), emptyState = await storedState(page);
   const beforeAbort = uploadPosts.source; abortNextSourceBeforeDispatch = true;
   assert.equal((await uploadOutcome(page, "source", sourceBytes)).kind, "requestfailed");
   assert.equal(abortNextSourceBeforeDispatch, false); await uncertainUpload(page, "source", beforeAbort);
-  assert.deepEqual(await storedState(page), emptyState, "PREDISPATCH_ABORT_MUST_NOT_WRITE");
-  assert.deepEqual(await reloadHistory(page), emptyState);
+  // Source write safety is determined by immutable source/history records.
+  // App registration and background summary timestamps are separate state.
+  const afterAbort = await storedState(page);
+  for (const key of ["selected", "snapshots", "history"])
+    assert.deepEqual(afterAbort[key], emptyState[key], "PREDISPATCH_ABORT_MUST_NOT_WRITE");
+  const afterReload = await reloadHistory(page);
+  for (const key of ["selected", "snapshots", "history"])
+    assert.deepEqual(afterReload[key], emptyState[key], "PREDISPATCH_ABORT_MUST_NOT_WRITE");
   const source = await upload(page, "source", sourceBytes);
   const firstSourceState = await storedState(page);
   assert.equal(uploadPosts.source, beforeAbort + 2); assert.equal(firstSourceState.snapshots.items.length, 1);
@@ -484,7 +537,10 @@ try {
   assert.equal(rows.length, 10);
   for (const row of rows) {
     assert.ok(row.includes("1.2.3") && row.includes("example/synthetic-app"));
-    assert.equal(row.match(/미연결/g)?.length, 3, "UNKNOWN_DEPLOYMENT_ERROR_REVENUE_REQUIRED");
+    // The current app table links deployment status to the selected app OTA
+    // rather than pretending that the snapshot itself knows deployment health.
+    assert.ok(row.includes("선택 앱 OTA에서 확인"), "DEPLOYMENT_NOT_INFERRED_FROM_SNAPSHOT");
+    assert.equal(row.match(/미연결/g)?.length, 2, "UNKNOWN_ERROR_AND_REVENUE_REQUIRED");
   }
   await page.locator("#app-sort").selectOption("name-asc");
   checks.push("search-clear-and-empty-results", "source-filter-and-name-sort", "ten-row-flavor-pagination", "app-detail-selection-and-close", "declared-version-and-unknown-operations-metrics");
