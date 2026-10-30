@@ -118,7 +118,7 @@ pnpm flora providers bitrise cancel --app YOUR_APP_SLUG --build ACTUAL_BUILD_SLU
 **Flora OTA는 그대로 사용**하면서, 새 iOS/Android 네이티브 바이너리를 빌드할 때만 사용자 본인의 Expo EAS 계정을 선택할 수 있다. 이 기능은 Flora 서버가 아닌 **사용자 PC에서 `eas-cli`를 실행**하며, Cloudflare 운영 계정에는 Expo 토큰을 보내지 않는다.
 
 1. 자신의 앱에서 [Expo의 CI 사전 설정 절차](https://docs.expo.dev/build/building-on-ci/)대로 **최초 한 번** 대화형 `eas build`를 수행하여 `eas.json`, 프로젝트 ID, 인증서/프로파일을 준비한다.
-2. 해당 앱의 `package.json`에 `eas-cli`을 **정확한 버전으로** 개발 의존성에 추가하고 lockfile을 보존한다. `npm ci` 또는 잠금 파일 기반 패키지 매니저를 사용한다.
+2. 해당 앱의 `package.json`에 `eas-cli`을 **정확한 버전으로** 개발 의존성에 추가하고 lockfile을 보존한다. 실행 시 실제 설치된 `node_modules/eas-cli/package.json` 버전과 동일한지 검사하며 `^`나 `~` 범위 버전은 허용하지 않는다. `npm ci` 또는 잠금 파일 기반 패키지 매니저를 사용한다.
 3. 앱 루트에서 `EXPO_TOKEN`을 본인 비공개 환경변수로 지정한다. 버전이 고정된 `node_modules/.bin/eas`, `eas.json`, `package.json`이 없으면 실행을 거부한다.
 4. 아래 명령으로 계획 확인 후 실행한다.
 

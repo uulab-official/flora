@@ -1,7 +1,7 @@
 /** User-owned EAS CLI integration. No EAS API keys ever reach Flora or logs.
  * Requires a preconfigured local Expo app and pinned locally installed eas-cli.
  * This is an explicit alternative build provider, never part of Flora OTA. */
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { RemoteProviderError } from "./providers-external.js";
@@ -70,8 +70,20 @@ export function runEASBuild(
   if (typeof token !== "string" || token.length < 8 || token.length > 8192 || /[\0\r\n]/.test(token))
     throw new RemoteProviderError("PROVIDER_TOKEN_MISSING");
   const binary = join(root, "node_modules", ".bin", "eas");
-  if (![binary, join(root, "package.json"), join(root, "eas.json")].every(path => existsSync(path)))
+  if (![binary, join(root, "package.json"), join(root, "eas.json")].every(path => existsSync(path)) ||
+      !["package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock", "bun.lockb"]
+        .some(name => existsSync(join(root, name))))
     throw new RemoteProviderError("PROVIDER_LOCAL_SETUP_REQUIRED");
+  // Never silently run an unpinned local binary or install one over the network.
+  try {
+    const app = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as Record<string, unknown>;
+    const deps = { ...(app.dependencies as Record<string, unknown> | undefined ?? {}),
+      ...(app.devDependencies as Record<string, unknown> | undefined ?? {}) };
+    const pin = deps["eas-cli"];
+    const installed = JSON.parse(readFileSync(join(root, "node_modules", "eas-cli", "package.json"), "utf8")) as Record<string, unknown>;
+    if (typeof pin !== "string" || !/^\d+\.\d+\.\d+$/.test(pin) || installed.version !== pin)
+      throw new Error("UNPINNED");
+  } catch { throw new RemoteProviderError("PROVIDER_LOCAL_SETUP_REQUIRED"); }
   const args = ["build", "--platform", plan.platform, "--profile", plan.profile, "--non-interactive", "--no-wait", "--json"];
   let result: ReturnType<Spawn>;
   try {

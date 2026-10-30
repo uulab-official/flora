@@ -45,8 +45,11 @@ test("pinned installed EAS executable is invoked without shell and results are n
   const dir = mkdtempSync(join(tmpdir(), "flora-eas-provider-"));
   try {
     mkdirSync(join(dir, "node_modules", ".bin"), { recursive: true });
+    mkdirSync(join(dir, "node_modules", "eas-cli"), { recursive: true });
     writeFileSync(join(dir, "node_modules", ".bin", "eas"), "mock not executable");
-    writeFileSync(join(dir, "package.json"), "{}");
+    writeFileSync(join(dir, "node_modules", "eas-cli", "package.json"), JSON.stringify({ version: "16.24.1" }));
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ devDependencies: { "eas-cli": "16.24.1" } }));
+    writeFileSync(join(dir, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
     writeFileSync(join(dir, "eas.json"), "{}");
     let called = 0;
     const secret = "actual-private-eas-token";
