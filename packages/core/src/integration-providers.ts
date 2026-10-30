@@ -85,7 +85,7 @@ export function parseProviderManifest(value: unknown): IntegrationProvider {
 /** Safe, immutable-ish snapshots: callers cannot mutate built-in source arrays. */
 export function listIntegrationProviders(external: readonly unknown[] = []): IntegrationProvider[] {
   ensure(external.length <= 32);
-  const result = builtIns.map(item => ({
+  const result: IntegrationProvider[] = builtIns.map(item => ({
     ...item, capabilities: [...item.capabilities], platforms: [...item.platforms],
   }));
   const names = new Set(result.map(item => item.id));
