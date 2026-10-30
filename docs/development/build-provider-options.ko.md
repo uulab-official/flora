@@ -10,8 +10,8 @@
 | `flora-pc-native` | 신뢰하는 macOS + Xcode/Android tools | 수동 설정 preview | 로컬 소스/인증서가 준비된 환경에서 iOS/Android 네이티브 빌드·서명; 다른 사용자 PC 간단 설치 마법사는 미완성 |
 | `github-actions-native` | **호출하는 비공개 앱 저장소**의 GitHub-hosted 또는 사용자 self-hosted Runner | 재사용 Workflow 예제 | Android preview debug APK 또는 iOS 인증서 기반 IPA 예제, 아티팩트 Actions 보관. Flora 웹 실행 버튼 아직 없음 |
 | `expo-eas` | 사용자 Expo 계정 | 미연동 | EAS Build / EAS Update API 어댑터 설계 예정 (계정/사용량/과금 사용자 책임) |
-| `codemagic` | 사용자 Codemagic 계정 | 미연동 | API 기반 빌드/로그/아티팩트 설계 예정 |
-| `bitrise` | 사용자 Bitrise 계정 | 미연동 | API 기반 빌드/로그/아티팩트 설계 예정 |
+| `codemagic` | 사용자 Codemagic 계정 | **로컬 CLI API 연결** | 본인 API 토큰으로 빌드 시작·취소. Flora 웹 연결/로그/아티팩트 자동 수집은 후속 |
+| `bitrise` | 사용자 Bitrise 계정 | **로컬 CLI API 연결** | 본인 API 토큰으로 빌드 시작·상태 조회·중단. Flora 웹 연결/아티팩트 자동 수집은 후속 |
 
 `flora providers list --json`은 정적인 **플러그인 목록 및 구현 성숙도**만 출력한다. PC 온라인, 계정 로그인, 인증서 적합성 또는 빌드 성공은 의미하지 않는다. `packages/core/src/integration-providers.ts`를 참고한다.
 
@@ -84,9 +84,38 @@ Adapter 구현 시 반드시 포함할 계약: 검증된 provider API origin, �
 
 외부 SaaS 서비스는 API 지원·계정 비용·이용약관이 다르므로, 각 사용자 자신의 계정에서 명시적으로 활성화해야 한다. 외부 서비스를 연결하지 않아도 로컬 Runner와 OTA로 운영할 수 있어야 한다.
 
+## C-1. 내 외부 계정으로 빌드 요청하기 (실행 가능한 로컬 CLI)
+
+Codemagic·Bitrise는 **본인 PC에서 실행하는 최소 권한 CLI API adapter**를 제공한다. 호스팅 Flora 서버에는 토큰을 등록하지 않고, 본인의 셸 환경 변수로만 전달한다. 기본 명령은 API를 호출하지 않는 **dry-run**이며, `--execute`가 있어야 실제 빌드 요청·조회·중단이 발생한다. 브랜치/Workflow/앱 ID가 유효한지 먼저 검사한다.
+
+```sh
+# Codemagic: 본인의 Account Settings > API token
+export CODEMAGIC_API_TOKEN='YOUR_PRIVATE_CODEMAGIC_TOKEN'
+pnpm flora providers codemagic start --app YOUR_APP_ID --workflow android --branch main
+pnpm flora providers codemagic start --app YOUR_APP_ID --workflow android --branch main --execute
+pnpm flora providers codemagic cancel --build ACTUAL_BUILD_ID --execute
+
+# Bitrise: 본인의 Personal Access Token
+export BITRISE_API_TOKEN='YOUR_PRIVATE_BITRISE_TOKEN'
+pnpm flora providers bitrise start --app YOUR_APP_SLUG --workflow primary --branch main
+pnpm flora providers bitrise start --app YOUR_APP_SLUG --workflow primary --branch main --execute
+pnpm flora providers bitrise status --app YOUR_APP_SLUG --build ACTUAL_BUILD_SLUG --execute
+pnpm flora providers bitrise cancel --app YOUR_APP_SLUG --build ACTUAL_BUILD_SLUG --execute
+```
+
+`--execute`가 없으면 인증·네트워크 요청도 수행하지 않는다. 취소 API도 실제 성공 여부와 별도로 `cancel_requested` 상태로 보고한다. 요청이 성공했다고 스토어 제출·서명·아티팩트 다운로드·OTA 기기 적용이 완료된 것은 아니다.
+
+실제 호출은 공식 고정 도메인 `api.codemagic.io` 또는 `api.bitrise.io`에서만 일어나고, 외부 입력으로 API 주소를 바꾸거나 리다이렉트를 따라가지 않는다. 응답은 최대 64 KiB, 시간은 12초로 제한한다. 실패 시 원문 HTTP 본문·토큰·앱 환경 정보는 출력하지 않고 안전한 코드만 반환한다. 요청 결과를 모르면 **자동 재시도하지 말고** 제공자 콘솔에서 실제 빌드가 생성됐는지 확인한다. 동일 요청을 새로 실행하면 추가 비용이 발생할 수 있다.
+
+**주의:** Codemagic REST API는 개발자 프리뷰로 변경될 수 있다. Bitrise 응답 및 인증 규격은 각 제공자의 현재 API 문서에 맞춘다. 실제 개인 계정 API 연동·빌드 성공 테스트는 토큰이 없는 코드 리뷰만으로 검증했다고 표시하지 않는다.
+
+- [Codemagic Builds API](https://docs.codemagic.io/rest-api/builds/)
+- [Bitrise Trigger/Abort API](https://docs.bitrise.io/en/bitrise-ci/api/triggering-and-aborting-builds)
+- [Bitrise App Build API](https://docs.bitrise.io/en/bitrise-ci/api/managing-an-app-s-builds)
+
 ## 향후 우선순위
 
 1. 자체 설치에서 **Android 로컬 PC 빌드와 iOS Mac 빌드** 등록 마법사 개선, 작업 로그·산출물 로컬/선택적 BYOC 보관.
 2. Flora 웹에서 설치한 Provider 선택 → 상태/비용 추정 → 실행 → 실시간 로그/산출물/취소 제공. 현재 CLI의 catalog는 실행 연결이 아니다.
-3. 검토된 EAS/Codemagic/Bitrise 플러그인 별도 PR, 최소 권한 및 mock + 실제 계정 검증. 연결하지 않은 Provider는 `planned` 상태로 유지.
+3. EAS 플러그인과 Codemagic/Bitrise API 어댑터의 웹·Vault 통합을 별도 PR로 제공하고, 최소 권한 및 mock + 실제 계정 검증을 거친다. 현재 Codemagic/Bitrise는 사용자 PC CLI에서만 API를 호출하며, EAS는 `planned` 상태를 유지한다.
 4. 별도 공개 호스팅형 멀티테넌트 SaaS는 이후 선택 과제. 모든 사용자가 UULab 단일 소유자 인스턴스에 로그인하도록 기존 인증을 우회하지 않는다.
