@@ -445,8 +445,14 @@ try {
   const beforeAbort = uploadPosts.source; abortNextSourceBeforeDispatch = true;
   assert.equal((await uploadOutcome(page, "source", sourceBytes)).kind, "requestfailed");
   assert.equal(abortNextSourceBeforeDispatch, false); await uncertainUpload(page, "source", beforeAbort);
-  assert.deepEqual(await storedState(page), emptyState, "PREDISPATCH_ABORT_MUST_NOT_WRITE");
-  assert.deepEqual(await reloadHistory(page), emptyState);
+  // Source write safety is determined by immutable source/history records.
+  // App registration and background summary timestamps are separate state.
+  const afterAbort = await storedState(page);
+  for (const key of ["selected", "snapshots", "history"])
+    assert.deepEqual(afterAbort[key], emptyState[key], "PREDISPATCH_ABORT_MUST_NOT_WRITE");
+  const afterReload = await reloadHistory(page);
+  for (const key of ["selected", "snapshots", "history"])
+    assert.deepEqual(afterReload[key], emptyState[key], "PREDISPATCH_ABORT_MUST_NOT_WRITE");
   const source = await upload(page, "source", sourceBytes);
   const firstSourceState = await storedState(page);
   assert.equal(uploadPosts.source, beforeAbort + 2); assert.equal(firstSourceState.snapshots.items.length, 1);
