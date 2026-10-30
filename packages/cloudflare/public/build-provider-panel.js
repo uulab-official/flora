@@ -24,7 +24,7 @@ const HELP = Object.freeze({
   "github-actions-native": Object.freeze({
     description: "Flora의 공개 재사용 Workflow를 각 비공개 앱 저장소에서 호출합니다. 소스와 Artifacts는 호출 저장소에 남고 비용·실행 할당량도 호출 저장소 소유입니다.",
     status: "현재 Flora 웹에서 Actions 빌드를 직접 시작하지 않습니다. 비공개 저장소에 Workflow를 설치한 뒤 GitHub에서 실행하세요.",
-    command: "uses: uulab-official/flora/.github/workflows/reusable-expo-build.yml@REVIEWED_40_CHARACTER_SHA",
+    command: "name: Flora native build\non:\n  workflow_dispatch:\npermissions:\n  contents: read\njobs:\n  native:\n    uses: uulab-official/flora/.github/workflows/reusable-expo-build.yml@REVIEWED_40_CHARACTER_SHA\n    with:\n      platform: android\n      profile: preview\n      runner-type: github-hosted",
     action: "Workflow 예제 복사",
   }),
   "expo-eas": Object.freeze({
