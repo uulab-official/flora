@@ -24,6 +24,19 @@ test("explicit admin documents are admitted with no fallback or changed body rul
   assert.equal(routeRequest(new Request(origin + "/admin-routes.js")).kind, "public-asset");
 });
 
+test("build provider source is a private authenticated module and cannot accept mutations", () => {
+  const route = routeRequest(new Request(origin + "/build-provider-panel.js"));
+  assert.equal(route.path, "/build-provider-panel.js");
+  assert.equal(route.kind, "private-asset");
+  for (const method of ["POST", "PUT", "HEAD", "OPTIONS"]) assert.throws(
+    () => routeRequest(new Request(origin + "/build-provider-panel.js", { method })),
+    (error: unknown) => error instanceof HttpFailure && error.status === 405
+  );
+  for (const path of ["/build-provider-panel.js?token=exposed", "/build-provider-panel.js/extra", "/%62uild-provider-panel.js"])
+    assert.throws(() => routeRequest(new Request(origin + path)), (error: unknown) =>
+      error instanceof HttpFailure && [400, 404].includes(error.status));
+});
+
 test("login accepts only canonical admin return paths and setup retains strict query rejection", async () => {
   const { authReturnPath } = await import(new URL("../public/auth.js", import.meta.url).href);
   for (const path of pages) {

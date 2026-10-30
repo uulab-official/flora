@@ -68,6 +68,32 @@
 <details><summary>이 앱의 네이티브 Runner 등록</summary><p class="subtle">기존 OTA Runner 토큰과 다른 권한입니다. 앱과 플랫폼마다 따로 등록하세요. 등록만으로 PC에서 실행되지는 않습니다.</p>
 <form id="native-runner-form" class="application-form"><label for="native-runner-name">Runner 이름</label><input id="native-runner-name" required maxlength="80" autocomplete="off"><label for="native-runner-platform">Runner 플랫폼</label><select id="native-runner-platform"><option value="ios">iOS · macOS</option><option value="android">Android</option></select><button id="native-runner-enroll" class="button secondary" type="submit" disabled>현재 앱에 네이티브 Runner 등록</button></form><div id="native-runner-token-panel" hidden><p class="subtle">한 번만 표시하는 기계 토큰입니다. 안전한 Runner 설정 파일에 보관하세요. 앱 전환·새로 확인·로그아웃 시 지워집니다.</p><pre id="native-runner-token" class="log"></pre><button id="native-runner-copy" type="button" class="button secondary" disabled>Runner 토큰 복사</button><button id="native-runner-hide" type="button" class="button secondary">표시된 토큰 지우기</button></div></details></section></section>
 <section id="page-builds" data-admin-view="builds" class="admin-page" hidden>
+<section id="build-provider-center" class="card build-provider-center" aria-label="빌드 실행 환경 선택">
+<div class="section-top"><div><p class="eyebrow">BUILD PROVIDERS</p><h2>빌드 실행 환경</h2></div></div>
+<p class="subtle">내 PC 또는 내 외부 서비스 계정으로 빌드합니다. 기존 Flora OTA는 별도 유지하며, 외부 서비스는 웹에서 임의로 실행하거나 유료 결제를 시작하지 않습니다.</p>
+<label for="build-provider-select">실행 방식</label>
+<select id="build-provider-select" aria-label="빌드 실행 방식" disabled>
+<option value="flora-pc-native">내 PC · Flora Native Runner</option>
+<option value="github-actions-native">GitHub Actions · 내 비공개 저장소</option>
+<option value="expo-eas">Expo EAS · 내 계정</option>
+<option value="codemagic">Codemagic · 내 계정</option>
+<option value="bitrise">Bitrise · 내 계정</option>
+</select>
+<h3 id="build-provider-title">프로젝트를 선택하세요</h3>
+<p id="build-provider-description" class="subtle"></p>
+<p id="build-provider-state" class="subtle" role="status" aria-live="polite"></p>
+<p id="build-provider-summary" class="build-provider-summary" hidden></p>
+<p id="build-provider-ota-summary" class="build-provider-summary" hidden></p>
+<pre id="build-provider-command" class="log build-provider-command" hidden></pre>
+<div class="build-provider-actions">
+<button id="build-provider-copy" class="button secondary" type="button" disabled hidden>실행 예제 복사</button>
+<button id="build-provider-native" class="button primary" type="button" disabled hidden>기존 네이티브 빌드 양식으로 이동</button>
+<button id="build-provider-runners" class="button secondary" type="button" disabled>내 Runner 관리</button>
+<button id="build-provider-ota" class="button secondary" type="button" disabled>OTA 배포와 적용 현황</button>
+<a id="build-provider-docs" class="button secondary" target="_blank" rel="noopener noreferrer" hidden>Provider 설치 가이드</a>
+</div>
+<p class="subtle">네이티브 바이너리는 현재 실행 PC 또는 외부 빌드 제공자에서 받습니다. Flora 웹은 검증 가능한 빌드 이력과 해시 메타데이터만 표시하며 IPA/APK 파일을 직접 보관하거나 다운로드하지 않습니다.</p>
+</section>
 <details id="native-editor" class="credential-panel native-panel" open><summary>네이티브 빌드 · 서명</summary><p id="native-app-name" class="credential-app-name"></p><p class="subtle">등록한 서명 키의 버전과 GitHub 커밋을 고정해 PC Runner에 요청합니다. EAS·Actions 없이 동작하며, iOS는 Mac과 Xcode가 필요합니다. 빌드 성공은 스토어 제출이나 기기 설치를 뜻하지 않습니다.</p><button id="native-refresh" type="button" class="button secondary">이 앱의 빌드와 키 사용 이력 확인</button><p id="native-status" role="status" aria-live="polite" class="subtle"></p>
 <form id="native-form" class="application-form"><label for="native-platform">빌드 플랫폼</label><select id="native-platform"><option value="ios">iOS</option><option value="android">Android</option></select><label for="native-commit">GitHub Commit SHA</label><input id="native-commit" required pattern="[a-f0-9]{40}" autocomplete="off" placeholder="연결한 저장소의 40자리 commit SHA"><label for="native-app-identifier">Bundle ID / Package name</label><input id="native-app-identifier" required autocomplete="off"><label for="native-team-id">Apple Team ID (iOS)</label><input id="native-team-id" autocomplete="off" maxlength="10"><p id="native-signing-hint" class="subtle"></p><p class="subtle">iOS는 배포 인증서와 프로파일, Android는 Keystore만 전달합니다. Google Play·APNs·FCM 키는 이 서명 요청에 포함하지 않습니다.</p><button id="native-enqueue" type="submit" class="button primary" disabled>이 앱의 네이티브 빌드 요청</button></form><h3>이 앱의 네이티브 빌드 이력</h3><div id="native-jobs" class="credential-list"></div><h3>이 앱의 서명 키 전달 이력</h3><p class="subtle">키 전달 기록은 서명 성공과 별도로 확인합니다. 키 원문은 이 화면에 표시하지 않습니다.</p><div id="native-credential-uses"></div></details></section>
 <section id="page-credentials" data-admin-view="credentials" class="admin-page" hidden>

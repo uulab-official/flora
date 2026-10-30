@@ -3,6 +3,7 @@ import {buildRunnerBinding} from "./onboarding-files.js";
 import { createOnboarding } from "./onboarding.js";
 import { createDeploymentDevices } from "./deployment-devices.js";
 import { createAutoRollback } from "./auto-rollback.js";
+import { createBuildProviderPanel } from "./build-provider-panel.js";
 import { ADMIN_PAGES, adminPath, parseAdminPath } from "./admin-routes.js";
 import { renderProjectRows, renderOperationalOverview, renderCompactOtaHistory, renderCompactAutomationJobs, renderWorkspaceStatus, technicalDetails, isValidSdkTelemetry } from "./project-views.js";
 const LABELS = { passed: "통과", failed: "실패", invalid: "증거 불충분", blocked: "차단됨", interrupted: "중단됨" };
@@ -365,6 +366,7 @@ export function createNativePanel(env, context) {
     }
     for (const [id, label] of [["native-jobs", "이 앱의 네이티브 빌드 이력이 없습니다."], ["native-runners", "이 앱의 네이티브 Runner가 없습니다."], ["native-credential-uses", "이 앱의 서명 키 전달 이력이 없습니다."]]) if (!node(id).children.length) node(id).append(element(document, "p", label, "subtle"));
     status("선택 앱의 네이티브 빌드와 키 전달 이력입니다. OTA Runner와 별도 권한으로 동작합니다."); controls();
+    context.onView?.(context.appId(), view);
   }
   function defaults() {
     const selected = selectedCredentials();
@@ -447,7 +449,8 @@ export async function startClient(env) {
   let overviewEpoch = 0; let operations = null; let operationsAppId = null; let deploymentRequestKey = null; let automation = null; let automationAppId = null; let automationRequestKey = null; let runnerToken = ""; let runnerTokenAppId = null; let automationTimer; let automationPollDelay = 5000; let automationLoading = null; let detailEpoch = 0; const detailLoading = new Set();
   const requests = new Set(); const logs = new Map();
   const credentialsPanel = createCredentialPanel(env, { appId: () => selectedAppId, appName: () => data?.selectedApplication?.name, active, ready: () => !closed && Boolean(csrf) && !busy && !reading && active(), api, expire });
-  const nativePanel = createNativePanel(env, { appId: () => selectedAppId, appName: () => data?.selectedApplication?.name, commitSha: () => operationsAppId === selectedAppId ? currentDetection(operations)?.commitSha : null, active, ready: () => !closed && Boolean(csrf) && !busy && !reading && active(), api, expire });
+  const buildPanel = createBuildProviderPanel(env, { appId: () => selectedAppId, active: () => !closed && !!csrf && active(), navigate: (page, appId) => navigate(page, appId) });
+  const nativePanel = createNativePanel(env, { onView: (app, view) => buildPanel.setNativeView(app, view), appId: () => selectedAppId, appName: () => data?.selectedApplication?.name, commitSha: () => operationsAppId === selectedAppId ? currentDetection(operations)?.commitSha : null, active, ready: () => !closed && Boolean(csrf) && !busy && !reading && active(), api, expire });
   const deploymentDevices = createDeploymentDevices(env, { route: () => currentRoute, active: () => !closed && Boolean(csrf) && active(), api, expire });
   const autoRollback = createAutoRollback(env, { route: () => currentRoute, active: () => !closed && Boolean(csrf) && active(), api, expire });
   let wizardPolling = false;
@@ -504,7 +507,7 @@ export async function startClient(env) {
   }
   function erase(preserveProjects = false) {
     stopProjectsPoll(); projectEpoch++; if (!preserveProjects) { projectSummary = null; projectStatus = "loading"; projectLastAttempt = -Infinity; node("workspace-status")?.replaceChildren(); } projectLoading = false; node("project-summary-status")?.replaceChildren();
-    credentialsPanel.clear(); nativePanel.clear(); deploymentDevices.clear(); autoRollback.clear(); onboardingPanel.leave();
+    credentialsPanel.clear(); nativePanel.clear(); buildPanel.clear(); deploymentDevices.clear(); autoRollback.clear(); onboardingPanel.leave();
     ciBinding = null; ciAppId = null; ciKnown = false; ciIdentity = null; ciEpoch++; ciConflict = false; clearCI(document);
     githubCallback = null; githubEpoch++; githubInstallations = []; githubRepositories = []; githubCursor = null; githubSelection = null; githubRepositoryPages = 0;
     for (const id of ["github-installation-select", "github-repository-select", "github-managed-status", "github-repository-scope", "github-repository-count", "signing-key-status"]) node(id)?.replaceChildren();
@@ -625,7 +628,7 @@ export async function startClient(env) {
     else if (page === "projects") await loadProjects();
     else if (page === "register") { node("application-registration").open = true; await loadGitHubConnection(); }
     else if (page === "credentials") { node("credential-editor").open = true; await credentialsPanel.load(); }
-    else if (page === "builds") { if (operationsAppId !== app) await loadOperations(); if (current()) { node("native-editor").open = true; await nativePanel.load(); } }
+    else if (page === "builds") { if (operationsAppId !== app) await loadOperations(); if (current()) { buildPanel.open(app); if (operationsAppId === app) buildPanel.setOTAView(app, operations); node("native-editor").open = true; await nativePanel.load(); } }
     else if (page === "runners") { node("automation-editor").open = true; await loadProjectOverview(); if (current()) await nativePanel.load(); }
     else if (page === "ota-detail") await deploymentDevices.open(currentRoute);
     else if (page === "overview") await loadProjectOverview();
@@ -637,7 +640,7 @@ export async function startClient(env) {
     const route = typeof page === "string" && page.startsWith("/") ? parseAdminPath(page) : parseAdminPath(adminPath(page, appId ?? selectedAppId));
     if (!route) return false;
     const epoch = ++routeEpoch, previous = currentRoute;
-    if (previous.page !== route.page || previous.appId !== route.appId) { projectEpoch++; projectLoading = false; stopProjectsPoll(); credentialsPanel.clear(); nativePanel.clear(); hideRunnerToken(); stopAutomationPoll(); node("operations-editor").open = false; node("automation-editor").open = false; }
+    if (previous.page !== route.page || previous.appId !== route.appId) { projectEpoch++; projectLoading = false; stopProjectsPoll(); credentialsPanel.clear(); nativePanel.clear(); buildPanel.clear(); hideRunnerToken(); stopAutomationPoll(); node("operations-editor").open = false; node("automation-editor").open = false; }
     deploymentDevices.leave(); autoRollback.leave(); onboardingPanel.leave();
     currentRoute = route; currentView = ADMIN_PAGES[route.page].legacy;
     if (!options.fromHistory) { const method = options.replace ? "replaceState" : "pushState"; if (env.location?.pathname !== route.path) env.history?.[method]?.({ flora: true }, "", route.path); }
@@ -1128,6 +1131,7 @@ export async function startClient(env) {
       const result = {...received, expectedRootDirectory: data?.selectedApplication?.rootDirectory};
       if (!active() || version !== generation || selectedAppId !== appId) return;
       renderOperations(document, appId, result); if (currentDetection(operations)?.id !== currentDetection(result)?.id) automationRequestKey = null; operations = result; operationsAppId = appId;
+      if (currentRoute.page === "builds" && buildPanel.state().appId === appId) buildPanel.setOTAView(appId, result);
       if (ciAppId === appId) {
         const connection = result.connection;
         const matched = trust => connection && trust && trust.connectionVersion === connection.version && trust.repository === connection.owner + "/" + connection.repository && trust.ref === "refs/heads/" + connection.ref;

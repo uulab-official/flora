@@ -78,3 +78,15 @@ button:disabled,.primary:disabled:hover,.pagination .icon-button:disabled,.impor
 .device-journey-entry p { margin:7px 0 10px; }
 .device-journey-entry .button { white-space:normal; }
 @media (max-width:640px) { .device-journey { padding:16px 12px; } .device-journey-entry { padding-left:12px; } }
+
+/* Build Provider chooser is read-only for external accounts; the native form retains mutation authority. */
+.build-provider-center{display:grid;gap:12px}
+.build-provider-center>.section-top{margin-bottom:2px}
+.build-provider-center>label{font-size:12px;font-weight:650;color:var(--muted)}
+.build-provider-center>select{max-width:620px}
+.build-provider-center>h3{font-size:15px;margin:6px 0 0}
+.build-provider-center>.subtle{margin:0}
+.build-provider-center>.build-provider-command{margin:0;max-height:130px;white-space:pre-wrap;overflow-wrap:anywhere}
+.build-provider-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.build-provider-summary{font-size:12px;color:var(--text);background:var(--soft);border:1px solid var(--line);padding:12px;border-radius:8px;margin:0}
+@media(max-width:640px){.build-provider-actions{display:grid;grid-template-columns:1fr}.build-provider-actions>*{width:100%;text-align:center}}

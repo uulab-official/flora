@@ -13,7 +13,9 @@ GitHub push → Flora's app-scoped policy and job queue → Docker export on you
 
 Flora is currently a single-owner self-hosting preview. The UULab demo stays owner-only; open-source users host their own Flora instance and use their own computer or external provider accounts. The SDK is not published to npm. A local CLI and authenticated web wizard guide initial installation. This guide uses **D1 asset storage and an independent PC Runner**. It does not assume UULab's dedicated GitHub Release repository or LaunchAgent is a general installation feature.
 
-> **Optional GitHub Actions native-build MVP:** private Expo repositories can call Flora's public reusable Workflow to compile Android preview APKs or signed iOS IPAs. The private caller owns the run and its quota. Hosted one-click builds and multi-user SaaS are not yet supported. [Private caller guide (Korean)](docs/development/reusable-expo-build.ko.md) · [Own-PC and external provider options](docs/development/build-provider-options.ko.md) · [Optional multi-tenant plan](docs/architecture/hosted-multitenant-build-ota.md)
+> **Optional GitHub Actions native-build MVP:** private Expo repositories can call Flora's public reusable Workflow to compile Android preview APKs or signed iOS IPAs. The private caller owns the run and its quota. One-click external provider builds and multi-user hosted SaaS are not yet supported; the existing PC Native Runner can be enqueued from Flora web. [Private caller guide (Korean)](docs/development/reusable-expo-build.ko.md) · [Own-PC and external provider options](docs/development/build-provider-options.ko.md) · [Optional multi-tenant plan](docs/architecture/hosted-multitenant-build-ota.md)
+
+> **Web build-provider chooser (code MVP):** the owner console can select PC Native Runner, GitHub Actions, EAS, Codemagic or Bitrise. Only the existing Native Runner flow can enqueue directly from the web; external services remain user-executed CLI workflows. Binary downloads via the Flora web UI are not yet implemented. [Scope and safeguards (Korean)](docs/development/web-build-provider-center.ko.md)
 
 ## Follow the path to your first OTA
 
