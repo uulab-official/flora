@@ -48,6 +48,46 @@ test("OTA publication status is read-only, app-scoped and cannot imply device ap
   assert.equal(s.node("build-provider-ota-summary").textContent.includes("게시 이력 1건"),false);
 });
 
+test("connected private GitHub Actions is an app-scoped link and offline verifier command, not a remote execution",async()=>{
+  const s=setup();s.panel.open("app_alpha");
+  assert.equal(s.panel.select("github-actions-native"),true);
+  assert.equal(s.node("build-provider-github-actions").hidden,true);
+  const connected={appId:"app_alpha",owner:"uulab-official",repository:"private-app",ref:"main"};
+  const digest="a".repeat(40);
+  assert.equal(s.panel.setGithubSource("app_alpha",connected,digest),true);
+  assert.equal(s.node("build-provider-github-actions").hidden,false);
+  assert.equal(s.node("build-provider-github-actions").getAttribute("href"),"https://github.com/uulab-official/private-app/actions");
+  const command=s.node("build-provider-verify-command").textContent;
+  assert.ok(command.includes("--repository uulab-official/private-app"));
+  assert.ok(command.includes("--commit "+digest));
+  assert.ok(!command.includes("--execute"));
+  await s.panel.copyVerifier();assert.equal(s.commands.at(-1),command);
+  assert.equal(s.calls.length,0,"the browser cannot run GitHub Actions");
+  assert.equal(s.panel.setGithubSource("app_beta",connected,digest),false);
+  assert.equal(s.panel.setGithubSource("app_alpha",{...connected,appId:"app_beta"},digest),false);
+  assert.equal(s.node("build-provider-github-actions").hidden,true);
+  assert.equal(s.panel.setGithubSource("app_alpha",connected,digest),true);
+  s.panel.select("expo-eas");
+  assert.equal(s.node("build-provider-github-actions").hidden,true);
+  assert.equal(s.node("build-provider-verify-command").textContent,"");
+  assert.equal(await s.panel.copyVerifier(),false);
+  s.panel.select("github-actions-native");
+  s.app("app_beta");s.panel.open("app_beta");
+  assert.equal(s.node("build-provider-github-actions").getAttribute("href"),null);
+  assert.equal(s.panel.state().github,null);
+});
+
+test("foreign, unbound, malformed repositories and commits never create Actions links",()=>{
+  const s=setup();s.panel.open("app_alpha");s.panel.select("github-actions-native");
+  for (const bad of [
+    {owner:"bad/owner",repository:"repo"}, {owner:"valid",repository:"../other"},
+    {owner:"valid",repository:".lock"}, {owner:"valid",repository:"hidden.lock"},
+    {owner:"valid",repository:"repo?token=x"},
+  ]) assert.equal(s.panel.setGithubSource("app_alpha",{appId:"app_alpha",...bad},"b".repeat(40)),false);
+  assert.equal(s.panel.setGithubSource("app_alpha",{appId:"app_alpha",owner:"valid",repository:"repo"},"INVALID"),false);
+  assert.equal(s.node("build-provider-github-actions").getAttribute("href"),null);
+});
+
 test("provider chooser is shipped with the hosted index and lists precisely the catalog's native build providers",async()=>{
   const ids=listBuildProviders().map(item=>item.id);
   assert.deepEqual(ids,["flora-pc-native","github-actions-native","expo-eas","codemagic","bitrise"]);

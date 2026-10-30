@@ -14,16 +14,20 @@ export interface NativeBuildSummary {
   latest: null | { platform: string; state: string; artifactName?: string; artifactSha256?: string };
 }
 export interface BuildOtaSummary { appId: string; total: number; ios: number; android: number }
+export interface LinkedGithubBuild { appId: string; repository: string; commitSha: string; actionsUrl: string; verifyCommand: string }
 export interface BuildProviderPanel {
   open(appId: string): void;
   clear(): void;
   setNativeView(appId: string, view: NativeBuildView): boolean;
   setOTAView(appId: string, view: { deployments: Array<{ appId: string; platform: string }> }): boolean;
+  setGithubSource(appId: string, connection: unknown, commitSha: unknown): boolean;
   select(providerId: string): boolean;
   copy(): Promise<boolean>;
+  copyVerifier(): Promise<boolean>;
   go(page: string): unknown;
-  state(): { appId: string | null; selection: string; native: NativeBuildSummary | null; ota: BuildOtaSummary | null };
+  state(): { appId: string | null; selection: string; native: NativeBuildSummary | null; ota: BuildOtaSummary | null; github: LinkedGithubBuild | null };
 }
+export function linkedGithubBuild(appId: string, connection: unknown, commitSha: unknown): LinkedGithubBuild | null;
 export function listBuildProviders(): BuildProviderChoice[];
 export function buildProviderHelp(id: string): BuildProviderHelp | null;
 export function summarizeNativeBuilds(appId: string, view: NativeBuildView): NativeBuildSummary;

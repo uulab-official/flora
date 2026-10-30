@@ -42,3 +42,9 @@ Flora의 단일 소유자 셀프호스팅 콘솔에서 **앱 → 네이티브 �
 - 기존 브라우저 QA 실패 이슈 #4는 별개로 재현하고 수정해야 하며 이 기능의 정적/합성 테스트 성공과 구분
 
 참고: [개인 PC·외부 Provider 가이드](build-provider-options.ko.md), [플랫폼/Runner 설계](../architecture/control-plane-and-runners.ko.md), [GitHub private caller](reusable-expo-build.ko.md), [남은 작업 이슈 #3](https://github.com/uulab-official/flora/issues/3).
+
+## 비공개 GitHub Actions 결과와 로컬 검증 (추가)
+
+연결된 앱의 GitHub owner/repository와 소스 동기화로 확인한 40자리 commit SHA가 있으면, 빌드 Provider의 **GitHub Actions** 화면에서 해당 비공개 저장소의 Actions 링크를 제공합니다. 화면은 외부 GitHub 저장소의 run/상태/Artifact API를 읽지 않으며, GitHub의 비공개 저장소 로그인 권한으로 직접 실행 페이지에서 다운로드해야 합니다.
+
+Actions ZIP을 직접 압축 해제한 뒤 **검증 명령 복사**로 본인 PC에서 SHA-256 검사를 수행할 수 있습니다. 정확한 Run ID를 확인한 뒤 선택 입력으로 붙이기를 권장합니다. 이 결과는 파일 무결성만 의미하며, GitHub의 서명 증명이나 스토어 배포·기기 OTA 성공을 의미하지 않습니다. [오프라인 검증 안내](github-native-artifact-integrity.ko.md)를 참고하세요.
