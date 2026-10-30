@@ -1,6 +1,9 @@
 name: Foundation checks
+# Avoid running the same expensive OS matrix twice on every feature-branch
+# push. Main pushes and pull requests remain fully tested.
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 permissions:
@@ -36,14 +39,29 @@ jobs:
       - run: git --version
       - run: npm exec --yes --package=pnpm@11.19.0 -- pnpm --version
       - run: npm exec --yes --package=pnpm@11.19.0 -- pnpm install --frozen-lockfile --ignore-scripts
-      - run: npm exec --yes --package=pnpm@11.19.0 -- pnpm check
-      - run: npm exec --yes --package=pnpm@11.19.0 -- pnpm platform --help
-      - run: npm exec --yes --package=pnpm@11.19.0 -- pnpm flora dogfood --help
-      - run: npm exec --yes --package=pnpm@11.19.0 -- pnpm platform doctor --json
-      - run: npm exec --yes --package=pnpm@11.19.0 -- pnpm platform config validate --file examples/local-workflow.json
-      - run: npm exec --yes --package=pnpm@11.19.0 -- pnpm platform job simulate --file examples/local-workflow.json --scenario happy-path
-      - run: npm exec --yes --package=pnpm@11.19.0 -- pnpm platform job simulate --file examples/local-workflow.json --scenario runner-replacement
-      - run: npm exec --yes --package=pnpm@11.19.0 -- pnpm platform job simulate --file examples/local-workflow.json --scenario unsafe-expiry
+      - name: Full suite on Linux and macOS
+        if: runner.os != 'Windows'
+        run: npm exec --yes --package=pnpm@11.19.0 -- pnpm check
+      - name: Windows compile, types and portable provider API tests
+        # The native security sandbox is macOS-only. Existing Unix filesystem/
+        # native runner tests are not Windows-compatible. Do NOT imply that
+        # those untested features are Windows-ready.
+        if: runner.os == 'Windows'
+        run: |
+          npm exec --yes --package=pnpm@11.19.0 -- pnpm build
+          npm exec --yes --package=pnpm@11.19.0 -- pnpm typecheck
+          node scripts/test.mjs packages/core/test/identity.test.ts tests/reusable-expo-build.test.ts tests/integration-providers.test.ts tests/remote-providers.test.ts tests/eas-build-provider.test.ts
+      # Invoke the compiled CLI directly: pnpm/npm shims on Windows swallow
+      # argument flags such as --file and --scenario.
+      - run: node packages/cli/dist/main.js --help
+      - run: node packages/cli/dist/main.js dogfood --help
+      - run: node packages/cli/dist/main.js doctor --json
+      - run: node packages/cli/dist/main.js config validate --file examples/local-workflow.json
+      - run: node packages/cli/dist/main.js job simulate --file examples/local-workflow.json --scenario happy-path
+      - run: node packages/cli/dist/main.js job simulate --file examples/local-workflow.json --scenario runner-replacement
+      - run: node packages/cli/dist/main.js job simulate --file examples/local-workflow.json --scenario unsafe-expiry
       - run: npm exec --yes --package=pnpm@11.19.0 -- pnpm doctor:toolchain
-      - run: npm exec --yes --package=pnpm@11.19.0 -- pnpm verify:clean
+      - name: Verify clean source isolation (Linux/macOS only)
+        if: runner.os != 'Windows'
+        run: npm exec --yes --package=pnpm@11.19.0 -- pnpm verify:clean
       - run: git diff --exit-code

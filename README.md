@@ -11,7 +11,9 @@ GitHub push → Flora의 앱별 정책·작업 큐 → 내 PC의 Docker export
             → Flora OTA 게시 → 설치된 앱의 다운로드·적용·재시작 → 앱별 상세 이력
 ```
 
-현재는 단일 소유자 셀프호스팅 preview입니다. SDK는 npm에 게시되지 않았습니다. 최초 설치는 로컬 CLI와 로그인 후 웹 마법사로 안내합니다. 아래 기본 경로는 **D1 자산 저장 + 독립 PC Runner**입니다. UULab 전용 GitHub Release 저장소와 LaunchAgent를 일반 설치 기능으로 가정하지 않습니다.
+현재는 단일 소유자 셀프호스팅 preview입니다. UULab 운영 데모 역시 단일 소유자 전용이며, **오픈소스 사용자는 자신의 Flora 인스턴스와 본인 PC/Cloud 계정을 사용**합니다. SDK는 npm에 게시되지 않았습니다. 최초 설치는 로컬 CLI와 로그인 후 웹 마법사로 안내합니다. 아래 기본 경로는 **D1 자산 저장 + 독립 PC Runner**입니다. UULab 전용 GitHub Release 저장소와 LaunchAgent를 일반 설치 기능으로 가정하지 않습니다.
+
+> **선택적 GitHub Actions 네이티브 빌드 (MVP):** 비공개 Expo 앱 저장소가 공개 Flora의 재사용 Workflow를 호출하여 Android preview APK 또는 서명된 iOS IPA를 만들 수 있습니다. 실행과 비용은 호출한 비공개 저장소에 속하며, Flora 웹 원클릭 빌드나 다중 사용자 SaaS는 아직 지원하지 않습니다. [설정 가이드](docs/development/reusable-expo-build.ko.md) · [내 PC·외부 Provider 선택](docs/development/build-provider-options.ko.md) · [향후 다중 사용자 설계](docs/architecture/hosted-multitenant-build-ota.md)
 
 ## 첫 OTA까지 따라하기
 

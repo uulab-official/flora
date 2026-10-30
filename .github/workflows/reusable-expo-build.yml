@@ -1,0 +1,283 @@
+name: Flora / reusable Expo native build
+
+# Runs in the *calling repository* context. Flora's public repository never
+# checks out, stores, or publishes the private application's source.
+on:
+  workflow_call:
+    inputs:
+      platform:
+        description: android or ios
+        required: true
+        type: string
+      profile:
+        description: preview or production
+        required: false
+        type: string
+        default: preview
+      project-directory:
+        description: Relative path of the private Expo app
+        required: false
+        type: string
+        default: .
+      install-directory:
+        description: Relative path containing the lockfile (monorepo root if applicable)
+        required: false
+        type: string
+        default: .
+      runner-type:
+        description: Use GitHub-hosted capacity or the calling repository's trusted self-hosted machine
+        required: false
+        type: string
+        default: github-hosted
+      node-version:
+        description: Exact Node.js version chosen by the calling project
+        required: false
+        type: string
+        default: '24.19.0'
+    secrets:
+      FLORA_IOS_P12_BASE64:
+        required: false
+      FLORA_IOS_P12_PASSWORD:
+        required: false
+      FLORA_IOS_PROFILE_BASE64:
+        required: false
+      FLORA_IOS_EXPORT_OPTIONS_BASE64:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # Manual runs only on caller's default branch; push only on protected refs.
+    # Do not expose signing materials to PR or unprotected branch code.
+    if: ${{ (github.event_name == 'workflow_dispatch' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) || (github.event_name == 'push' && github.ref_protected) }}
+    runs-on: ${{ inputs.runner-type == 'self-hosted' && fromJSON(inputs.platform == 'ios' && '["self-hosted","macOS","flora-ios"]' || '["self-hosted","Linux","flora-android"]') || fromJSON(inputs.platform == 'ios' && '["macos-latest"]' || '["ubuntu-latest"]') }}
+    timeout-minutes: 90
+    env:
+      FLORA_PLATFORM: ${{ inputs.platform }}
+      FLORA_PROFILE: ${{ inputs.profile }}
+      FLORA_PROJECT_DIRECTORY: ${{ inputs.project-directory }}
+      FLORA_INSTALL_DIRECTORY: ${{ inputs.install-directory }}
+      FLORA_RUNNER_TYPE: ${{ inputs.runner-type }}
+    steps:
+      - name: Checkout private caller repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: ${{ inputs.node-version }}
+      - name: Validate platform, profile and checked-out paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'JS'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const platform = process.env.FLORA_PLATFORM;
+          const profile = process.env.FLORA_PROFILE;
+          if (!['android', 'ios'].includes(platform) || !['preview', 'production'].includes(profile) ||
+              !['self-hosted', 'github-hosted'].includes(process.env.FLORA_RUNNER_TYPE)) {
+            throw new Error('FLORA_BUILD_INPUT_INVALID');
+          }
+          const root = fs.realpathSync(process.env.GITHUB_WORKSPACE);
+          function verify(value) {
+            if (!value || value.startsWith('/') || value.includes('\\') || !/^[A-Za-z0-9._/-]+$/.test(value) ||
+                value.split('/').some(part => part === '..' || part === '')) throw new Error('FLORA_BUILD_PATH_INVALID');
+            const resolved = fs.realpathSync(path.resolve(root, value));
+            if (resolved !== root && !resolved.startsWith(root + path.sep)) throw new Error('FLORA_BUILD_PATH_OUTSIDE_REPOSITORY');
+            if (!fs.statSync(resolved).isDirectory()) throw new Error('FLORA_BUILD_PATH_NOT_DIRECTORY');
+            return resolved;
+          }
+          const install = verify(process.env.FLORA_INSTALL_DIRECTORY);
+          const app = verify(process.env.FLORA_PROJECT_DIRECTORY);
+          if (!fs.existsSync(path.join(install, 'package.json')) || !fs.existsSync(path.join(app, 'package.json'))) {
+            throw new Error('FLORA_BUILD_PACKAGE_NOT_FOUND');
+          }
+          const scripts = JSON.parse(fs.readFileSync(path.join(app, 'package.json'), 'utf8')).scripts ?? {};
+          if (typeof scripts['flora:build:' + platform] !== 'string' || !scripts['flora:build:' + platform].trim()) {
+            throw new Error('FLORA_BUILD_SCRIPT_NOT_FOUND');
+          }
+          JS
+      - name: Set up Android Java
+        if: ${{ inputs.platform == 'android' }}
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install caller's locked dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/$FLORA_INSTALL_DIRECTORY"
+          if [[ -f pnpm-lock.yaml ]]; then
+            SPEC="$(node -p "require('./package.json').packageManager || ''")"
+            if [[ ! "$SPEC" =~ ^pnpm@[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::A pinned pnpm packageManager field is required."
+              exit 1
+            fi
+            npm exec --yes --package="$SPEC" -- pnpm install --frozen-lockfile
+            echo "FLORA_PACKAGE_MANAGER=pnpm" >> "$GITHUB_ENV"
+            echo "FLORA_PNPM_SPEC=$SPEC" >> "$GITHUB_ENV"
+          elif [[ -f package-lock.json ]]; then
+            npm ci
+            echo "FLORA_PACKAGE_MANAGER=npm" >> "$GITHUB_ENV"
+          else
+            echo "::error::Only pinned npm and pnpm lockfiles are supported."
+            exit 1
+          fi
+      - name: Import private iOS signing credentials
+        if: ${{ inputs.platform == 'ios' }}
+        shell: bash
+        env:
+          CERT_BASE64: ${{ secrets.FLORA_IOS_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.FLORA_IOS_P12_PASSWORD }}
+          PROFILE_BASE64: ${{ secrets.FLORA_IOS_PROFILE_BASE64 }}
+          EXPORT_OPTIONS_BASE64: ${{ secrets.FLORA_IOS_EXPORT_OPTIONS_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$CERT_BASE64" || -z "$CERT_PASSWORD" || -z "$PROFILE_BASE64" || -z "$EXPORT_OPTIONS_BASE64" ]]; then
+            echo "::error::All four FLORA_IOS_* secrets are required to create a signed IPA."
+            exit 1
+          fi
+          SIGNING_DIR="$RUNNER_TEMP/flora-ios-signing"
+          mkdir -m 700 "$SIGNING_DIR"
+          printf %s "$CERT_BASE64" | base64 -D > "$SIGNING_DIR/certificate.p12"
+          printf %s "$PROFILE_BASE64" | base64 -D > "$SIGNING_DIR/profile.mobileprovision"
+          printf %s "$EXPORT_OPTIONS_BASE64" | base64 -D > "$SIGNING_DIR/export-options.plist"
+          chmod 600 "$SIGNING_DIR"/*
+          KEYCHAIN="$SIGNING_DIR/flora.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 32)"
+          security list-keychains -d user > "$SIGNING_DIR/previous-keychains"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 7200 "$KEYCHAIN"
+          security import "$SIGNING_DIR/certificate.p12" -k "$KEYCHAIN" -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          ORIGINAL_KEYCHAINS=()
+          while IFS= read -r LINE; do
+            LINE="${LINE#*\"}"
+            LINE="${LINE%\"*}"
+            [[ -z "$LINE" ]] || ORIGINAL_KEYCHAINS+=("$LINE")
+          done < "$SIGNING_DIR/previous-keychains"
+          security list-keychains -d user -s "$KEYCHAIN" "${ORIGINAL_KEYCHAINS[@]}"
+          UUID="$(security cms -D -i "$SIGNING_DIR/profile.mobileprovision" | plutil -extract UUID raw -o - -)"
+          if [[ ! "$UUID" =~ ^[A-Fa-f0-9-]{36}$ ]]; then
+            echo "::error::Invalid provisioning profile UUID."
+            exit 1
+          fi
+          PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$PROFILE_DIR"
+          PROFILE_PATH="$PROFILE_DIR/$UUID.mobileprovision"
+          if [[ -e "$PROFILE_PATH" ]]; then
+            echo "::error::Provisioning profile collision."
+            exit 1
+          fi
+          cp "$SIGNING_DIR/profile.mobileprovision" "$PROFILE_PATH"
+          printf %s "$PROFILE_PATH" > "$SIGNING_DIR/installed-profile-path"
+          echo "FLORA_IOS_EXPORT_OPTIONS_PLIST=$SIGNING_DIR/export-options.plist" >> "$GITHUB_ENV"
+      - name: Execute the private project's fixed build script
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="$GITHUB_WORKSPACE/$FLORA_PROJECT_DIRECTORY"
+          SCRIPT="flora:build:$FLORA_PLATFORM"
+          if [[ "$FLORA_PACKAGE_MANAGER" == 'pnpm' ]]; then
+            npm exec --yes --package="$FLORA_PNPM_SPEC" -- pnpm --dir "$APP" run "$SCRIPT"
+          else
+            npm run --prefix "$APP" "$SCRIPT"
+          fi
+      - name: Collect only native artifacts and record provenance
+        shell: bash
+        env:
+          FLORA_ARTIFACT_DIRECTORY: ${{ runner.temp }}/flora-artifacts
+        run: |
+          set -euo pipefail
+          BUILD_DIR="$GITHUB_WORKSPACE/$FLORA_PROJECT_DIRECTORY/dist/flora"
+          if [[ ! -d "$BUILD_DIR" ]]; then
+            echo "::error::The caller must produce dist/flora artifacts."
+            exit 1
+          fi
+          mkdir -p "$FLORA_ARTIFACT_DIRECTORY"
+          shopt -s nullglob
+          if [[ "$FLORA_PLATFORM" == ios ]]; then
+            FILES=("$BUILD_DIR"/*.ipa)
+          else
+            FILES=("$BUILD_DIR"/*.apk "$BUILD_DIR"/*.aab)
+          fi
+          if (( ${#FILES[@]} < 1 || ${#FILES[@]} > 10 )); then
+            echo "::error::Expected one to ten native artifacts."
+            exit 1
+          fi
+          for FILE in "${FILES[@]}"; do
+            if [[ ! -f "$FILE" || -L "$FILE" ]]; then
+              echo "::error::Invalid artifact type."
+              exit 1
+            fi
+            cp "$FILE" "$FLORA_ARTIFACT_DIRECTORY/"
+            shasum -a 256 "$FILE"
+          done
+          node --input-type=module <<'JS'
+          import { createReadStream } from 'node:fs';
+          import { readdirSync, writeFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          import { createHash } from 'node:crypto';
+          const dir = process.env.FLORA_ARTIFACT_DIRECTORY;
+          const files = [];
+          for (const name of readdirSync(dir).sort()) {
+            const sha = createHash('sha256');
+            for await (const chunk of createReadStream(join(dir, name))) sha.update(chunk);
+            files.push({ name, sha256: sha.digest('hex') });
+          }
+          writeFileSync(join(dir, 'flora-build-receipt.json'), JSON.stringify({
+            schemaVersion: 1,
+            source: 'github-actions-caller',
+            repository: process.env.GITHUB_REPOSITORY,
+            commitSha: process.env.GITHUB_SHA,
+            runId: process.env.GITHUB_RUN_ID,
+            runAttempt: process.env.GITHUB_RUN_ATTEMPT,
+            platform: process.env.FLORA_PLATFORM,
+            profile: process.env.FLORA_PROFILE,
+            signingVerified: false,
+            files
+          }, null, 2) + '\n');
+          JS
+      - name: Upload artifacts to the private caller's Actions run
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: flora-${{ inputs.platform }}-${{ inputs.profile }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/flora-artifacts/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+      - name: Clean up ephemeral signing materials
+        if: ${{ always() && inputs.platform == 'ios' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          SIGNING_DIR="$RUNNER_TEMP/flora-ios-signing"
+          if [[ -f "$SIGNING_DIR/installed-profile-path" ]]; then
+            PROFILE_PATH="$(cat "$SIGNING_DIR/installed-profile-path")"
+            case "$PROFILE_PATH" in
+              "$HOME/Library/MobileDevice/Provisioning Profiles/"*.mobileprovision)
+                rm -f "$PROFILE_PATH" ;;
+              *) echo "::warning::Refused to remove a profile outside its expected directory." ;;
+            esac
+          fi
+          if [[ -f "$SIGNING_DIR/previous-keychains" ]]; then
+            ORIGINAL_KEYCHAINS=()
+            while IFS= read -r LINE; do
+              LINE="${LINE#*\"}"
+              LINE="${LINE%\"*}"
+              [[ -z "$LINE" ]] || ORIGINAL_KEYCHAINS+=("$LINE")
+            done < "$SIGNING_DIR/previous-keychains"
+            if (( ${#ORIGINAL_KEYCHAINS[@]} > 0 )); then
+              security list-keychains -d user -s "${ORIGINAL_KEYCHAINS[@]}"
+            fi
+          fi
+          if [[ -f "$SIGNING_DIR/flora.keychain-db" ]]; then
+            security delete-keychain "$SIGNING_DIR/flora.keychain-db"
+          fi
+          rm -rf "$SIGNING_DIR"
