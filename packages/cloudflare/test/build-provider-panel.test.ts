@@ -50,15 +50,16 @@ test("only the selected app's trusted native view contributes to the summary",()
   const s=setup();
   assert.equal(s.node("build-provider-select").disabled,true);
   s.panel.open("app_alpha");
+  const data=appView("app_alpha");
   assert.equal(s.node("build-provider-select").disabled,false);
-  assert.equal(s.panel.setNativeView("app_alpha",appView("app_alpha")),true);
+  assert.equal(s.panel.setNativeView("app_alpha",data),true);
   assert.match(s.node("build-provider-summary").textContent,/Runner 2개/);
   assert.match(s.node("build-provider-summary").textContent,/연결 이력 1개 · 온라인 보장 아님/);
   assert.match(s.node("build-provider-summary").textContent,/signed\.apk/);
   assert.ok(!s.node("build-provider-summary").textContent.includes("http"));
   assert.equal(s.panel.setNativeView("app_beta",appView("app_beta")),false);
   assert.throws(()=>summarizeNativeBuilds("app_alpha",appView("app_beta")) ,/INVALID_BUILD_PROVIDER_SCOPE/);
-  assert.throws(()=>summarizeNativeBuilds("app_alpha",{...appView("app_alpha"),jobs:[{...data.jobs[0],appId:"app_beta"}]}) ,/INVALID_BUILD_PROVIDER_SCOPE/);
+  assert.throws(()=>summarizeNativeBuilds("app_alpha",{...appView("app_alpha"),jobs:[{...data.jobs[0]!,appId:"app_beta"}]}) ,/INVALID_BUILD_PROVIDER_SCOPE/);
   s.app("app_beta"); s.panel.open("app_beta");
   assert.equal(s.node("build-provider-summary").textContent.includes("signed.apk"),false);
   assert.equal(s.panel.state().native,null);
@@ -120,7 +121,7 @@ test("stale clipboard completion cannot rewrite another app's state or leak prev
 test("invalid or foreign native job rows fail closed without clearing the user's selected provider",()=>{
   const s=setup();s.panel.open("app_alpha");
   const data=appView("app_alpha");
-  assert.equal(s.panel.setNativeView("app_alpha",{...data,jobs:[{...data.jobs[0],state:"unknown"}]}),false);
+  assert.equal(s.panel.setNativeView("app_alpha",{...data,jobs:[{...data.jobs[0]!,state:"unknown"}]}),false);
   assert.match(s.node("build-provider-state").textContent,/다른 앱의 정보를 표시하지 않습니다/);
   s.panel.select("codemagic"); assert.equal(s.panel.state().selection,"codemagic");
   s.app("app_beta"); s.panel.open("app_beta");
