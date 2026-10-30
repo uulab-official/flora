@@ -421,7 +421,18 @@ try {
   assert.match(created.appId ?? "", /^[a-z][a-z0-9_-]{2,95}$/);
   phase = "real-enrollment-workspace";
   await page.goto(harness.origin + "/apps/" + created.appId + "/source");
-  await ready(page);
+  try { await ready(page); } catch (error) {
+    // Bounded synthetic-only state, not page text/URL, credentials or app data.
+    const state = await page.evaluate(() => ({
+      workspaceBusy: document.getElementById("workspace")?.getAttribute("aria-busy"),
+      sourceEnabled: document.getElementById("source-file")?.disabled === false,
+      routeIsSource: location.pathname.endsWith("/source"),
+      routeEmpty: document.getElementById("route-empty")?.hidden === false,
+      loginLinkVisible: document.getElementById("login-link")?.hidden === false,
+    }));
+    console.error("FLORA_HOSTED_QA_READINESS " + JSON.stringify(state));
+    throw error;
+  }
   await page.getByText("첫 소스 snapshot을 가져오세요").waitFor(); await both(page, "empty");
   const firstSession = await cookieProof(first.context, page); checks.push("real-scrypt-enrollment", "secure-httponly-strict-host-cookies", "no-browser-credential-storage");
   phase = "source-predispatch-abort-explicit-recovery";
