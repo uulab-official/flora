@@ -115,7 +115,7 @@ export function parseBuildVerifyOptions(args: readonly string[]): BuildVerifyOpt
   for (let i = 1; i < args.length; i += 2) {
     const flag = args[i], value = args[i + 1];
     if (!flag || !allowed.has(flag) || flags.has(flag) || !value ||
-      value.startsWith("--") || value.length > 1024) fail("BUILD_VERIFY_USAGE");
+      value.startsWith("--") || value.length > 1024) return fail("BUILD_VERIFY_USAGE");
     flags.set(flag, value);
   }
   const directory = flags.get("--dir");
@@ -125,7 +125,7 @@ export function parseBuildVerifyOptions(args: readonly string[]): BuildVerifyOpt
   if (!directory || !isAbsolute(directory) || !repository ||
     !validRepo(repository) || !commitSha || !SHA.test(commitSha) ||
     (runId !== undefined && !RUN.test(runId)) ||
-    flags.size !== (runId === undefined ? 3 : 4)) fail("BUILD_VERIFY_USAGE");
+    flags.size !== (runId === undefined ? 3 : 4)) return fail("BUILD_VERIFY_USAGE");
   return { directory, repository, commitSha, ...(runId === undefined ? {} : { runId }) };
 }
 async function hashFile(file: string, expectedBytes: number): Promise<string> {
