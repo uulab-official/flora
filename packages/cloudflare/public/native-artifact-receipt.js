@@ -40,3 +40,17 @@ export function createNativePublicReceipt(appId, job) {
     artifactVerification: "runner_reported", artifact: safeArtifact,
   }, null, 2) + "\n";
 }
+
+/** Add only a local browser download affordance; no upload or remote fetch. */
+export function appendNativeReceiptDownload(document, target, appId, job) {
+  const receipt = createNativePublicReceipt(appId, job);
+  if (!receipt) return false;
+  const link = document.createElement("a");
+  link.className = "button secondary small";
+  link.textContent = "검증 영수증 JSON 받기";
+  link.setAttribute("href", "data:application/json;charset=utf-8," + encodeURIComponent(receipt));
+  link.setAttribute("download", "flora-native-build-receipt.json");
+  link.setAttribute("aria-label", "현재 앱의 네이티브 빌드 검증 영수증 JSON 받기");
+  target.append(link);
+  return true;
+}
