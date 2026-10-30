@@ -448,7 +448,7 @@ export async function startClient(env) {
   const requests = new Set(); const logs = new Map();
   const credentialsPanel = createCredentialPanel(env, { appId: () => selectedAppId, appName: () => data?.selectedApplication?.name, active, ready: () => !closed && Boolean(csrf) && !busy && !reading && active(), api, expire });
   const nativePanel = createNativePanel(env, { appId: () => selectedAppId, appName: () => data?.selectedApplication?.name, commitSha: () => operationsAppId === selectedAppId ? currentDetection(operations)?.commitSha : null, active, ready: () => !closed && Boolean(csrf) && !busy && !reading && active(), api, expire });
-  const buildProviderConsole = createBuildProviderConsole(env, { appId: () => selectedAppId, ready: () => !closed && Boolean(csrf) && active() });
+  const buildProviderConsole = createBuildProviderConsole(env, { appId: () => selectedAppId, ready: () => !closed && Boolean(csrf) });
   const deploymentDevices = createDeploymentDevices(env, { route: () => currentRoute, active: () => !closed && Boolean(csrf) && active(), api, expire });
   const autoRollback = createAutoRollback(env, { route: () => currentRoute, active: () => !closed && Boolean(csrf) && active(), api, expire });
   let wizardPolling = false;
