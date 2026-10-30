@@ -78,3 +78,10 @@ button:disabled,.primary:disabled:hover,.pagination .icon-button:disabled,.impor
 .device-journey-entry p { margin:7px 0 10px; }
 .device-journey-entry .button { white-space:normal; }
 @media (max-width:640px) { .device-journey { padding:16px 12px; } .device-journey-entry { padding-left:12px; } }
+
+/* Mobile accessibility: baseline/source disclosure and import controls must
+   provide a minimum 44px touch target without changing desktop density. */
+@media(max-width:640px){
+  #view-history summary,#view-sources summary{min-height:44px}
+  label[for="source-file"],label[for="baseline-file"]{min-height:44px}
+}
