@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createNativePublicReceipt } from "../public/native-artifact-receipt.js";
+import { createNativePublicReceipt, appendNativeReceiptDownload } from "../public/native-artifact-receipt.js";
 const appId="sample_app";
 const build={
   appId, id:"native_job_sample", commitSha:"a".repeat(40), state:"succeeded",
@@ -43,4 +43,25 @@ test("iOS reports optional public Team ID but never accepts it for Android",()=>
   assert.ok(receipt);
   assert.equal(JSON.parse(receipt).artifact.teamId,"ABCDE12345");
   assert.equal(createNativePublicReceipt(appId,{...build,artifact:{...build.artifact,teamId:"ABCDE12345"}}),null);
+});
+
+test("native artifact receipt creates only a local data download on successful app-scoped job",()=>{
+  class Link {
+    attributes:Record<string,string>={};className="";textContent="";
+    setAttribute(k:string,v:string){this.attributes[k]=v;}
+  }
+  const children:Link[]=[];
+  const document={createElement:(tag:string)=>{assert.equal(tag,"a");return new Link();}};
+  const target={append:(item:Link)=>{children.push(item);}};
+  assert.equal(appendNativeReceiptDownload(document,target,appId,build),true);
+  assert.equal(children.length,1);
+  const href=children[0]!.attributes.href!;
+  assert.ok(href.startsWith("data:application/json;charset=utf-8,"));
+  assert.equal(children[0]!.attributes.download,"flora-native-build-receipt.json");
+  const receipt=JSON.parse(decodeURIComponent(href.split(",")[1]!));
+  assert.equal(receipt.appId,appId);
+  assert.equal(receipt.artifact.fileName,"sample-release.aab");
+  assert.equal(appendNativeReceiptDownload(document,target,"another_app",build),false);
+  assert.equal(appendNativeReceiptDownload(document,target,appId,{...build,state:"failed"}),false);
+  assert.equal(children.length,1,"failed jobs cannot create extra links");
 });
