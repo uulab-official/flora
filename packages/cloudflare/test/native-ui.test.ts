@@ -45,3 +45,32 @@ test("authenticated native panel reports scoped metadata to the build provider c
   await loading;
   assert.equal(seen.length,1,"late responses from an older app must never reach the build chooser");
 });
+
+test('native queued build can be cancelled with same-app proof and exactly one request',async()=>{
+ const s=setup();
+ const job={appId:'a',id:'native_job_queue',platform:'android',state:'queued',appIdentifier:'kr.co.a',createdAt:1,commitSha:'a'.repeat(40)};
+ let cancelled=false;
+ s.respond((url:string,body:any)=>body&&url.endsWith('/cancel')?(cancelled=true,{...job,state:'cancelled'}):url.endsWith('/credentials')?s.registry():{appId:'a',jobs:cancelled?[{...job,state:'cancelled'}]:[job],runners:[],credentialUses:[]});
+ await s.panel.load();
+ assert.match(s.node('native-jobs').text,/대기 빌드 취소/);
+ await s.panel.cancelJob(job.id);
+ assert.equal(s.calls.filter(x=>x.url.endsWith('/cancel')).length,1);
+ assert.match(s.node('native-status').textContent,/취소를 확인했습니다/);
+ await s.panel.cancelJob(job.id);
+ assert.equal(s.calls.filter(x=>x.url.endsWith('/cancel')).length,1);
+});
+test('foreign or stale native cancellations are denied and uncertain outcome never retries blindly',async()=>{
+ const s=setup();const job={appId:'a',id:'native_job_queue',platform:'android',state:'leased',appIdentifier:'kr.co.a',createdAt:1};
+ s.respond((url:string,body:any)=>body?Promise.reject(new Error('transport')):url.endsWith('/credentials')?s.registry():{appId:'a',jobs:[job],runners:[],credentialUses:[]});
+ await s.panel.load();
+ await s.panel.cancelJob('native_other');
+ assert.equal(s.calls.filter(x=>x.url.endsWith('/cancel')).length,0);
+ await s.panel.cancelJob(job.id);
+ assert.equal(s.calls.filter(x=>x.url.endsWith('/cancel')).length,1);
+ assert.match(s.node('native-status').textContent,/취소 완료 여부를 확인하지 못했습니다/);
+ await s.panel.cancelJob(job.id);
+ assert.equal(s.calls.filter(x=>x.url.endsWith('/cancel')).length,1);
+ s.setApp('b');
+ await s.panel.cancelJob(job.id);
+ assert.equal(s.calls.filter(x=>x.url.endsWith('/cancel')).length,1);
+});
