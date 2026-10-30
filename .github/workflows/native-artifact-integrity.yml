@@ -1,0 +1,30 @@
+name: Native artifact integrity gate
+
+on:
+  pull_request:
+    paths:
+      - "scripts/artifacts/**"
+      - ".github/workflows/native-artifact-integrity.yml"
+  push:
+    branches:
+      - main
+      - "verify/flora-hosted-*"
+    paths:
+      - "scripts/artifacts/**"
+      - ".github/workflows/native-artifact-integrity.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  integrity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: node --test scripts/artifacts/*.test.mjs
