@@ -22,6 +22,11 @@ export async function publishLocalArtifact({ root, sourcePath, manifest, authori
   const jobId = segment(authorizedJob?.jobId);
   const sourceReceipt = await verifyNativeArtifactFile({ filePath: sourcePath, manifest, expected: authorizedJob });
   const directory = join(resolve(root), appId, jobId);
+  // Validate ancestors: a private leaf under an attacker-writable parent is unsafe.
+  const rootParent = dirname(resolve(root));
+  if (await realpath(rootParent) !== rootParent) throw new Error("ARTIFACT_STORE_PARENT_UNSAFE");
+  const ancestor = await lstat(rootParent);
+  if (!ancestor.isDirectory() || (ancestor.mode & 0o022) !== 0) throw new Error("ARTIFACT_STORE_PARENT_UNSAFE");
   await mkdir(resolve(root), { recursive: true, mode: 0o700 });
   await privateDirectory(resolve(root));
   await mkdir(join(resolve(root), appId), { mode: 0o700, recursive: true });
@@ -57,7 +62,13 @@ export async function publishLocalArtifact({ root, sourcePath, manifest, authori
     // Destination has a random, previously absent name inside the private local store.
     await rename(temp, target);
     const committed = await lstat(target);
-    if (!committed.isFile() || committed.nlink !== 1 || committed.size !== size) throw new Error("ARTIFACT_PUBLISH_INVALID");
+    if (!committed.isFile() || committed.nlink !== 1 || committed.size !== size) {
+      await rm(target, { force: true });
+      throw new Error("ARTIFACT_PUBLISH_INVALID");
+    }
+    // Persist the directory entry, not just the bytes, before issuing a receipt.
+    const dirHandle = await open(directory, constants.O_RDONLY);
+    try { await dirHandle.sync(); } finally { await dirHandle.close(); }
     return Object.freeze({ ...sourceReceipt, artifactId: ticket, storage: "local-only", filePath: target });
   } catch (error) {
     if (output) { await output.close().catch(() => {}); output = null; }
@@ -69,7 +80,7 @@ export async function publishLocalArtifact({ root, sourcePath, manifest, authori
   }
 }
 export async function resolveLocalArtifact({ root, receipt, authorizedJob }) {
-  if (typeof root !== "string" || !root.startsWith("/")) throw new Error("ARTIFACT_ROOT_INVALID");
+  if (typeof root !== "string" || !isAbsolute(root)) throw new Error("ARTIFACT_ROOT_INVALID");
   const appId = segment(authorizedJob?.appId);
   const jobId = segment(authorizedJob?.jobId);
   if (!receipt || receipt.appId !== appId || receipt.jobId !== jobId ||
