@@ -42,3 +42,16 @@ test("rejects shared and symlinked storage roots", async () => {
   await assert.rejects(publishLocalArtifact({root:alias,sourcePath,manifest,authorizedJob:job}), /ARTIFACT_STORE_DIRECTORY_UNSAFE/);
  } finally { await rm(dir,{recursive:true,force:true}); }
 });
+
+test("rejects a store nested below a writable parent", async () => {
+ const dir = await mkdtemp(join(tmpdir(), "flora-artifact-parent-"));
+ try {
+  const sourcePath = join(dir,"fixture.apk"), bytes = Buffer.from("fixture");
+  await writeFile(sourcePath,bytes);
+  const manifest = {...job,byteCount:bytes.length,sha256:createHash("sha256").update(bytes).digest("hex")};
+  const shared = join(dir,"shared");
+  await mkdir(shared, {mode:0o700});
+  await chmod(shared,0o777);
+  await assert.rejects(publishLocalArtifact({root:join(shared,"artifacts"),sourcePath,manifest,authorizedJob:job}),/ARTIFACT_STORE_PARENT_UNSAFE/);
+ } finally { await rm(dir,{recursive:true,force:true}); }
+});
