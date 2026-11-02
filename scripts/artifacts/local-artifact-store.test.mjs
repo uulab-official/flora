@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile, readFile, rm, mkdir, chmod, symlink } from "node:fs/promises";
+import { realpath, mkdtemp, writeFile, readFile, rm, mkdir, chmod, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -8,7 +8,7 @@ import { publishLocalArtifact, resolveLocalArtifact } from "./local-artifact-sto
 
 const job = { appId: "app-one", jobId: "build-1", repository: "owner/private", sourceSha: "b".repeat(40), platform: "android" };
 test("isolated local artifact publish and subsequent download verification", async () => {
- const dir = await mkdtemp(join(tmpdir(),"flora-local-store-"));
+ const dir = await mkdtemp(join(await realpath(tmpdir()),"flora-local-store-"));
  try {
   const sourcePath=join(dir,"preview.apk"), root=join(dir,"private-store"), bytes=Buffer.from("synthetic APK for integrity only");
   await writeFile(sourcePath,bytes);
@@ -26,7 +26,7 @@ test("isolated local artifact publish and subsequent download verification", asy
 });
 
 test("rejects shared and symlinked storage roots", async () => {
- const dir = await mkdtemp(join(tmpdir(), "flora-store-unsafe-"));
+ const dir = await mkdtemp(join(await realpath(tmpdir()), "flora-store-unsafe-"));
  try {
   const bytes = Buffer.from("local fixture"), sourcePath = join(dir, "demo.apk");
   await writeFile(sourcePath, bytes);
@@ -44,7 +44,7 @@ test("rejects shared and symlinked storage roots", async () => {
 });
 
 test("rejects a store nested below a writable parent", async () => {
- const dir = await mkdtemp(join(tmpdir(), "flora-artifact-parent-"));
+ const dir = await mkdtemp(join(await realpath(tmpdir()), "flora-artifact-parent-"));
  try {
   const sourcePath = join(dir,"fixture.apk"), bytes = Buffer.from("fixture");
   await writeFile(sourcePath,bytes);

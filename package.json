@@ -17,7 +17,12 @@
     "flora": "node packages/cli/dist/main.js",
     "verify:clean": "pnpm build && node scripts/clean-install.mjs",
     "doctor:toolchain": "pnpm build && node scripts/verify-toolchain.mjs",
-    "sdk:pack": "node scripts/pack-ota-sdk.mjs"
+    "sdk:pack": "node scripts/pack-ota-sdk.mjs",
+    "flora:builds": "node scripts/artifacts/build-ops.mjs",
+    "test:artifacts": "node scripts/artifacts/run-tests.mjs",
+    "flora:console": "node scripts/artifacts/build-console.mjs",
+    "flora:runner": "node scripts/artifacts/local-build-runner.mjs",
+    "flora:native": "node packages/ota-runner/dist/native-main.js"
   },
   "devDependencies": {
     "@flora/ota": "workspace:*",

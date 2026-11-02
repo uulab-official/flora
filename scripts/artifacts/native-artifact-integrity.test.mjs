@@ -32,3 +32,13 @@ test("empty artifact and unsupported platform rejected", () => {
   assert.throws(() => check({}, expected, Buffer.alloc(0)), /ARTIFACT_SIZE_INVALID/);
   assert.throws(() => check({ platform: "web" }, { ...expected, platform: "web" }), /ARTIFACT_IDENTITY_INVALID/);
 });
+
+for (const field of ['appId', 'jobId', 'repository', 'sourceSha']) {
+  test(`metadata rejects trailing newline in ${field}`, () => {
+    const input = { ...manifest, [field]: manifest[field] + '\n' };
+    assert.throws(() => verifyNativeArtifact({ bytes, manifest: input, expected: { ...expected, [field]: input[field] } }), /ARTIFACT_IDENTITY_INVALID/);
+  });
+}
+test('metadata rejects a digest with trailing newline', () => {
+  assert.throws(() => check({ sha256: manifest.sha256 + '\n' }), /ARTIFACT_DIGEST_INVALID/);
+});

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile, symlink, link, rm } from "node:fs/promises";
+import { realpath, mkdtemp, writeFile, symlink, link, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -8,7 +8,7 @@ import { verifyNativeArtifactFile } from "./native-artifact-file.mjs";
 
 const scope = { appId: "app-a", jobId: "build-1", repository: "owner/private-app", sourceSha: "c".repeat(40), platform: "android" };
 test("file integrity: authentic bytes and app/job binding, no signing claim", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "flora-artifact-"));
+  const dir = await mkdtemp(join(await realpath(tmpdir()), "flora-artifact-"));
   try {
     const filePath = join(dir, "preview.apk"), bytes = Buffer.from("synthetic unsigned APK fixture");
     await writeFile(filePath, bytes);
@@ -29,6 +29,7 @@ test("file integrity: authentic bytes and app/job binding, no signing claim", as
     await assert.rejects(verify(manifest, scope, hard), /ARTIFACT_NOT_REGULAR_FILE/);
     const linkedDir = join(dir, "linked"); await symlink(dir, linkedDir);
     await assert.rejects(verify(manifest, scope, join(linkedDir, "preview.apk")), /ARTIFACT_PARENT_SYMLINK/);
+    await rm(hard); // End the hardlink fixture before testing content corruption.
     await writeFile(filePath, Buffer.from("tampered content"));
     await assert.rejects(verify(), /ARTIFACT_SIZE_MISMATCH|ARTIFACT_HASH_MISMATCH/);
   } finally { await rm(dir, { recursive: true, force: true }); }

@@ -1,0 +1,56 @@
+name: Native transport reliability
+
+on:
+  pull_request:
+    paths:
+      - "packages/ota-runner/**"
+      - "packages/core/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "tsconfig.base.json"
+      - ".github/workflows/native-transport-reliability.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-transport-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  transport:
+    name: transport (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: "24.19.0"
+      - run: node --version
+      - run: npm exec --yes --package=pnpm@11.19.0 -- pnpm install --frozen-lockfile --ignore-scripts
+      - run: npm exec --yes --package=pnpm@11.19.0 -- pnpm build
+      - run: npm exec --yes --package=pnpm@11.19.0 -- pnpm typecheck
+      - name: Deadline, authority, cancellation and real HTTP regressions
+        run: node --test packages/ota-runner/test/native-client-reliability.test.ts packages/ota-runner/test/native-client-compatibility.test.ts packages/ota-runner/test/native-session-client.test.ts packages/ota-runner/test/native-command.test.ts
+      - name: Original native client regressions
+        if: runner.os != 'Windows'
+        run: node --test --test-name-pattern='^(native heartbeat HTTP transport observes cancellation and remaining lease deadline|native HTTP client rejects OTA credentials and wrong-app lease without following redirects)$' packages/ota-runner/test/native-controller.test.ts
+      - name: Actual native CLI shutdown before compilation
+        if: runner.os != 'Windows'
+        run: node --test packages/ota-runner/test/native-session-cli.test.ts
+      - name: Offline native artifact catalogue, inspection and exclusive export
+        run: node --test packages/ota-runner/test/native-artifact-access.test.ts packages/ota-runner/test/native-artifact-command.test.ts
+      - name: Actual offline native artifact CLI
+        if: runner.os != 'Windows'
+        run: node --test packages/ota-runner/test/native-artifact-cli.test.ts

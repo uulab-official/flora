@@ -1,0 +1,10 @@
+import { readdir } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
+import { spawn } from 'node:child_process';
+const directory = fileURLToPath(new URL('.', import.meta.url));
+const tests = (await readdir(directory)).filter(name => name.endsWith('.test.mjs')).sort().map(name => join(directory, name));
+if (!tests.length) throw new Error('ARTIFACT_TESTS_MISSING');
+const child = spawn(process.execPath, ['--test', ...tests], { stdio: 'inherit' });
+child.on('error', () => { process.exitCode = 1; });
+child.on('exit', (code, signal) => { process.exitCode = signal ? 1 : code ?? 1; });

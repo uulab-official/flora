@@ -1,44 +1,51 @@
-// Provider-independent, side-effect-free build lifecycle validation.
-// Integrators must persist transitions atomically with optimistic version checks.
+// These validators are not authentication. Callers must resolve an authorized job first.
 const transitions = Object.freeze({
-  unconfigured: ["authorized"],
-  authorized: ["queued", "unconfigured"],
-  queued: ["running", "cancelled", "failed", "unknown"],
-  running: ["succeeded", "failed", "cancelled", "unknown"],
-  unknown: ["running", "succeeded", "failed", "cancelled"],
-  succeeded: [],
-  failed: [],
-  cancelled: [],
+  unconfigured: ['authorized'], authorized: ['queued', 'unconfigured'],
+  queued: ['running', 'cancelled', 'failed', 'unknown'],
+  running: ['succeeded', 'failed', 'cancelled', 'unknown'],
+  unknown: ['running', 'succeeded', 'failed', 'cancelled'],
+  succeeded: [], failed: [], cancelled: [],
 });
-const MAX_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+export const isBuildId = value => typeof value === 'string'
+  && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value) && !/\s/.test(value);
+export const isRecord = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+export function snapshotBuildScope(scope) {
+  if (!isRecord(scope) || !isBuildId(scope.appId) || !isBuildId(scope.jobId)) throw new Error('BUILD_SCOPE_MISMATCH');
+  return Object.freeze({ appId: scope.appId, jobId: scope.jobId });
+}
+export function snapshotBuildEvent(event) {
+  if (!isRecord(event) || typeof event.status !== 'string' || !Object.hasOwn(transitions, event.status))
+    throw new Error('BUILD_TRANSITION_DENIED');
+  if (typeof event.idempotencyKey !== 'string' || !/^[a-f0-9]{32,64}$/.test(event.idempotencyKey)
+      || /\s/.test(event.idempotencyKey)) throw new Error('BUILD_IDEMPOTENCY_REQUIRED');
+  for (const name of ['artifactIntegrityVerified', 'executionVerified']) {
+    if (event[name] !== undefined && typeof event[name] !== 'boolean') throw new Error('BUILD_EVIDENCE_INVALID');
+  }
+  const codes = ['BUILD_PROCESS_FAILED', 'BUILD_PROCESS_TIMEOUT', 'BUILD_PROCESS_OUTPUT_LIMIT',
+    'BUILD_PROCESS_START_FAILED', 'BUILD_PROCESS_ABORTED', 'BUILD_RESULT_RECONCILIATION_REQUIRED',
+    'ARTIFACT_SIGNATURE_INVALID', 'ARTIFACT_SIGNATURE_UNSIGNED', 'ARTIFACT_SIGNATURE_SIGNER_MISMATCH',
+    'ARTIFACT_SIGNATURE_CERTIFICATE_INVALID', 'ARTIFACT_SIGNATURE_LAYOUT_INVALID', 'ARTIFACT_SIGNATURE_LIMIT',
+    'ARTIFACT_SIGNATURE_TIMEOUT', 'ARTIFACT_SIGNATURE_OUTPUT_LIMIT', 'ARTIFACT_SIGNATURE_TOOL_UNAVAILABLE',
+    'ARTIFACT_SIGNATURE_TOOL_FAILED', 'ARTIFACT_SIGNATURE_RESULT_INVALID', 'ARTIFACT_SIGNATURE_EVIDENCE_INVALID'];
+  if (event.failureCode !== undefined && (!['failed', 'unknown', 'cancelled'].includes(event.status) || !codes.includes(event.failureCode)))
+    throw new Error('BUILD_EVIDENCE_INVALID');
+  return Object.freeze({ status: event.status, idempotencyKey: event.idempotencyKey,
+    ...(event.failureCode !== undefined ? { failureCode: event.failureCode } : {}),
+    artifactIntegrityVerified: event.artifactIntegrityVerified === true, executionVerified: event.executionVerified === true });
+}
 export function nextBuildState(current, event, scope) {
-  if (!current || !scope || !Number.isSafeInteger(current.version) || current.version < 0)
-    throw new Error("BUILD_STATE_INVALID");
-  if (!MAX_ID.test(scope.appId ?? "") || !MAX_ID.test(scope.jobId ?? "") ||
-      scope.appId !== current.appId || scope.jobId !== current.jobId)
-    throw new Error("BUILD_SCOPE_MISMATCH");
-  if (!event || typeof event !== "object" || !Object.hasOwn(transitions, current.status)
-      || !transitions[current.status].includes(event.status))
-    throw new Error("BUILD_TRANSITION_DENIED");
-  if (typeof event.idempotencyKey !== "string" || !/^[a-f0-9]{32,64}$/.test(event.idempotencyKey))
-    throw new Error("BUILD_IDEMPOTENCY_REQUIRED");
-  if (event.status === "succeeded" && event.artifactIntegrityVerified !== true)
-    throw new Error("BUILD_ARTIFACT_NOT_VERIFIED");
-  if (event.status === "succeeded" && event.executionVerified !== true)
-    throw new Error("BUILD_EXECUTION_NOT_VERIFIED");
-  return Object.freeze({
-    appId: current.appId,
-    jobId: current.jobId,
-    version: current.version + 1,
-    status: event.status,
-    idempotencyKey: event.idempotencyKey,
-    // Atomic persistence and event deduplication are the responsibility of the ledger.
-    // No raw credentials, logs, artifact paths or provider responses are copied.
-    artifactIntegrityVerified: event.status === "succeeded",
-    signatureVerified: false,
-    installVerified: false,
-  });
+  if (!isRecord(current) || !Number.isSafeInteger(current.version) || current.version < 0
+      || current.version >= Number.MAX_SAFE_INTEGER) throw new Error('BUILD_STATE_INVALID');
+  const identity = snapshotBuildScope(scope), input = snapshotBuildEvent(event);
+  if (identity.appId !== current.appId || identity.jobId !== current.jobId) throw new Error('BUILD_SCOPE_MISMATCH');
+  if (typeof current.status !== 'string' || !Object.hasOwn(transitions, current.status)
+      || !transitions[current.status].includes(input.status)) throw new Error('BUILD_TRANSITION_DENIED');
+  if (input.status === 'succeeded' && !input.artifactIntegrityVerified) throw new Error('BUILD_ARTIFACT_NOT_VERIFIED');
+  if (input.status === 'succeeded' && !input.executionVerified) throw new Error('BUILD_EXECUTION_NOT_VERIFIED');
+  return Object.freeze({ ...identity, version: current.version + 1, status: input.status,
+    idempotencyKey: input.idempotencyKey, artifactIntegrityVerified: input.status === 'succeeded',
+    signatureVerified: false, installVerified: false, failureCode: input.failureCode ?? null });
 }
 export function isTerminalBuildState(status) {
-  return status === "succeeded" || status === "failed" || status === "cancelled";
+  return status === 'succeeded' || status === 'failed' || status === 'cancelled';
 }
