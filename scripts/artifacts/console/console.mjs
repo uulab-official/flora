@@ -1,9 +1,10 @@
 const $ = id => document.getElementById(id);
 const names = { unconfigured: '미승인', authorized: '승인됨', queued: '대기', running: '실행 중', succeeded: '완료', failed: '실패', cancelled: '취소됨', unknown: '결과 불명' };
-const state = { csrf: null, app: null, jobs: [], selected: null, epoch: 0, detailEpoch: 0, cursors: [''], next: null, historyNext: null, busy: false, overview: null, presets: [], executionEnabled: false, intent: null, detailSignature: null };
+const state = { csrf: null, app: null, jobs: [], selected: null, epoch: 0, detailEpoch: 0, cursors: [''], next: null, historyNext: null, busy: false, overview: null, presets: [], executionEnabled: false, intent: null, detailSignature: null, diagnosticEpoch: 0, diagnostic: null };
 function node(tag, text, className) { const n = document.createElement(tag); if (text !== undefined) n.textContent = text; if (className) n.className = className; return n; }
 function notice(text, error = false) { $('notice').textContent = text; $('notice').dataset.error = String(error); $('notice').hidden = !text; }
 function reset() {
+  clearDiagnostic();
   state.epoch++; state.detailEpoch++; state.csrf = null; state.app = null; state.jobs = []; state.selected = null; state.overview = null; state.presets = []; state.intent = null; state.executionEnabled = false; state.detailSignature = null;
   $('console-panel').hidden = true; $('login-panel').hidden = false; $('logout').hidden = true;
   $('job-rows').replaceChildren(); $('artifact-list').replaceChildren(); $('history-list').replaceChildren(); $('job-facts').replaceChildren();
@@ -28,6 +29,7 @@ function explain(error) {
     BUILD_APPROVAL_INVALID: '승인 코드가 잘못되었거나 만료·사용되었습니다. 콘솔을 재시작해 새 코드를 받으세요.',
     BUILD_SESSION_EXPIRED: '세션이 만료되었습니다. 콘솔을 재시작해 다시 연결하세요.',
     BUILD_SESSION_REQUIRED: '로컬 콘솔 연결이 필요합니다.', BUILD_RUNNING_CANCEL_REQUIRES_RUNNER: '실행 중인 작업은 Runner에서 중지해야 합니다.',
+    BUILD_DIAGNOSTIC_LIMIT: '진단이 실행 중이거나 방금 완료되었습니다. 잠시 뒤 다시 검사하세요.',
     BUILD_EXECUTION_DISABLED: '이 콘솔은 실행이 비활성화되어 있습니다. PC에서 사전 등록한 설정을 허용해 시작하세요.',
     BUILD_EXECUTION_LIMIT: '동시 실행 한도에 도달했습니다. 현재 작업이 끝난 뒤 다시 요청하세요.',
     BUILD_EXECUTION_ACTIVE: '이미 시작 요청을 처리 중입니다. 상태를 확인하세요.',
@@ -178,7 +180,7 @@ async function detail(jobId, preserve = false) {
 }
 $('login-form').addEventListener('submit', event => { event.preventDefault(); const code = $('approval-code').value.trim(); $('approval-code').value = ''; attempt(async () => connected(await api('/api/session', 'POST', { code }))); });
 $('logout').addEventListener('click', () => attempt(async () => { await api('/api/session', 'DELETE'); reset(); notice('연결을 종료했습니다. 다시 연결하려면 콘솔을 재시작하세요.'); }));
-$('app-select').addEventListener('change', () => { state.epoch++; state.detailEpoch++; state.app = $('app-select').value; state.selected = null; state.overview = null; state.jobs = []; state.presets = []; state.detailSignature = null; state.intent = null; state.cursors = [''];
+$('app-select').addEventListener('change', () => { clearDiagnostic(); state.epoch++; state.detailEpoch++; state.app = $('app-select').value; state.selected = null; state.overview = null; state.jobs = []; state.presets = []; state.detailSignature = null; state.intent = null; state.cursors = [''];
   for (const id of ['run-dialog', 'retry-dialog']) if ($(id).open) $(id).close();
   $('detail-content').hidden = true; $('detail-empty').hidden = false; $('job-search').value = ''; renderJobs(); attempt(async () => { await loadPresets(); await load(); }); });
 $('refresh').addEventListener('click', () => attempt(async () => { await load(); if (state.selected) await detail(state.selected.jobId); }));
@@ -204,6 +206,50 @@ $('run-form').addEventListener('submit', event => { event.preventDefault(); cons
   attempt(() => controlAction(intent, { presetId: intent.presetId, expectedVersion: intent.job.version, idempotencyKey: intent.idempotencyKey }, event.submitter)); });
 $('retry-form').addEventListener('submit', event => { event.preventDefault(); const intent = state.intent; if (!intent || intent.action !== 'retry') return;
   attempt(() => controlAction(intent, { newJobId: $('retry-job-id').value.trim(), expectedVersion: intent.job.version, idempotencyKey: intent.idempotencyKey }, event.submitter)); });
+// Diagnostics are explicit and scoped; polling never hashes files automatically.
+function clearDiagnostic() {
+  state.diagnosticEpoch++; state.diagnostic = null;
+  $('diagnostic-status').textContent = '아직 검사하지 않았습니다. 버튼을 눌러 최대 64 MiB를 검증하세요.';
+  $('diagnostic-summary').textContent = ''; $('diagnostic-issues').replaceChildren();
+  $('diagnostic-export').hidden = true; $('diagnose').disabled = false;
+}
+const diagnosticMessages = Object.freeze({
+  ARTIFACT_HASH_MISMATCH: '파일 내용이 등록된 해시와 다릅니다. 원본 빌드 결과를 확인하세요.',
+  ARTIFACT_SIZE_MISMATCH: '파일 크기가 등록 정보와 다릅니다.', ARTIFACT_MISSING: '등록된 파일을 찾지 못했습니다.',
+  ARTIFACT_UNREFERENCED: '원장에 등록되지 않은 파일이 있습니다. 확인 전 삭제하지 마세요.',
+  ARTIFACT_PARTIAL_REMAINS: '미완성 파일이 남아 있습니다. 실행 이력을 먼저 확인하세요.',
+  ARTIFACT_SCAN_INCOMPLETE: '검사 한도에 도달했습니다. 완료 판정이 아니며 CLI에서 한도를 지정해 다시 검사할 수 있습니다.',
+  BUILD_DIAGNOSTIC_STATE_CHANGED: '검사 중 원장이 변경됐습니다. 작업이 안정된 뒤 다시 검사하세요.',
+  BUILD_RUNNING_REQUIRES_CHECK: '원장에 실행 중 작업이 있습니다. 실제 Runner 상태와 일치하는지 확인하세요.',
+  BUILD_RECONCILIATION_REQUIRED: '결과 불명 작업이 있습니다. 원본 실행 결과를 확인하기 전 재실행하지 마세요.',
+  ARTIFACT_STORE_DIRECTORY_UNSAFE: '파일 저장 디렉터리의 권한 또는 연결 경로를 점검하세요.',
+  ARTIFACT_UNEXPECTED_ENTRY: '저장소에 예상하지 않은 항목이 있습니다. 자동 삭제하지 않습니다.',
+});
+$('diagnose').addEventListener('click', async () => {
+  if (!state.csrf || !state.app) return;
+  const app = state.app, csrf = state.csrf, epoch = ++state.diagnosticEpoch;
+  state.diagnostic = null; $('diagnostic-export').hidden = true; $('diagnose').disabled = true;
+  $('diagnostic-issues').replaceChildren(); $('diagnostic-summary').textContent = '';
+  $('diagnostic-status').textContent = '원장과 저장 파일을 검사하고 있습니다…';
+  try {
+    const report = await api('/api/diagnostics', 'POST', { appId: app });
+    if (epoch !== state.diagnosticEpoch || app !== state.app || csrf !== state.csrf) return;
+    state.diagnostic = report;
+    $('diagnostic-status').textContent = report.ready ? '지정한 범위의 검사를 통과했습니다.' : '확인이 필요한 항목이 있습니다.';
+    $('diagnostic-summary').textContent = `${new Date(report.checkedAt).toLocaleString('ko-KR')} · ${report.verifiedFiles}/${report.artifacts}개 파일 · ${(report.verifiedBytes / 1048576).toFixed(1)} MiB · ${report.complete ? '범위 검사 완료' : '불완전한 검사'} · 프로세스 생존·서명·설치 검증은 별도`;
+    for (const issue of report.issues) {
+      const li = node('li', diagnosticMessages[issue.code] ?? issue.code);
+      if (issue.jobId) li.append(node('small', ' 작업: ' + issue.jobId)); $('diagnostic-issues').append(li);
+    }
+    $('diagnostic-export').hidden = false;
+  } catch (error) { if (epoch === state.diagnosticEpoch && app === state.app && csrf === state.csrf) $('diagnostic-status').textContent = explain(error); }
+  finally { if (epoch === state.diagnosticEpoch) $('diagnose').disabled = false; }
+});
+$('diagnostic-export').addEventListener('click', () => {
+  if (!state.csrf || state.diagnostic?.appId !== state.app) return;
+  const url = URL.createObjectURL(new Blob([JSON.stringify(state.diagnostic, null, 2)], { type: 'application/json' }));
+  const link = node('a'); link.href = url; link.download = 'flora-diagnostics.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+});
 // Poll only an active, visible page, and never overlap a previous poll.
 let polling = false, nextPoll = 0;
 setInterval(async () => { if (!state.csrf || document.hidden || polling || state.busy || ['create-dialog', 'run-dialog', 'retry-dialog'].some(id => $(id).open) || Date.now() < nextPoll) return; polling = true;

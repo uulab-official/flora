@@ -7,17 +7,17 @@ import { publishLocalArtifact, resolveLocalArtifact, exportLocalArtifact, discar
 
 const safeError = error => /^[A-Z][A-Z_]{1,80}$/.test(error?.message ?? '') ? error.message
   : error?.code === 'ENOENT' ? 'ARTIFACT_MISSING' : 'ARTIFACT_CHECK_FAILED';
-export async function openLocalBuildService({ directory, create = false }) {
-  const ledger = await openDurableBuildLedger({ directory, create });
+export async function openLocalBuildService({ directory, create = false, readOnly = false }) {
+  const ledger = await openDurableBuildLedger({ directory, create, readOnly });
   try {
     directory = await privateDirectory(directory);
     const root = join(directory, 'artifacts'); await privateDirectory(root, { create });
-    return new LocalBuildService(ledger, root);
+    return new LocalBuildService(ledger, root, readOnly);
   } catch (error) { ledger.close(); throw error; }
 }
 class LocalBuildService {
-  #ledger; #root;
-  constructor(ledger, root) { this.#ledger = ledger; this.#root = root; }
+  #ledger; #root; #readOnly;
+  constructor(ledger, root, readOnly) { this.#ledger = ledger; this.#root = root; this.#readOnly = readOnly; }
   create(job) { return this.#ledger.create(job); }
   transition(request) { return this.#ledger.transition(request); }
   retry(request) { return this.#ledger.retry(request); }
@@ -26,6 +26,7 @@ class LocalBuildService {
   history(scope, options) { return this.#ledger.history(scope, options); }
   show(scope) { return { job: this.#ledger.get(scope), artifacts: this.#ledger.artifacts(scope) }; }
   async complete(input) {
+    if (this.#readOnly) throw new Error('BUILD_LEDGER_READ_ONLY');
     // Copy primitives before the first await. Never use manifest as the authorized job.
     const request = { scope: snapshotBuildScope(input.scope), expectedVersion: input.expectedVersion,
       idempotencyKey: input.idempotencyKey, manifest: { ...input.manifest }, execution: { ...input.execution }, format: input.format };
@@ -54,10 +55,16 @@ class LocalBuildService {
     return Object.freeze({ artifactId, byteCount: artifact.byteCount, sha256: artifact.sha256,
       format: artifact.format, integrityVerified: true, signatureVerified: false, installVerified: false });
   }
-  async doctor({ maxBytes = 256 * 1024 * 1024, maxEntries = 1000 } = {}) {
-    if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 2 * 1024 * 1024 * 1024
+  async doctor({ appId, maxBytes = 256 * 1024 * 1024, maxEntries = 1000 } = {}) {
+    if ((appId !== undefined && !isBuildId(appId)) || !Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 2 * 1024 * 1024 * 1024
         || !Number.isSafeInteger(maxEntries) || maxEntries < 1 || maxEntries > 10000) throw new Error('BUILD_QUERY_INVALID');
-    const database = this.#ledger.diagnostics(), inventory = this.#ledger.inventory(), issues = [];
+    const database = this.#ledger.diagnostics({ appId }), inventory = [], issues = [];
+    let after = null;
+    while (inventory.length < maxEntries) {
+      const batch = this.#ledger.inventory({ appId, after, limit: Math.min(100, maxEntries - inventory.length) });
+      if (!batch.length) break;
+      inventory.push(...batch); after = batch.at(-1);
+    }
     let complete = inventory.length === database.artifacts, consumed = 0, verifiedFiles = 0, scannedEntries = 0;
     const referenced = new Set(inventory.map(a => `${a.appId}/${a.jobId}/${a.artifactId}.bin`));
     for (const artifact of inventory) {
@@ -67,18 +74,20 @@ class LocalBuildService {
         await resolveLocalArtifact({ root: this.#root, receipt: artifact, authorizedJob: this.#ledger.get(artifact) }); verifiedFiles++;
       } catch (error) { issues.push({ appId: artifact.appId, jobId: artifact.jobId, artifactId: artifact.artifactId, code: safeError(error) }); }
     }
-    const root = this.#root;
     let scanComplete = true;
     async function walk(directory, parts = []) {
       try { await privateDirectory(directory); }
-      catch { issues.push({ code: 'ARTIFACT_STORE_DIRECTORY_UNSAFE' }); return; }
+      catch (error) {
+        // An app without artifacts need not have a directory yet. Other failures are findings.
+        if (parts.length === 1 && error.code === 'ENOENT') return;
+        issues.push({ code: 'ARTIFACT_STORE_DIRECTORY_UNSAFE' }); return;
+      }
       for await (const entry of await opendir(directory)) {
         if (++scannedEntries > maxEntries) { scanComplete = false; break; }
         if (parts.length < 2 && entry.isDirectory() && isBuildId(entry.name)) {
           await walk(join(directory, entry.name), [...parts, entry.name]);
           if (!scanComplete) break;
         } else if (parts.length === 2 && entry.isFile() && /^[a-f0-9]{24}\.bin$/.test(entry.name)) {
-          // With a bounded inventory, an unlisted file is not necessarily orphaned.
           if (!referenced.has([...parts, entry.name].join('/')) && inventory.length === database.artifacts)
             issues.push({ appId: parts[0], jobId: parts[1], code: 'ARTIFACT_UNREFERENCED' });
         } else if (parts.length === 2 && entry.isFile() && entry.name.startsWith('.') && entry.name.endsWith('.partial')) {
@@ -86,10 +95,16 @@ class LocalBuildService {
         } else { issues.push({ code: 'ARTIFACT_UNEXPECTED_ENTRY' }); }
       }
     }
-    await walk(root); complete &&= scanComplete;
+    await walk(appId === undefined ? this.#root : join(this.#root, appId), appId === undefined ? [] : [appId]);
+    complete &&= scanComplete;
+    const end = this.#ledger.diagnostics({ appId });
+    if (end.revision !== database.revision || end.artifacts !== database.artifacts) {
+      complete = false; issues.push({ code: 'BUILD_DIAGNOSTIC_STATE_CHANGED' });
+    }
     if (!complete) issues.push({ code: 'ARTIFACT_SCAN_INCOMPLETE' });
     if ((database.states.unknown ?? 0) > 0) issues.push({ code: 'BUILD_RECONCILIATION_REQUIRED' });
-    return { ...database, verifiedFiles, scannedEntries, complete, issues,
+    if ((database.states.running ?? 0) > 0) issues.push({ code: 'BUILD_RUNNING_REQUIRES_CHECK' });
+    return { ...database, verifiedFiles, verifiedBytes: consumed, scannedEntries, complete, issues,
       ready: database.databaseIntegrity && complete && issues.length === 0 };
   }
   close() { this.#ledger.close(); }

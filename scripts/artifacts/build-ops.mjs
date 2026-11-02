@@ -4,6 +4,7 @@ import { lstat, open, realpath } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { openLocalBuildService } from './local-build-service.mjs';
+import { backupLocalBuildState, verifyLocalBuildBackup, restoreLocalBuildState } from './local-build-backup.mjs';
 
 const commands = {
   init: { required: [], optional: [] },
@@ -16,21 +17,25 @@ const commands = {
   show: { required: ['app', 'job'], optional: [] },
   history: { required: ['app', 'job'], optional: ['limit', 'after-sequence'] },
   export: { required: ['app', 'job', 'artifact', 'output'], optional: [] },
-  doctor: { required: [], optional: ['max-bytes', 'max-entries'] },
+  doctor: { required: [], optional: ['app', 'max-bytes', 'max-entries'] },
+  backup: { required: ['output'], optional: ['max-bytes', 'max-entries'] },
+  'verify-backup': { required: ['backup'], optional: ['max-bytes', 'max-entries'] },
+  restore: { required: ['backup'], optional: ['max-bytes', 'max-entries'] },
 };
 function parse(argv) {
   if (argv.length > 40 || argv.some(arg => typeof arg !== 'string' || arg.length > 4096 || arg.includes('\0')))
     throw new Error('BUILD_ARGUMENT_INVALID');
   const [command, ...args] = argv;
   if (!Object.hasOwn(commands, command ?? '') || args.length % 2 !== 0) throw new Error('BUILD_ARGUMENT_INVALID');
-  const spec = commands[command], allowed = new Set(['state-dir', ...spec.required, ...spec.optional]), options = {};
+  const common = command === 'verify-backup' ? [] : ['state-dir'];
+  const spec = commands[command], allowed = new Set([...common, ...spec.required, ...spec.optional]), options = {};
   for (let index = 0; index < args.length; index += 2) {
     const key = args[index].startsWith('--') ? args[index].slice(2) : '';
     if (!allowed.has(key) || Object.hasOwn(options, key) || args[index + 1] === '' || args[index + 1].startsWith('--'))
       throw new Error('BUILD_ARGUMENT_INVALID');
     options[key] = args[index + 1];
   }
-  for (const key of ['state-dir', ...spec.required]) if (!Object.hasOwn(options, key)) throw new Error('BUILD_ARGUMENT_INVALID');
+  for (const key of [...common, ...spec.required]) if (!Object.hasOwn(options, key)) throw new Error('BUILD_ARGUMENT_INVALID');
   return { command, options };
 }
 function integer(value, fallback) {
@@ -71,6 +76,10 @@ export async function runBuildOps(argv) {
     usage: 'node scripts/artifacts/build-ops.mjs COMMAND --state-dir /ABSOLUTE/PRIVATE/STATE [OPTIONS]',
     commands, scope: 'local-owner-only; no cloud deployment, compiler execution, HTTP server or signing proof' } };
   const { command, options: o } = parse(argv);
+  const maintenance = { maxBytes: integer(o['max-bytes'], 1024 * 1024 * 1024), maxEntries: integer(o['max-entries'], 1000) };
+  if (command === 'backup') return { ok: true, result: await backupLocalBuildState({ directory: o['state-dir'], target: o.output, ...maintenance }) };
+  if (command === 'verify-backup') return { ok: true, result: await verifyLocalBuildBackup({ directory: o.backup, ...maintenance }) };
+  if (command === 'restore') return { ok: true, result: await restoreLocalBuildState({ directory: o.backup, target: o['state-dir'], ...maintenance }) };
   const input = o.input ? await readBuildInput(o.input) : undefined;
   const service = await openLocalBuildService({ directory: o['state-dir'], create: command === 'init' });
   try {
@@ -86,7 +95,7 @@ export async function runBuildOps(argv) {
       case 'show': result = service.show(scope); break;
       case 'history': result = service.history(scope, { limit: integer(o.limit, 100), afterSequence: integer(o['after-sequence'], 0) }); break;
       case 'export': result = await service.export({ scope, artifactId: o.artifact, targetPath: o.output }); break;
-      case 'doctor': result = await service.doctor({ maxBytes: integer(o['max-bytes'], 256 * 1024 * 1024), maxEntries: integer(o['max-entries'], 1000) }); break;
+      case 'doctor': result = await service.doctor({ appId: o.app, maxBytes: integer(o['max-bytes'], 256 * 1024 * 1024), maxEntries: integer(o['max-entries'], 1000) }); break;
     }
     return { ok: command !== 'doctor' || result.ready, result };
   } finally { service.close(); }

@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
-import { open } from 'node:fs/promises';
+import { open, lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isBuildId, isRecord, nextBuildState, snapshotBuildScope, snapshotBuildEvent } from './build-lifecycle.mjs';
 import { validateArtifactMetadata } from './native-artifact-integrity.mjs';
@@ -31,9 +31,14 @@ function context(input) {
 function fingerprint(payload) { return createHash('sha256').update(JSON.stringify(payload)).digest('hex'); }
 
 // The directory is a trust boundary owned by the local operator. This is not an HTTP authorization layer.
-export async function openDurableBuildLedger({ directory, create = false }) {
+export async function openDurableBuildLedger({ directory, create = false, readOnly = false }) {
+  if (typeof readOnly !== 'boolean' || (readOnly && create)) throw new Error('BUILD_ARGUMENT_INVALID');
   try { directory = await privateDirectory(directory, { create }); }
   catch (error) { if (error.code === 'ENOENT') throw new Error('BUILD_LEDGER_NOT_INITIALIZED'); throw error; }
+  try { await lstat(join(directory, '.flora-incomplete')); throw new Error('BUILD_STATE_INCOMPLETE'); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+  try { await lstat(join(directory, '.flora-backup')); throw new Error('BUILD_BACKUP_READ_ONLY'); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
   const path = join(directory, 'builds.sqlite');
   if (!await privateFile(path, { optional: true })) {
     if (!create) throw new Error('BUILD_LEDGER_NOT_INITIALIZED');
@@ -45,7 +50,7 @@ export async function openDurableBuildLedger({ directory, create = false }) {
   }
   await privateFile(path);
   for (const suffix of ['-journal', '-wal', '-shm']) await privateFile(path + suffix, { optional: true });
-  const db = new DatabaseSync(path);
+  const db = new DatabaseSync(path, { readOnly });
   try {
     db.exec('PRAGMA busy_timeout=1500; PRAGMA foreign_keys=ON;');
     const schema = db.prepare('PRAGMA user_version').get().user_version;
@@ -80,16 +85,16 @@ export async function openDurableBuildLedger({ directory, create = false }) {
       } catch (error) { db.exec('ROLLBACK'); throw error; }
     } else if (schema !== SCHEMA_VERSION || application !== APPLICATION_ID) throw new Error('BUILD_SCHEMA_UNSUPPORTED');
     // DELETE journaling keeps the storage footprint local and the commit recoverable.
-    db.exec('PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;');
-    return new DurableBuildLedger(db);
+    if (!readOnly) db.exec('PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;');
+    return new DurableBuildLedger(db, readOnly);
   } catch (error) { db.close(); throw error; }
 }
 class DurableBuildLedger {
-  #db; #closed = false;
-  constructor(db) { this.#db = db; }
+  #db; #closed = false; #readOnly;
+  constructor(db, readOnly) { this.#db = db; this.#readOnly = readOnly; }
   #assertOpen() { if (this.#closed) throw new Error('BUILD_LEDGER_CLOSED'); }
   #transaction(fn) {
-    this.#assertOpen(); let begun = false;
+    this.#assertOpen(); if (this.#readOnly) throw new Error('BUILD_LEDGER_READ_ONLY'); let begun = false;
     try { this.#db.exec('BEGIN IMMEDIATE'); begun = true; const result = fn(); this.#db.exec('COMMIT'); return result; }
     catch (error) {
       if (begun) this.#db.exec('ROLLBACK');
@@ -247,18 +252,25 @@ class DurableBuildLedger {
       .get(scope.appId, scope.jobId, artifactId);
     if (!row) throw new Error('BUILD_ARTIFACT_NOT_FOUND'); return parsed(row.metadata);
   }
-  inventory({ limit = 100 } = {}) {
+  inventory({ limit = 100, appId, after = null } = {}) {
     this.#assertOpen(); queryLimit(limit);
-    return this.#db.prepare('SELECT metadata FROM artifacts ORDER BY app_id,job_id,artifact_id LIMIT ?')
-      .all(limit).map(row => parsed(row.metadata));
+    if (appId !== undefined && !isBuildId(appId)) throw new Error('BUILD_QUERY_INVALID');
+    if (after !== null && (!isRecord(after) || !isBuildId(after.appId) || !isBuildId(after.jobId) || !artifactIdValid(after.artifactId)))
+      throw new Error('BUILD_QUERY_INVALID');
+    return this.#db.prepare(`SELECT metadata FROM artifacts WHERE (?='' OR app_id=?)
+      AND (app_id,job_id,artifact_id)>(?,?,?) ORDER BY app_id,job_id,artifact_id LIMIT ?`)
+      .all(appId ?? '', appId ?? '', after?.appId ?? '', after?.jobId ?? '', after?.artifactId ?? '', limit).map(row => parsed(row.metadata));
   }
-  diagnostics() {
+  diagnostics({ appId } = {}) {
     this.#assertOpen();
-    const states = {};
-    for (const row of this.#db.prepare("SELECT json_extract(state,'$.status') AS status,count(*) AS n FROM jobs GROUP BY status").all()) states[row.status] = row.n;
-    return freeze({ schemaVersion: SCHEMA_VERSION, databaseIntegrity: this.#db.prepare('PRAGMA quick_check').get().quick_check === 'ok',
-      jobs: this.#db.prepare('SELECT count(*) AS n FROM jobs').get().n,
-      artifacts: this.#db.prepare('SELECT count(*) AS n FROM artifacts').get().n, states });
+    if (appId !== undefined && !isBuildId(appId)) throw new Error('BUILD_QUERY_INVALID');
+    const args = [appId ?? '', appId ?? ''], states = {};
+    for (const row of this.#db.prepare("SELECT json_extract(state,'$.status') AS status,count(*) AS n FROM jobs WHERE (?='' OR app_id=?) GROUP BY status").all(...args)) states[row.status] = row.n;
+    return freeze({ ...(appId === undefined ? {} : { appId }), schemaVersion: SCHEMA_VERSION,
+      databaseIntegrity: this.#db.prepare('PRAGMA quick_check').get().quick_check === 'ok',
+      jobs: this.#db.prepare("SELECT count(*) AS n FROM jobs WHERE (?='' OR app_id=?)").get(...args).n,
+      artifacts: this.#db.prepare("SELECT count(*) AS n FROM artifacts WHERE (?='' OR app_id=?)").get(...args).n,
+      revision: this.#db.prepare("SELECT coalesce(max(sequence),0) AS n FROM audit WHERE (?='' OR app_id=?)").get(...args).n, states });
   }
   close() { if (!this.#closed) { this.#db.close(); this.#closed = true; } }
 }

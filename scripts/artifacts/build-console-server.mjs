@@ -82,7 +82,7 @@ export async function startBuildConsole({ directory, appIds, port = 0, approvalC
     for (const [path, file, type] of [['/', 'index.html', 'text/html'], ['/console.mjs', 'console.mjs', 'text/javascript'], ['/console.css', 'console.css', 'text/css']])
       assets.set(path, { bytes: await readFile(new URL('console/' + file, import.meta.url)), type: type + '; charset=utf-8' });
   } catch (error) { service.close(); throw error; }
-  let origin, used = false, attempts = 0, activeDownloads = 0, closing = false;
+  let origin, used = false, attempts = 0, activeDownloads = 0, closing = false, diagnosticActive = false, diagnosticAfter = 0;
   const approvalExpires = now() + APPROVAL_MS, approvalHash = digest(approvalCode); approvalCode = undefined;
   function scoped(appId, jobId) {
     if (!isBuildId(appId) || (jobId !== undefined && !isBuildId(jobId))) fail(400, 'BUILD_SCOPE_INVALID');
@@ -148,6 +148,20 @@ export async function startBuildConsole({ directory, appIds, port = 0, approvalC
     }
     if (url.pathname === '/api/overview' && request.method === 'GET') {
       const q = query(url, ['app']); scoped(q.app); json(response, 200, service.overview({ appId: q.app })); return;
+    }
+    if (url.pathname === '/api/diagnostics' && request.method === 'POST') {
+      query(url, []); fields(input, ['appId', 'maxBytes', 'maxEntries']); scoped(input.appId);
+      const maxBytes = input.maxBytes ?? 64 * 1024 * 1024, maxEntries = input.maxEntries ?? 1000;
+      if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 128 * 1024 * 1024
+          || !Number.isSafeInteger(maxEntries) || maxEntries < 1 || maxEntries > 2000) fail(400, 'BUILD_QUERY_INVALID');
+      if (diagnosticActive || now() < diagnosticAfter) fail(429, 'BUILD_DIAGNOSTIC_LIMIT');
+      diagnosticActive = true; diagnosticAfter = now() + 5000;
+      try {
+        const report = await service.doctor({ appId: input.appId, maxBytes, maxEntries });
+        session(request); if (closing || response.destroyed) fail(409, 'BUILD_DIAGNOSTIC_INTERRUPTED');
+        json(response, 200, { ...report, checkedAt: new Date(now()).toISOString(), liveProcessVerified: false });
+      } finally { diagnosticActive = false; }
+      return;
     }
     if (url.pathname === '/api/jobs') {
       if (request.method === 'GET') {
