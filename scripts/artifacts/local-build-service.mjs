@@ -1,5 +1,7 @@
+import { verifyAabSignature } from './verify-aab-signature.mjs';
+import { snapshotSignaturePolicy, signatureExpectation, validateArtifactSigning, validateSignatureEvidence } from './aab-signature-policy.mjs';
 import { opendir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { openDurableBuildLedger } from './durable-build-ledger.mjs';
 import { isBuildId, snapshotBuildScope } from './build-lifecycle.mjs';
 import { privateDirectory } from './private-paths.mjs';
@@ -28,21 +30,37 @@ class LocalBuildService {
   show(scope) { return { job: this.#ledger.get(scope), artifacts: this.#ledger.artifacts(scope) }; }
   async complete(input) {
     if (this.#readOnly) throw new Error('BUILD_LEDGER_READ_ONLY');
+    if (Object.hasOwn(input, 'signatureEvidence') || Object.hasOwn(input, 'signatureVerified')) throw new Error('ARTIFACT_SIGNATURE_EVIDENCE_INVALID');
+    const policy = input.signaturePolicy === undefined ? undefined : snapshotSignaturePolicy(input.signaturePolicy);
+    if (policy && input.format !== 'aab') throw new Error('ARTIFACT_SIGNATURE_POLICY_INVALID');
+    const signal = input.signal;
+    if (signal !== undefined && !(signal instanceof AbortSignal)) throw new Error('BUILD_ARGUMENT_INVALID');
+    const checkAbort = () => { if (signal?.aborted) throw new Error('BUILD_PROCESS_ABORTED'); };
+    const observe = value => { try { const r = input.onStage?.(value); r?.catch?.(() => {}); } catch {} };
     // Copy primitives before the first await. Never use manifest as the authorized job.
     const request = { scope: snapshotBuildScope(input.scope), expectedVersion: input.expectedVersion,
-      idempotencyKey: input.idempotencyKey, manifest: { ...input.manifest }, execution: { ...input.execution }, format: input.format };
+      idempotencyKey: input.idempotencyKey, manifest: { ...input.manifest }, execution: { ...input.execution }, format: input.format, signatureExpectation: signatureExpectation(policy) };
     const sourcePath = input.sourcePath, prepared = this.#ledger.prepareCompletion(request), job = prepared.job;
     if (prepared.replay) {
+      validateArtifactSigning(prepared.replay.artifact);
+      if (request.signatureExpectation) validateSignatureEvidence(prepared.replay.artifact.signatureEvidence, prepared.replay.artifact, request.signatureExpectation);
       await resolveLocalArtifact({ root: this.#root, receipt: prepared.replay.artifact, authorizedJob: job });
       return prepared.replay;
     }
+    checkAbort();
+    let signatureEvidence;
+    if (policy) {
+      observe('signature-verifying');
+      signatureEvidence = await verifyAabSignature({ directory: dirname(this.#root), filePath: sourcePath, manifest: request.manifest, expected: job, policy, signal });
+    }
+    checkAbort(); observe('publishing'); checkAbort();
     const receipt = await publishLocalArtifact({ root: this.#root, sourcePath, manifest: request.manifest, authorizedJob: job });
     let result;
-    try { result = await this.#ledger.complete({ ...request, receipt }); }
+    try { result = await this.#ledger.complete({ ...request, receipt, signatureEvidence }); }
     catch (error) {
       // These errors are known rollbacks. IO/ambiguous commit failures retain the file
       // for doctor to reconcile; deleting it could erase a committed artifact.
-      if (['BUILD_VERSION_CONFLICT', 'BUILD_IDEMPOTENCY_CONFLICT', 'BUILD_TRANSITION_DENIED', 'BUILD_ARTIFACT_NOT_VERIFIED'].includes(error.message))
+      if (['BUILD_VERSION_CONFLICT', 'BUILD_IDEMPOTENCY_CONFLICT', 'BUILD_TRANSITION_DENIED', 'BUILD_ARTIFACT_NOT_VERIFIED', 'ARTIFACT_SIGNATURE_EVIDENCE_INVALID'].includes(error.message))
         await discardUncommittedArtifact({ root: this.#root, receipt, authorizedJob: job });
       throw error;
     }
@@ -54,7 +72,16 @@ class LocalBuildService {
     const job = this.#ledger.get(scope), artifact = this.#ledger.artifact(scope, artifactId);
     await exportLocalArtifact({ root: this.#root, receipt: artifact, authorizedJob: job, targetPath });
     return Object.freeze({ artifactId, byteCount: artifact.byteCount, sha256: artifact.sha256,
-      format: artifact.format, integrityVerified: true, signatureVerified: false, installVerified: false });
+      format: artifact.format, integrityVerified: true, signatureVerified: artifact.signatureVerified, installVerified: false,
+      ...(artifact.signatureEvidence ? { signatureEvidence: artifact.signatureEvidence } : {}) });
+  }
+  evidence({ scope, artifactId }) {
+    const job = this.#ledger.get(scope), artifact = this.#ledger.artifact(scope, artifactId);
+    validateArtifactSigning(artifact);
+    return Object.freeze({ format: 'flora-artifact-evidence', version: 1, appId: job.appId, jobId: job.jobId, artifactId,
+      repository: job.repository, sourceSha: job.sourceSha, platform: job.platform, artifactFormat: artifact.format,
+      sha256: artifact.sha256, byteCount: artifact.byteCount, signatureVerified: artifact.signatureVerified,
+      signatureEvidence: artifact.signatureEvidence ?? null, integrityRechecked: false, bundleValidated: false, installVerified: false });
   }
   async doctor({ appId, maxBytes = 256 * 1024 * 1024, maxEntries = 1000 } = {}) {
     if ((appId !== undefined && !isBuildId(appId)) || !Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 2 * 1024 * 1024 * 1024
@@ -72,6 +99,7 @@ class LocalBuildService {
       if (consumed + artifact.byteCount > maxBytes) { complete = false; continue; }
       consumed += artifact.byteCount;
       try {
+        validateArtifactSigning(artifact);
         await resolveLocalArtifact({ root: this.#root, receipt: artifact, authorizedJob: this.#ledger.get(artifact) }); verifiedFiles++;
       } catch (error) { issues.push({ appId: artifact.appId, jobId: artifact.jobId, artifactId: artifact.artifactId, code: safeError(error) }); }
     }
@@ -105,7 +133,7 @@ class LocalBuildService {
     if (!complete) issues.push({ code: 'ARTIFACT_SCAN_INCOMPLETE' });
     if ((database.states.unknown ?? 0) > 0) issues.push({ code: 'BUILD_RECONCILIATION_REQUIRED' });
     if ((database.states.running ?? 0) > 0) issues.push({ code: 'BUILD_RUNNING_REQUIRES_CHECK' });
-    return { ...database, verifiedFiles, verifiedBytes: consumed, scannedEntries, complete, issues,
+    return { ...database, signatureRechecked: false, verifiedFiles, verifiedBytes: consumed, scannedEntries, complete, issues,
       ready: database.databaseIntegrity && complete && issues.length === 0 };
   }
   close() { this.#ledger.close(); }

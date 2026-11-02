@@ -19,7 +19,8 @@ export async function inspectLocalBuild({ directory, scope, recipe, expectedVers
   if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0 || expectedVersion >= Number.MAX_SAFE_INTEGER)
     throw new Error('BUILD_VERSION_INVALID');
   const service = await openLocalBuildService({ directory, readOnly: true });
-  const checks = checkIds.map(id => ({ id, status: 'not_checked', code: null }));
+  const ids = [...checkIds]; if (recipe.signaturePolicy) ids.splice(4, 0, 'signature-tool');
+  const checks = ids.map(id => ({ id, status: 'not_checked', code: null }));
   const record = async (id, fn) => {
     const entry = checks.find(c => c.id === id);
     try { await fn(); entry.status = 'passed'; return true; }
@@ -38,6 +39,7 @@ export async function inspectLocalBuild({ directory, scope, recipe, expectedVers
     if (bound) {
       const checkout = await record('checkout', () => checkCheckout(recipe.cwd));
       await record('executable', () => checkExecutable(recipe.executable));
+      if (recipe.signaturePolicy) await record('signature-tool', () => checkExecutable(recipe.signaturePolicy.javaExecutable));
       const git = await record('git', () => checkExecutable(recipe.gitExecutable));
       if (checkout) {
         await record('output', async () => { await checkOutputPath(recipe.artifactPath); await absent(recipe.artifactPath, 'BUILD_OUTPUT_EXISTS'); });
@@ -53,6 +55,7 @@ export async function inspectLocalBuild({ directory, scope, recipe, expectedVers
       checkedAt: new Date().toISOString(), ready: checks.every(c => c.status === 'passed'),
       checks: Object.freeze(checks.map(Object.freeze)), buildExecuted: false,
       signatureVerified: false, installVerified: false, reservesExecution: false,
+      ...(recipe.signaturePolicy ? { signaturePolicy: { scheme: recipe.signaturePolicy.scheme, expectedSignerSha256: recipe.signaturePolicy.expectedSignerSha256 } } : {}),
       limits: Object.freeze({ timeoutMs: recipe.timeoutMs, outputLimitBytes: recipe.outputLimitBytes }) });
   } finally { service.close(); }
 }

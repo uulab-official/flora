@@ -27,7 +27,14 @@ async function api(path, method = 'GET', body) {
   return result;
 }
 function explain(error) {
-  const labels = { BUILD_VERSION_CONFLICT: '다른 작업으로 상태가 변경되었습니다. 새로고침 후 다시 확인하세요.',
+  const labels = { ARTIFACT_SIGNATURE_SIGNER_MISMATCH: '서명 인증서가 운영자가 등록한 업로드 인증서와 다릅니다. 산출물 등록을 차단했습니다.',
+    ARTIFACT_SIGNATURE_UNSIGNED: '서명되지 않은 파일이 포함되어 산출물 등록을 차단했습니다.',
+    ARTIFACT_SIGNATURE_CERTIFICATE_INVALID: '서명 인증서의 유효 기간 또는 키 용도를 확인하세요.',
+    ARTIFACT_SIGNATURE_INVALID: 'AAB 서명 무결성이 일치하지 않습니다.',
+    ARTIFACT_SIGNATURE_LAYOUT_INVALID: 'AAB ZIP 구조가 예상과 다르거나 서명된 파일이 누락되었습니다.',
+    ARTIFACT_SIGNATURE_TIMEOUT: '서명 검사 시간 한도에 도달했습니다. 등록하지 않았습니다.',
+    ARTIFACT_SIGNATURE_TOOL_UNAVAILABLE: '설정한 JDK 서명 검사 도구를 사용할 수 없습니다.',
+    BUILD_VERSION_CONFLICT: '다른 작업으로 상태가 변경되었습니다. 새로고침 후 다시 확인하세요.',
     BUILD_APPROVAL_INVALID: '승인 코드가 잘못되었거나 만료·사용되었습니다. 콘솔을 재시작해 새 코드를 받으세요.',
     BUILD_SESSION_EXPIRED: '세션이 만료되었습니다. 콘솔을 재시작해 다시 연결하세요.',
     BUILD_SESSION_REQUIRED: '로컬 콘솔 연결이 필요합니다.', BUILD_RUNNING_CANCEL_REQUIRES_RUNNER: '실행 중인 작업은 Runner에서 중지해야 합니다.',
@@ -127,12 +134,22 @@ async function download(job, artifact, button) {
 }
 const controlPaths = Object.freeze({ execute: '/execute', stop: '/stop', retry: '/retry' });
 function pathFor(job, action) { return `/api/jobs/${encodeURIComponent(job.appId)}/${encodeURIComponent(job.jobId)}` + controlPaths[action]; }
+async function downloadEvidence(job, artifact, button) {
+  const epoch = state.epoch, app = state.app, csrf = state.csrf; button.disabled = true;
+  try {
+    const report = await api(`/api/jobs/${encodeURIComponent(app)}/${encodeURIComponent(job.jobId)}/evidence?artifact=${encodeURIComponent(artifact.artifactId)}`);
+    if (epoch !== state.epoch || app !== state.app || csrf !== state.csrf) return;
+    const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' }));
+    const link = node('a'); link.href = url; link.download = 'flora-artifact-evidence.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } finally { button.disabled = false; }
+}
 function startConfirmation(job, preset) {
   state.intent = { action: 'execute', job: { ...job }, presetId: preset.id, csrf: state.csrf, idempotencyKey: crypto.randomUUID().replaceAll('-', '') };
   $('run-context').textContent = `${preset.label} · ${job.jobId}\n${job.repository}\n${job.sourceSha}\nRunner: ${job.runnerId}`;
   $('run-confirm').disabled = true; $('run-preflight').disabled = false;
   $('run-preflight-status').textContent = '빌드 명령 없이 조건을 확인합니다. 점검 후 실행할 수 있습니다.';
   $('run-preflight-checks').replaceChildren();
+  if (preset.signaturePolicy) $('run-context').textContent += `\n필수 AAB 업로드 서명 · 인증서 SHA-256: ${preset.signaturePolicy.expectedSignerSha256}`;
   $('run-dialog').showModal();
 }
 function retryConfirmation(job) {
@@ -191,7 +208,16 @@ async function detail(jobId, preserve = false) {
   if (job.status === 'unknown') $('job-actions').append(node('p', '실행 결과를 확인하지 못했습니다. 자동 재실행하지 말고 Runner 기록을 먼저 확인하세요.', 'muted'));
   $('artifact-list').replaceChildren();
   for (const artifact of result.artifacts) {
-    const card = node('div', undefined, 'artifact'); card.append(node('strong', `${artifact.format.toUpperCase()} · ${(artifact.byteCount / 1024 / 1024).toFixed(2)} MB`), node('code', artifact.sha256), node('p', '무결성 확인 · 코드 서명 / 실제 설치는 미검증', 'muted'));
+    const card = node('div', undefined, 'artifact'); card.append(node('strong', `${artifact.format.toUpperCase()} · ${(artifact.byteCount / 1024 / 1024).toFixed(2)} MB`), node('code', artifact.sha256));
+    if (artifact.signatureVerified === true && artifact.signatureEvidence?.scheme === 'aab-jar-v1') {
+      const proof = artifact.signatureEvidence;
+      card.append(node('p', 'AAB 업로드 서명 · 등록 인증서와 일치 (검증 당시)', 'signature-status'), node('code', proof.signerSha256),
+        node('small', `검증 ${new Date(proof.verifiedAt).toLocaleString('ko-KR')} · 서명 파일 ${proof.signedEntries}개 · 인증서 만료 ${new Date(proof.certificateNotAfter).toLocaleDateString('ko-KR')}`));
+    } else card.append(node('p', '무결성 확인 · 코드 서명은 미검증', 'muted'));
+    // bundleValidated and installVerified must never be inferred from a signature.
+    card.append(node('p', '앱 번들 유효성 · Play 승인 · 실제 설치는 미검증', 'muted'));
+    const evidenceButton = node('button', '서명 검증 기록 JSON', 'quiet');
+    evidenceButton.addEventListener('click', () => attempt(() => downloadEvidence(job, artifact, evidenceButton))); card.append(evidenceButton);
     const button = node('button', '검증 후 다운로드', 'quiet'); button.addEventListener('click', () => attempt(() => download(job, artifact, button))); card.append(button); $('artifact-list').append(card);
   }
   if (!result.artifacts.length) $('artifact-list').append(node('p', '아직 등록된 산출물이 없습니다.', 'muted'));
@@ -201,6 +227,8 @@ $('login-form').addEventListener('submit', event => { event.preventDefault(); co
 $('logout').addEventListener('click', () => attempt(async () => { await api('/api/session', 'DELETE'); reset(); notice('연결을 종료했습니다. 다시 연결하려면 콘솔을 재시작하세요.'); }));
 $('app-select').addEventListener('change', () => { clearPreflight(); clearDiagnostic(); state.epoch++; state.detailEpoch++; state.app = $('app-select').value; state.selected = null; state.overview = null; state.jobs = []; state.presets = []; state.detailSignature = null; state.intent = null; state.cursors = [''];
   for (const id of ['run-dialog', 'retry-dialog']) if ($(id).open) $(id).close();
+  for (const id of ['artifact-list', 'history-list', 'job-facts', 'job-actions', 'build-activity']) $(id).replaceChildren();
+  $('build-activity').hidden = true; $('execution-status').textContent = '';
   $('detail-content').hidden = true; $('detail-empty').hidden = false; $('job-search').value = ''; renderJobs(); attempt(async () => { await loadPresets(); await load(); }); });
 $('refresh').addEventListener('click', () => attempt(async () => { await load(); if (state.selected) await detail(state.selected.jobId); }));
 $('next').addEventListener('click', () => { if (state.next) { state.cursors.push(state.next); attempt(load); } });
@@ -282,7 +310,7 @@ function clearPreflight() {
 function renderActivity(activity) {
   const panel = $('build-activity'); panel.replaceChildren(); panel.hidden = !activity;
   if (!activity) return;
-  const labels = { preflight: '실행 조건 확인', 'source-check': '소스 커밋 확인', executing: '빌드 프로세스 실행', verifying: '산출물 무결성 검사', publishing: '원장 · 파일 저장', finished: '이번 실행 처리 종료' };
+  const labels = { preflight: '실행 조건 확인', 'source-check': '소스 커밋 확인', executing: '빌드 프로세스 실행', verifying: '산출물 무결성 검사', 'signature-verifying': 'AAB 업로드 서명 확인', publishing: '원장 · 파일 저장', finished: '이번 실행 처리 종료' };
   panel.append(node('strong', labels[activity.stage] ?? '실행 관측'));
   const elapsed = Math.floor(activity.elapsedMs / 1000);
   panel.append(node('p', `경과 ${Math.floor(elapsed / 60)}분 ${elapsed % 60}초 · 출력 ${((activity.stdoutBytes + activity.stderrBytes) / 1024).toFixed(1)} KiB / ${(activity.outputLimitBytes / 1024).toFixed(0)} KiB`));
@@ -299,7 +327,7 @@ $('run-preflight').addEventListener('click', async () => {
     if (intent !== state.intent || intent.job.appId !== state.app || intent.csrf !== state.csrf || !$('run-dialog').open) return;
     intent.preflightReady = report.ready === true && report.jobVersion === intent.job.version;
     $('run-preflight-status').textContent = intent.preflightReady ? '현재 조건을 통과했습니다. 실행 시 다시 검증하며, 빌드·서명 성공을 보장하지 않습니다.' : '실행 전에 확인할 항목이 있습니다. 원인을 해결한 후 다시 점검하세요.';
-    const labels = { job: '작업 상태 · 버전', binding: '설정 연결', checkout: '작업 폴더', executable: '실행 파일', git: 'Git 도구', output: '이전 출력', lock: 'Runner 잠금', source: '소스 커밋 · 변경', freshness: '점검 중 상태 변경' };
+    const labels = { job: '작업 상태 · 버전', binding: '설정 연결', checkout: '작업 폴더', executable: '실행 파일', git: 'Git 도구', 'signature-tool': 'JDK 서명 검사 실행 파일', output: '이전 출력', lock: 'Runner 잠금', source: '소스 커밋 · 변경', freshness: '점검 중 상태 변경' };
     for (const check of report.checks) $('run-preflight-checks').append(node('li', `${labels[check.id] ?? check.id}: ${check.status === 'passed' ? '통과' : check.status === 'not_checked' ? '미검사' : explain({ message: check.code })}`));
     $('run-confirm').disabled = !intent.preflightReady;
   } catch (error) {

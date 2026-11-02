@@ -174,10 +174,14 @@ export async function startBuildConsole({ directory, appIds, port = 0, approvalC
         json(response, 201, service.create(input)); return;
       }
     }
-    const match = /^\/api\/jobs\/([^/]+)\/([^/]+)(?:\/(history|transition|downloads|execution|execute|stop|retry|preflight))?$/.exec(url.pathname);
+    const match = /^\/api\/jobs\/([^/]+)\/([^/]+)(?:\/(history|transition|downloads|execution|execute|stop|retry|preflight|evidence))?$/.exec(url.pathname);
     if (match) {
       const scope = scoped(match[1], match[2]), action = match[3];
       if (!action && request.method === 'GET') { query(url, []); json(response, 200, service.show(scope)); return; }
+      if (action === 'evidence' && request.method === 'GET') {
+        const q = query(url, ['artifact']);
+        json(response, 200, service.evidence({ scope, artifactId: q.artifact })); return;
+      }
       if (action === 'execution' && request.method === 'GET') {
         query(url, []); service.show(scope); json(response, 200, { enabled: Boolean(controller), execution: controller?.state(scope) ?? null }); return;
       }

@@ -74,6 +74,7 @@ export async function runLocalBuild({ directory, scope, recipe, execute: approve
     await checkCheckout(recipe.cwd);
     await checkExecutable(recipe.executable);
     await checkExecutable(recipe.gitExecutable);
+    if (recipe.signaturePolicy) await checkExecutable(recipe.signaturePolicy.javaExecutable);
     lockPath = join(directory, '.runner-lock-' + createHash('sha256').update(recipe.cwd).digest('hex') + '.lock');
     try { lock = await open(lockPath, 'wx', 0o600); }
     catch (error) { if (error.code === 'EEXIST') throw new Error('BUILD_RUNNER_LOCKED'); throw error; }
@@ -103,16 +104,21 @@ export async function runLocalBuild({ directory, scope, recipe, execute: approve
       audit('runner-artifact-verifying');
       await checkSource(recipe, job);
       const manifest = await manifestFor(recipe.artifactPath, job);
-      progress.stage('publishing');
+      if (!recipe.signaturePolicy) progress.stage('publishing');
       if (signal?.aborted) {
         const state = await service.transition({ scope, expectedVersion: running.version, event: { status: 'cancelled', idempotencyKey: key(), failureCode: 'BUILD_PROCESS_ABORTED' } });
         return { ...state, reason: 'BUILD_PROCESS_ABORTED', exitCode: 0 };
       }
-      audit('runner-artifact-publishing');
       return await service.complete({ scope, expectedVersion: running.version, idempotencyKey: key(), manifest,
-        execution: { ...job, exitCode: 0 }, sourcePath: recipe.artifactPath, format: recipe.format });
+        execution: { ...job, exitCode: 0 }, sourcePath: recipe.artifactPath, format: recipe.format, signaturePolicy: recipe.signaturePolicy, signal, onStage: stage => { if (stage === 'publishing') audit('runner-artifact-publishing'); progress.stage(stage); } });
     } catch (error) {
       const current = service.show(scope).job;
+      if (current.status === 'running' && current.version === running.version &&
+          (error.message === 'BUILD_PROCESS_ABORTED' || /^ARTIFACT_SIGNATURE_/.test(error.message))) {
+        const status = error.message === 'BUILD_PROCESS_ABORTED' ? 'cancelled' : 'failed';
+        const state = await service.transition({ scope, expectedVersion: current.version, event: { status, idempotencyKey: key(), failureCode: error.message } });
+        return { ...state, reason: error.message };
+      }
       if (current.status === 'running' && current.version === running.version) {
         const state = await service.transition({ scope, expectedVersion: current.version, event: { status: 'unknown', idempotencyKey: key(), failureCode: 'BUILD_RESULT_RECONCILIATION_REQUIRED' } });
         return { ...state, reason: 'BUILD_RESULT_RECONCILIATION_REQUIRED' };

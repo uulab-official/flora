@@ -66,6 +66,7 @@ export function createBuildController({ directory, service, presets, appIds, max
       if (!allowed.has(appId)) throw new Error('BUILD_APP_FORBIDDEN');
       return [...registry.values()].filter(p => p.recipe.appId === appId).map(p => Object.freeze({
         id: p.id, label: p.label, appId, repository: p.recipe.repository, runnerId: p.recipe.runnerId, platform: p.recipe.platform, format: p.recipe.format,
+        ...(p.recipe.signaturePolicy ? { signaturePolicy: { scheme: p.recipe.signaturePolicy.scheme, expectedSignerSha256: p.recipe.signaturePolicy.expectedSignerSha256 } } : {}),
       }));
     },
     state(value) { const scope = scoped(value); service.show(scope); const r = last(scope); return r ? publicRecord(r) : null; },

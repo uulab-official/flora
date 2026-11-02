@@ -1,3 +1,4 @@
+import { validateSignatureExpectation, validateSignatureEvidence, validateArtifactSigning } from './aab-signature-policy.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
@@ -219,7 +220,7 @@ class DurableBuildLedger {
       return this.#save(current, state, event.idempotencyKey, digest, { ...current, ...state }, 'transition');
     });
   }
-  #completion({ scope, manifest, execution, format, idempotencyKey, expectedVersion }) {
+  #completion({ scope, manifest, execution, format, idempotencyKey, expectedVersion, signatureExpectation }) {
     scope = snapshotBuildScope(scope); version(expectedVersion);
     const job = this.get(scope), event = snapshotBuildEvent({ status: 'succeeded', idempotencyKey,
       artifactIntegrityVerified: true, executionVerified: true });
@@ -230,8 +231,13 @@ class DurableBuildLedger {
     if (!(job.platform === 'android' ? ['apk', 'aab'] : ['ipa']).includes(format)) throw new Error('BUILD_ARTIFACT_FORMAT_INVALID');
     const metadata = { ...snapshotBuildScope(job), repository: job.repository, sourceSha: job.sourceSha,
       platform: job.platform, byteCount: manifest.byteCount, sha256: manifest.sha256, format };
-    const digest = fingerprint(['complete', expectedVersion, event, metadata, job.runnerId, 0]);
-    return { job, scope, event, metadata, digest, expectedVersion };
+    const expectation = signatureExpectation == null ? null : validateSignatureExpectation(signatureExpectation);
+    if (expectation && (job.platform !== 'android' || format !== 'aab')) throw new Error('ARTIFACT_SIGNATURE_POLICY_INVALID');
+    // Preserve byte-for-byte compatibility with legacy unsigned request fingerprints.
+    const payload = ['complete', expectedVersion, event, metadata, job.runnerId, 0];
+    if (expectation) payload.push(expectation);
+    const digest = fingerprint(payload);
+    return { job, scope, event, metadata, digest, expectedVersion, expectation };
   }
   prepareCompletion(input) {
     const contract = this.#completion(input), prior = this.#replay(contract.scope, contract.event.idempotencyKey, contract.digest);
@@ -252,8 +258,12 @@ class DurableBuildLedger {
       if (!isRecord(receipt) || !artifactIdValid(receipt.artifactId) || receipt.storage !== 'local-only'
           || receipt.integrityVerified !== true || Object.entries(metadata).some(([key, value]) => key !== 'format' && receipt[key] !== value))
         throw new Error('BUILD_ARTIFACT_NOT_VERIFIED');
+      let signatureEvidence;
+      if (contract.expectation) signatureEvidence = validateSignatureEvidence(input.signatureEvidence, metadata, contract.expectation);
+      else if (input.signatureEvidence !== undefined) throw new Error('ARTIFACT_SIGNATURE_EVIDENCE_INVALID');
       const artifact = freeze({ ...metadata, artifactId: receipt.artifactId, storage: 'local-only',
-        integrityVerified: true, signatureVerified: false, installVerified: false, createdAt: new Date().toISOString() });
+        integrityVerified: true, signatureVerified: Boolean(signatureEvidence), installVerified: false, createdAt: new Date().toISOString(),
+        ...(signatureEvidence ? { signatureEvidence } : {}) });
       this.#db.prepare('INSERT INTO artifacts(app_id,job_id,artifact_id,metadata) VALUES(?,?,?,?)')
         .run(scope.appId, scope.jobId, artifact.artifactId, JSON.stringify(artifact));
       const state = nextBuildState(job, event, scope);
@@ -263,14 +273,14 @@ class DurableBuildLedger {
   artifacts(scope) {
     this.#assertOpen(); scope = snapshotBuildScope(scope); this.get(scope);
     return this.#db.prepare('SELECT metadata FROM artifacts WHERE app_id=? AND job_id=? ORDER BY artifact_id LIMIT 100')
-      .all(scope.appId, scope.jobId).map(row => parsed(row.metadata));
+      .all(scope.appId, scope.jobId).map(row => { const a = parsed(row.metadata); validateArtifactSigning(a); return a; });
   }
   artifact(scope, artifactId) {
     this.#assertOpen(); scope = snapshotBuildScope(scope);
     if (!artifactIdValid(artifactId)) throw new Error('BUILD_ARTIFACT_NOT_FOUND');
     const row = this.#db.prepare('SELECT metadata FROM artifacts WHERE app_id=? AND job_id=? AND artifact_id=?')
       .get(scope.appId, scope.jobId, artifactId);
-    if (!row) throw new Error('BUILD_ARTIFACT_NOT_FOUND'); return parsed(row.metadata);
+    if (!row) throw new Error('BUILD_ARTIFACT_NOT_FOUND'); const a = parsed(row.metadata); validateArtifactSigning(a); return a;
   }
   inventory({ limit = 100, appId, after = null } = {}) {
     this.#assertOpen(); queryLimit(limit);

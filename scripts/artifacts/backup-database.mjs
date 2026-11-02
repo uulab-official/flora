@@ -1,3 +1,4 @@
+import { validateArtifactSigning } from './aab-signature-policy.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { isBuildId, isRecord } from './build-lifecycle.mjs';
 import { validateArtifactMetadata } from './native-artifact-integrity.mjs';
@@ -40,8 +41,8 @@ export async function inspectBackupDatabase(path, maxEntries) {
     for(const row of db.prepare('SELECT * FROM artifacts ORDER BY app_id,job_id,artifact_id').all()) {
       const a=json(row.metadata),key=JSON.stringify([row.app_id,row.job_id]),job=jobs.get(key);
       if(!job||job.status!=='succeeded'||a.appId!==row.app_id||a.jobId!==row.job_id||a.artifactId!==row.artifact_id||typeof a.artifactId!=='string'||a.artifactId.length!==24||!/^[a-f0-9]{24}$/.test(a.artifactId)
-          ||a.storage!=='local-only'||a.integrityVerified!==true||a.signatureVerified!==false||a.installVerified!==false||!(job.platform==='ios'?['ipa']:['apk','aab']).includes(a.format)) invalid();
-      try { validateArtifactMetadata({manifest:a,expected:job,byteCount:a.byteCount}); } catch {invalid();}
+          ||a.storage!=='local-only'||a.integrityVerified!==true||a.installVerified!==false||!(job.platform==='ios'?['ipa']:['apk','aab']).includes(a.format)) invalid();
+      try { validateArtifactMetadata({manifest:a,expected:job,byteCount:a.byteCount}); validateArtifactSigning(a); } catch {invalid();}
       artifacts.push(a);covered.add(key);
     }
     if([...jobs.entries()].some(([k,j])=>j.status==='succeeded'&&!covered.has(k))) invalid();

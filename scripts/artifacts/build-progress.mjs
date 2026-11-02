@@ -1,6 +1,6 @@
 import { performance } from 'node:perf_hooks';
 
-const stages = new Set(['preflight', 'source-check', 'executing', 'verifying', 'publishing', 'finished']);
+const stages = new Set(['preflight', 'source-check', 'executing', 'verifying', 'signature-verifying', 'publishing', 'finished']);
 // Bounded, structured observations only. Raw process output never enters the observer.
 export function createBuildProgress({ onProgress, outputLimitBytes, timeoutMs }) {
   if (onProgress !== undefined && typeof onProgress !== 'function') throw new Error('BUILD_PROGRESS_INVALID');

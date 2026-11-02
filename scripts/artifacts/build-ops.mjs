@@ -8,6 +8,7 @@ import { openLocalBuildService } from './local-build-service.mjs';
 import { backupLocalBuildState, verifyLocalBuildBackup, restoreLocalBuildState } from './local-build-backup.mjs';
 
 const commands = {
+  evidence: { required: ['app', 'job', 'artifact'], optional: [] },
   preflight: { required: ['app', 'job', 'recipe', 'expected-version'], optional: [] },
   init: { required: [], optional: [] },
   create: { required: ['input'], optional: [] },
@@ -76,7 +77,7 @@ export async function readBuildInput(path, { privateOnly = false } = {}) {
 export async function runBuildOps(argv) {
   if (argv.length === 1 && ['help', '--help'].includes(argv[0])) return { ok: true, result: {
     usage: 'node scripts/artifacts/build-ops.mjs COMMAND --state-dir /ABSOLUTE/PRIVATE/STATE [OPTIONS]',
-    commands, scope: 'local-owner-only; no cloud deployment, compiler execution, HTTP server or signing proof' } };
+    commands, scope: 'local-owner-only; no cloud deployment or installation proof; AAB signing evidence is a separate historical observation' } };
   const { command, options: o } = parse(argv);
   const maintenance = { maxBytes: integer(o['max-bytes'], 1024 * 1024 * 1024), maxEntries: integer(o['max-entries'], 1000) };
   if (command === 'backup') return { ok: true, result: await backupLocalBuildState({ directory: o['state-dir'], target: o.output, ...maintenance }) };
@@ -87,7 +88,9 @@ export async function runBuildOps(argv) {
       recipe: await readBuildInput(o.recipe, { privateOnly: true }), expectedVersion: integer(o['expected-version']) });
     return { ok: result.ready, result };
   }
-  const input = o.input ? await readBuildInput(o.input) : undefined;
+  let input = o.input ? await readBuildInput(o.input) : undefined;
+  // A configured signing verifier is executable operator configuration, not untrusted report data.
+  if (command === 'complete' && input?.signaturePolicy !== undefined) input = await readBuildInput(o.input, { privateOnly: true });
   const service = await openLocalBuildService({ directory: o['state-dir'], create: command === 'init' });
   try {
     const scope = { appId: o.app, jobId: o.job }; let result;
@@ -99,6 +102,7 @@ export async function runBuildOps(argv) {
       case 'overview': result = service.overview({ appId: o.app }); break;
       case 'complete': result = await service.complete(input); break;
       case 'list': result = service.list({ appId: o.app, limit: integer(o.limit, 100), afterJobId: o['after-job'] ?? '' }); break;
+      case 'evidence': result = service.evidence({ scope, artifactId: o.artifact }); break;
       case 'show': result = service.show(scope); break;
       case 'history': result = service.history(scope, { limit: integer(o.limit, 100), afterSequence: integer(o['after-sequence'], 0) }); break;
       case 'export': result = await service.export({ scope, artifactId: o.artifact, targetPath: o.output }); break;
