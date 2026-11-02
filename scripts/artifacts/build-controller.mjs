@@ -1,3 +1,4 @@
+import { inspectLocalBuild } from './local-build-preflight.mjs';
 import { randomBytes } from 'node:crypto';
 import { runLocalBuild, snapshotLocalRecipe } from './local-build-runner.mjs';
 import { isRecord, isBuildId, snapshotBuildScope, snapshotBuildEvent } from './build-lifecycle.mjs';
@@ -35,6 +36,7 @@ export function createBuildController({ directory, service, presets, appIds, max
     const status = service.show(r.scope).job.status;
     return Object.freeze({ id: r.id, presetId: r.presetId, appId: r.scope.appId, jobId: r.scope.jobId,
       phase: r.phase === 'starting' && status === 'running' ? 'running' : r.phase, status, canStop: !r.settled && !r.controller.signal.aborted,
+      activity: r.activity ?? null,
       startedAt: r.startedAt, finishedAt: r.finishedAt ?? null, reason: r.reason ?? null, ...(replayed ? { replayed: true } : {}) });
   }
   function last(scope) { return [...records.values()].reverse().find(r => scopeId(r.scope) === scopeId(scope)); }
@@ -45,7 +47,7 @@ export function createBuildController({ directory, service, presets, appIds, max
   }
   async function perform(record, recipe, expectedVersion) {
     try {
-      const result = await runLocalBuild({ directory, scope: record.scope, recipe, expectedVersion, execute: true, signal: record.controller.signal });
+      const result = await runLocalBuild({ directory, scope: record.scope, recipe, expectedVersion, execute: true, signal: record.controller.signal, onProgress: value => { record.activity = value; } });
       record.reason = result.reason ?? null; record.phase = 'finished';
     } catch (error) {
       record.reason = safeReason(error); record.phase = 'blocked';
@@ -67,6 +69,16 @@ export function createBuildController({ directory, service, presets, appIds, max
       }));
     },
     state(value) { const scope = scoped(value); service.show(scope); const r = last(scope); return r ? publicRecord(r) : null; },
+    async inspect(input) {
+      if (closing) throw new Error('BUILD_CONSOLE_CLOSING');
+      fields(input, ['scope', 'presetId', 'expectedVersion']);
+      const scope = scoped(input.scope), preset = registry.get(input.presetId), expectedVersion = input.expectedVersion;
+      if (!preset) throw new Error('BUILD_PRESET_NOT_FOUND');
+      if (preset.recipe.appId !== scope.appId) throw new Error('BUILD_RECIPE_SCOPE_MISMATCH');
+      const result = await inspectLocalBuild({ directory, scope, recipe: preset.recipe, expectedVersion });
+      if (closing) throw new Error('BUILD_CONSOLE_CLOSING');
+      return Object.freeze({ ...result, presetId: preset.id });
+    },
     start(input) {
       if (closing) throw new Error('BUILD_CONSOLE_CLOSING');
       fields(input, ['scope', 'presetId', 'expectedVersion', 'idempotencyKey']);

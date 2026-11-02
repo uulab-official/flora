@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { inspectLocalBuild } from './local-build-preflight.mjs';
 import { constants } from 'node:fs';
 import { lstat, open, realpath } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
@@ -7,6 +8,7 @@ import { openLocalBuildService } from './local-build-service.mjs';
 import { backupLocalBuildState, verifyLocalBuildBackup, restoreLocalBuildState } from './local-build-backup.mjs';
 
 const commands = {
+  preflight: { required: ['app', 'job', 'recipe', 'expected-version'], optional: [] },
   init: { required: [], optional: [] },
   create: { required: ['input'], optional: [] },
   transition: { required: ['input'], optional: [] },
@@ -80,6 +82,11 @@ export async function runBuildOps(argv) {
   if (command === 'backup') return { ok: true, result: await backupLocalBuildState({ directory: o['state-dir'], target: o.output, ...maintenance }) };
   if (command === 'verify-backup') return { ok: true, result: await verifyLocalBuildBackup({ directory: o.backup, ...maintenance }) };
   if (command === 'restore') return { ok: true, result: await restoreLocalBuildState({ directory: o.backup, target: o['state-dir'], ...maintenance }) };
+  if (command === 'preflight') {
+    const result = await inspectLocalBuild({ directory: o['state-dir'], scope: { appId: o.app, jobId: o.job },
+      recipe: await readBuildInput(o.recipe, { privateOnly: true }), expectedVersion: integer(o['expected-version']) });
+    return { ok: result.ready, result };
+  }
   const input = o.input ? await readBuildInput(o.input) : undefined;
   const service = await openLocalBuildService({ directory: o['state-dir'], create: command === 'init' });
   try {

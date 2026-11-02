@@ -20,6 +20,7 @@ class LocalBuildService {
   constructor(ledger, root, readOnly) { this.#ledger = ledger; this.#root = root; this.#readOnly = readOnly; }
   create(job) { return this.#ledger.create(job); }
   transition(request) { return this.#ledger.transition(request); }
+  recordProgress(request) { return this.#ledger.recordProgress(request); }
   retry(request) { return this.#ledger.retry(request); }
   overview(options) { return this.#ledger.overview(options); }
   list(options) { return this.#ledger.list(options); }

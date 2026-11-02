@@ -82,7 +82,7 @@ export async function startBuildConsole({ directory, appIds, port = 0, approvalC
     for (const [path, file, type] of [['/', 'index.html', 'text/html'], ['/console.mjs', 'console.mjs', 'text/javascript'], ['/console.css', 'console.css', 'text/css']])
       assets.set(path, { bytes: await readFile(new URL('console/' + file, import.meta.url)), type: type + '; charset=utf-8' });
   } catch (error) { service.close(); throw error; }
-  let origin, used = false, attempts = 0, activeDownloads = 0, closing = false, diagnosticActive = false, diagnosticAfter = 0;
+  let origin, used = false, attempts = 0, activeDownloads = 0, closing = false, diagnosticActive = false, diagnosticAfter = 0, preflightActive = false, preflightAfter = 0;
   const approvalExpires = now() + APPROVAL_MS, approvalHash = digest(approvalCode); approvalCode = undefined;
   function scoped(appId, jobId) {
     if (!isBuildId(appId) || (jobId !== undefined && !isBuildId(jobId))) fail(400, 'BUILD_SCOPE_INVALID');
@@ -174,12 +174,25 @@ export async function startBuildConsole({ directory, appIds, port = 0, approvalC
         json(response, 201, service.create(input)); return;
       }
     }
-    const match = /^\/api\/jobs\/([^/]+)\/([^/]+)(?:\/(history|transition|downloads|execution|execute|stop|retry))?$/.exec(url.pathname);
+    const match = /^\/api\/jobs\/([^/]+)\/([^/]+)(?:\/(history|transition|downloads|execution|execute|stop|retry|preflight))?$/.exec(url.pathname);
     if (match) {
       const scope = scoped(match[1], match[2]), action = match[3];
       if (!action && request.method === 'GET') { query(url, []); json(response, 200, service.show(scope)); return; }
       if (action === 'execution' && request.method === 'GET') {
         query(url, []); service.show(scope); json(response, 200, { enabled: Boolean(controller), execution: controller?.state(scope) ?? null }); return;
+      }
+      if (action === 'preflight' && request.method === 'POST') {
+        query(url, []); fields(input, ['presetId', 'expectedVersion']);
+        if (!controller) fail(409, 'BUILD_EXECUTION_DISABLED');
+        if (preflightActive || now() < preflightAfter) fail(429, 'BUILD_PREFLIGHT_LIMIT');
+        preflightActive = true; preflightAfter = now() + 2000;
+        try {
+          const report = await controller.inspect({ scope, ...input });
+          session(request);
+          if (closing || response.destroyed) fail(409, 'BUILD_PREFLIGHT_INTERRUPTED');
+          json(response, 200, report);
+        } finally { preflightActive = false; }
+        return;
       }
       if (action === 'execute' && request.method === 'POST') {
         query(url, []); fields(input, ['presetId', 'expectedVersion', 'idempotencyKey']);

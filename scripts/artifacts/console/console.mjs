@@ -4,6 +4,7 @@ const state = { csrf: null, app: null, jobs: [], selected: null, epoch: 0, detai
 function node(tag, text, className) { const n = document.createElement(tag); if (text !== undefined) n.textContent = text; if (className) n.className = className; return n; }
 function notice(text, error = false) { $('notice').textContent = text; $('notice').dataset.error = String(error); $('notice').hidden = !text; }
 function reset() {
+  clearPreflight();
   clearDiagnostic();
   state.epoch++; state.detailEpoch++; state.csrf = null; state.app = null; state.jobs = []; state.selected = null; state.overview = null; state.presets = []; state.intent = null; state.executionEnabled = false; state.detailSignature = null;
   $('console-panel').hidden = true; $('login-panel').hidden = false; $('logout').hidden = true;
@@ -11,6 +12,7 @@ function reset() {
   $('detail-content').hidden = true; $('detail-empty').hidden = false; $('approval-code').value = '';
   for (const id of ['create-dialog', 'run-dialog', 'retry-dialog']) if ($(id).open) $(id).close();
   for (const id of ['count-all', 'count-active', 'count-success', 'count-attention']) $(id).textContent = '0';
+  $('build-activity').replaceChildren(); $('build-activity').hidden = true;
   $('execution-status').textContent = ''; $('runner-mode').textContent = '실행 설정 확인 중';
 }
 async function api(path, method = 'GET', body) {
@@ -30,12 +32,17 @@ function explain(error) {
     BUILD_SESSION_EXPIRED: '세션이 만료되었습니다. 콘솔을 재시작해 다시 연결하세요.',
     BUILD_SESSION_REQUIRED: '로컬 콘솔 연결이 필요합니다.', BUILD_RUNNING_CANCEL_REQUIRES_RUNNER: '실행 중인 작업은 Runner에서 중지해야 합니다.',
     BUILD_DIAGNOSTIC_LIMIT: '진단이 실행 중이거나 방금 완료되었습니다. 잠시 뒤 다시 검사하세요.',
+    BUILD_EXECUTABLE_UNAVAILABLE: '등록된 실행 파일이 없거나 실행 권한이 없습니다. PC에서 도구 설치와 권한을 확인하세요.',
+    BUILD_PREFLIGHT_LIMIT: '점검 중이거나 방금 점검했습니다. 잠시 뒤 다시 요청하세요.',
+    BUILD_PREFLIGHT_STATE_CHANGED: '점검 중 작업이 바뀌었습니다. 작업을 다시 열어 확인하세요.',
+    BUILD_RUNNER_LOCKED: '같은 체크아웃의 실행 잠금이 남아 있습니다. 기존 Runner를 확인하고 임의로 삭제하지 마세요.',
     BUILD_EXECUTION_DISABLED: '이 콘솔은 실행이 비활성화되어 있습니다. PC에서 사전 등록한 설정을 허용해 시작하세요.',
     BUILD_EXECUTION_LIMIT: '동시 실행 한도에 도달했습니다. 현재 작업이 끝난 뒤 다시 요청하세요.',
     BUILD_EXECUTION_ACTIVE: '이미 시작 요청을 처리 중입니다. 상태를 확인하세요.',
     BUILD_PRESET_NOT_FOUND: '등록된 빌드 설정을 찾지 못했습니다.',
     BUILD_SOURCE_DIRTY: '작업 폴더에 커밋되지 않은 변경이 있습니다. 변경을 보존·정리한 뒤 다시 확인하세요.',
     BUILD_SOURCE_SHA_MISMATCH: 'PC의 체크아웃 커밋이 작업에 등록한 SHA와 다릅니다.',
+    BUILD_OUTPUT_PATH_UNSAFE: '출력 폴더가 링크이거나 안전하게 확인되지 않습니다. PC에서 출력 경로를 확인하세요.',
     BUILD_OUTPUT_EXISTS: '이전 출력 파일이 남아 있습니다. 필요한 파일을 보존한 뒤 PC에서 별도로 정리하세요.',
     BUILD_RUNNER_NOT_MANAGED: '이 콘솔이 실행한 작업이 아닙니다. 해당 Runner에서 중지하세요.',
     BUILD_RETRY_DENIED: '실패 또는 취소가 확인된 작업만 새 작업으로 만들 수 있습니다.',
@@ -93,7 +100,8 @@ async function history(jobId, append = false) {
   if (epoch !== state.detailEpoch || app !== state.app || state.selected?.jobId !== jobId) return;
   if (!append) $('history-list').replaceChildren();
   for (const event of result.events) {
-    const li = node('li', names[event.status] ?? event.status); li.append(node('small', ` · v${event.version}`));
+    const stageNames = { 'runner-process-starting': '빌드 프로세스 시작 준비', 'runner-process-exited': '프로세스 정상 종료 확인', 'runner-artifact-verifying': '산출물 검증 시작', 'runner-artifact-publishing': '산출물 등록 시작' };
+    const li = node('li', stageNames[event.eventType] ?? names[event.status] ?? event.status); li.append(node('small', ` · v${event.version}`));
     const time = node('time', new Date(event.createdAt).toLocaleString('ko-KR')); time.dateTime = event.createdAt; li.append(time); $('history-list').append(li);
   }
   state.historyNext = result.nextCursor; $('history-more').hidden = !result.nextCursor;
@@ -122,6 +130,9 @@ function pathFor(job, action) { return `/api/jobs/${encodeURIComponent(job.appId
 function startConfirmation(job, preset) {
   state.intent = { action: 'execute', job: { ...job }, presetId: preset.id, csrf: state.csrf, idempotencyKey: crypto.randomUUID().replaceAll('-', '') };
   $('run-context').textContent = `${preset.label} · ${job.jobId}\n${job.repository}\n${job.sourceSha}\nRunner: ${job.runnerId}`;
+  $('run-confirm').disabled = true; $('run-preflight').disabled = false;
+  $('run-preflight-status').textContent = '빌드 명령 없이 조건을 확인합니다. 점검 후 실행할 수 있습니다.';
+  $('run-preflight-checks').replaceChildren();
   $('run-dialog').showModal();
 }
 function retryConfirmation(job) {
@@ -139,14 +150,22 @@ async function controlAction(intent, body, button) {
     state.intent = null;
     notice(intent.action === 'execute' ? '실행 요청을 접수했습니다. 사전 검증과 실제 프로세스 결과를 확인합니다.' : intent.action === 'stop' ? '중지를 요청했습니다. 프로세스 종료 전에는 취소 완료로 표시하지 않습니다.' : '원본 이력을 보존한 새 작업을 만들었습니다. 다시 승인해야 실행할 수 있습니다.');
     await load(); await detail(intent.action === 'retry' ? result.jobId : intent.job.jobId);
-  } finally { state.busy = false; button.disabled = false; }
+  } catch (error) {
+    if (intent.action === 'execute' && ['BUILD_VERSION_CONFLICT', 'BUILD_NOT_QUEUED', 'BUILD_RECIPE_SCOPE_MISMATCH'].includes(error.message)) {
+      intent.preflightReady = false; $('run-preflight-status').textContent = '작업이 변경됐습니다. 창을 닫고 다시 선택해 점검하세요.';
+    }
+    throw error;
+  } finally { state.busy = false; button.disabled = intent.action === 'execute' && intent.preflightReady !== true; }
 }
 async function detail(jobId, preserve = false) {
   const epoch = ++state.detailEpoch, app = state.app;
   const [result, control] = await Promise.all([api(`/api/jobs/${encodeURIComponent(app)}/${encodeURIComponent(jobId)}`), api(`/api/jobs/${encodeURIComponent(app)}/${encodeURIComponent(jobId)}/execution`)]);
   if (epoch !== state.detailEpoch || app !== state.app) return;
   const job = result.job;
-  const signature = JSON.stringify([job.jobId, job.version, control.execution]);
+  // Numeric heartbeat updates must not replace focused action buttons or history controls.
+  renderActivity(control.execution?.activity);
+  const executionIdentity = control.execution ? { id: control.execution.id, phase: control.execution.phase, canStop: control.execution.canStop, reason: control.execution.reason, stage: control.execution.activity?.stage } : null;
+  const signature = JSON.stringify([job.jobId, job.version, executionIdentity]);
   if (preserve && signature === state.detailSignature) return; state.detailSignature = signature;
   state.selected = job; $('detail-empty').hidden = true; $('detail-content').hidden = false;
   $('detail-title').textContent = job.jobId; $('detail-status').textContent = names[job.status]; $('detail-status').dataset.state = job.status;
@@ -180,7 +199,7 @@ async function detail(jobId, preserve = false) {
 }
 $('login-form').addEventListener('submit', event => { event.preventDefault(); const code = $('approval-code').value.trim(); $('approval-code').value = ''; attempt(async () => connected(await api('/api/session', 'POST', { code }))); });
 $('logout').addEventListener('click', () => attempt(async () => { await api('/api/session', 'DELETE'); reset(); notice('연결을 종료했습니다. 다시 연결하려면 콘솔을 재시작하세요.'); }));
-$('app-select').addEventListener('change', () => { clearDiagnostic(); state.epoch++; state.detailEpoch++; state.app = $('app-select').value; state.selected = null; state.overview = null; state.jobs = []; state.presets = []; state.detailSignature = null; state.intent = null; state.cursors = [''];
+$('app-select').addEventListener('change', () => { clearPreflight(); clearDiagnostic(); state.epoch++; state.detailEpoch++; state.app = $('app-select').value; state.selected = null; state.overview = null; state.jobs = []; state.presets = []; state.detailSignature = null; state.intent = null; state.cursors = [''];
   for (const id of ['run-dialog', 'retry-dialog']) if ($(id).open) $(id).close();
   $('detail-content').hidden = true; $('detail-empty').hidden = false; $('job-search').value = ''; renderJobs(); attempt(async () => { await loadPresets(); await load(); }); });
 $('refresh').addEventListener('click', () => attempt(async () => { await load(); if (state.selected) await detail(state.selected.jobId); }));
@@ -199,10 +218,10 @@ $('create-form').addEventListener('submit', event => { event.preventDefault(); c
   } finally { button.disabled = false; } });
 });
 for (const kind of ['run', 'retry']) {
-  $(kind + '-close').addEventListener('click', () => { $(kind + '-dialog').close(); state.intent = null; });
-  $(kind + '-dialog').addEventListener('cancel', () => { state.intent = null; });
+  $(kind + '-close').addEventListener('click', () => { $(kind + '-dialog').close(); state.intent = null; if (kind === 'run') clearPreflight(); });
+  $(kind + '-dialog').addEventListener('cancel', () => { state.intent = null; if (kind === 'run') clearPreflight(); });
 }
-$('run-form').addEventListener('submit', event => { event.preventDefault(); const intent = state.intent; if (!intent || intent.action !== 'execute') return;
+$('run-form').addEventListener('submit', event => { event.preventDefault(); const intent = state.intent; if (!intent || intent.action !== 'execute' || intent.preflightReady !== true) return;
   attempt(() => controlAction(intent, { presetId: intent.presetId, expectedVersion: intent.job.version, idempotencyKey: intent.idempotencyKey }, event.submitter)); });
 $('retry-form').addEventListener('submit', event => { event.preventDefault(); const intent = state.intent; if (!intent || intent.action !== 'retry') return;
   attempt(() => controlAction(intent, { newJobId: $('retry-job-id').value.trim(), expectedVersion: intent.job.version, idempotencyKey: intent.idempotencyKey }, event.submitter)); });
@@ -255,4 +274,37 @@ let polling = false, nextPoll = 0;
 setInterval(async () => { if (!state.csrf || document.hidden || polling || state.busy || ['create-dialog', 'run-dialog', 'retry-dialog'].some(id => $(id).open) || Date.now() < nextPoll) return; polling = true;
   try { await load(); if (state.selected) await detail(state.selected.jobId, true); } catch (error) { notice(explain(error), true); } finally { polling = false; nextPoll = Date.now() + (['queued', 'running'].includes(state.selected?.status) ? 3000 : 15000); }
 }, 3000);
+
+function clearPreflight() {
+  $('run-context').textContent = ''; $('run-preflight-checks').replaceChildren();
+  $('run-preflight-status').textContent = ''; $('run-confirm').disabled = true; $('run-preflight').disabled = false;
+}
+function renderActivity(activity) {
+  const panel = $('build-activity'); panel.replaceChildren(); panel.hidden = !activity;
+  if (!activity) return;
+  const labels = { preflight: '실행 조건 확인', 'source-check': '소스 커밋 확인', executing: '빌드 프로세스 실행', verifying: '산출물 무결성 검사', publishing: '원장 · 파일 저장', finished: '이번 실행 처리 종료' };
+  panel.append(node('strong', labels[activity.stage] ?? '실행 관측'));
+  const elapsed = Math.floor(activity.elapsedMs / 1000);
+  panel.append(node('p', `경과 ${Math.floor(elapsed / 60)}분 ${elapsed % 60}초 · 출력 ${((activity.stdoutBytes + activity.stderrBytes) / 1024).toFixed(1)} KiB / ${(activity.outputLimitBytes / 1024).toFixed(0)} KiB`));
+  panel.append(node('small', '관측 ' + new Date(activity.observedAt).toLocaleTimeString('ko-KR') + ' · 로그 원문은 수집하지 않습니다. 이 수치는 현재 콘솔 세션에만 유지됩니다.'));
+  if (activity.lastOutputAt) panel.append(node('small', '마지막 출력 ' + new Date(activity.lastOutputAt).toLocaleTimeString('ko-KR') + ' · 출력이 없다는 이유만으로 멈춘 것으로 판단하지 않습니다.'));
+}
+$('run-preflight').addEventListener('click', async () => {
+  const intent = state.intent;
+  if (!intent || intent.action !== 'execute' || intent.job.appId !== state.app || intent.csrf !== state.csrf) return;
+  intent.preflightReady = false; $('run-confirm').disabled = true; $('run-preflight').disabled = true;
+  $('run-preflight-status').textContent = '소스·도구·출력 경로·잠금을 확인하고 있습니다…'; $('run-preflight-checks').replaceChildren();
+  try {
+    const report = await api(`/api/jobs/${encodeURIComponent(intent.job.appId)}/${encodeURIComponent(intent.job.jobId)}/preflight`, 'POST', { presetId: intent.presetId, expectedVersion: intent.job.version });
+    if (intent !== state.intent || intent.job.appId !== state.app || intent.csrf !== state.csrf || !$('run-dialog').open) return;
+    intent.preflightReady = report.ready === true && report.jobVersion === intent.job.version;
+    $('run-preflight-status').textContent = intent.preflightReady ? '현재 조건을 통과했습니다. 실행 시 다시 검증하며, 빌드·서명 성공을 보장하지 않습니다.' : '실행 전에 확인할 항목이 있습니다. 원인을 해결한 후 다시 점검하세요.';
+    const labels = { job: '작업 상태 · 버전', binding: '설정 연결', checkout: '작업 폴더', executable: '실행 파일', git: 'Git 도구', output: '이전 출력', lock: 'Runner 잠금', source: '소스 커밋 · 변경', freshness: '점검 중 상태 변경' };
+    for (const check of report.checks) $('run-preflight-checks').append(node('li', `${labels[check.id] ?? check.id}: ${check.status === 'passed' ? '통과' : check.status === 'not_checked' ? '미검사' : explain({ message: check.code })}`));
+    $('run-confirm').disabled = !intent.preflightReady;
+  } catch (error) {
+    if (intent === state.intent && intent.job.appId === state.app && intent.csrf === state.csrf) $('run-preflight-status').textContent = explain(error);
+  } finally { if (intent === state.intent) $('run-preflight').disabled = false; }
+});
+
 try { await connected(await api('/api/session')); } catch { reset(); }

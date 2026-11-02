@@ -172,6 +172,26 @@ class DurableBuildLedger {
       FROM audit WHERE app_id=? AND job_id=? AND sequence>? ORDER BY sequence LIMIT ?`)
       .all(scope.appId, scope.jobId, afterSequence, limit).map(row => freeze({ ...row }));
   }
+  // Internal runner hook: fixed vocabulary, same job version, no logs or arbitrary metadata.
+  recordProgress(input) {
+    const stages = ['runner-process-starting', 'runner-process-exited', 'runner-artifact-verifying', 'runner-artifact-publishing'];
+    if (!isRecord(input) || Object.keys(input).some(k => !['scope', 'expectedVersion', 'runnerId', 'stage'].includes(k))
+        || !stages.includes(input.stage)) throw new Error('BUILD_PROGRESS_INVALID');
+    const scope = snapshotBuildScope(input.scope), expectedVersion = version(input.expectedVersion);
+    const { runnerId, stage } = input;
+    return this.#transaction(() => {
+      const current = this.get(scope);
+      if (current.runnerId !== runnerId) throw new Error('BUILD_EXECUTION_MISMATCH');
+      if (current.version !== expectedVersion) throw new Error('BUILD_VERSION_CONFLICT');
+      if (current.status !== 'running') throw new Error('BUILD_PROGRESS_NOT_RUNNING');
+      const prior = this.#db.prepare("SELECT event_type AS stage FROM audit WHERE app_id=? AND job_id=? AND version=? AND event_type LIKE 'runner-%' ORDER BY sequence")
+        .all(scope.appId, scope.jobId, expectedVersion);
+      if (prior.some(e => e.stage === stage)) return freeze({ stage, version: expectedVersion, recorded: false });
+      if (prior.length >= stages.length || stages[prior.length] !== stage) throw new Error('BUILD_PROGRESS_ORDER');
+      this.#audit(scope, current, stage);
+      return freeze({ stage, version: expectedVersion, recorded: true });
+    });
+  }
   #replay(scope, key, digest) {
     const row = this.#db.prepare('SELECT fingerprint,result FROM requests WHERE app_id=? AND job_id=? AND request_key=?')
       .get(scope.appId, scope.jobId, key);
