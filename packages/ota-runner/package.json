@@ -7,11 +7,13 @@
   "exports": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "flora-ota-runner": "./dist/main.js"
+    "flora-ota-runner": "./dist/main.js",
+    "flora-native-runner": "./dist/native-main.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/bundle-pnpm-helper.mjs",
-    "runner": "node dist/main.js"
+    "runner": "node dist/main.js",
+    "native-runner": "node dist/native-main.js"
   },
   "dependencies": {
     "@app-ops/core": "workspace:*",

@@ -21,7 +21,8 @@
     "flora:builds": "node scripts/artifacts/build-ops.mjs",
     "test:artifacts": "node scripts/artifacts/run-tests.mjs",
     "flora:console": "node scripts/artifacts/build-console.mjs",
-    "flora:runner": "node scripts/artifacts/local-build-runner.mjs"
+    "flora:runner": "node scripts/artifacts/local-build-runner.mjs",
+    "flora:native": "node packages/ota-runner/dist/native-main.js"
   },
   "devDependencies": {
     "@flora/ota": "workspace:*",

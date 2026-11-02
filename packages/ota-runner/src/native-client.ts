@@ -31,9 +31,9 @@ function lease(input: unknown): NativeLease {
   return copy;
 }
 
-export function createNativeClient(options: { origin: string; token: string; appId: string; platform: NativePlatform; fetch?: typeof fetch }): NativeClient {
+export function createNativeClient(options: { origin: string; token: string; appId: string; platform: NativePlatform; fetch?: typeof fetch; signal?: AbortSignal }): NativeClient {
   // Capture the credential and origin once; never read mutable options after I/O.
-  const { origin, token, appId, platform, fetch: transport = fetch } = options;
+  const { origin, token, appId, platform, fetch: transport = fetch, signal: lifetimeSignal } = options;
   let url: URL;
   try { url = new URL(origin); } catch { throw new Error("INVALID_NATIVE_CONFIG"); }
   nativeAssert(url.origin === origin && (url.protocol === "https:" || url.protocol === "http:" &&
@@ -49,7 +49,11 @@ export function createNativeClient(options: { origin: string; token: string; app
   };
 
   async function call(action: string, body: unknown, active?: NativeLease, signal?: AbortSignal): Promise<unknown> {
-    const deadline = new NativeRequestDeadline(active?.expiresAt, signal);
+    // The session lifetime cannot be replaced by a per-method signal. The
+    // deadline sanitizes the composite abort reason before exposing it to HTTP.
+    const requestSignal = lifetimeSignal && signal
+      ? AbortSignal.any([lifetimeSignal, signal]) : lifetimeSignal ?? signal;
+    const deadline = new NativeRequestDeadline(active?.expiresAt, requestSignal);
     try {
       deadline.assertLive();
       let response: Response;
