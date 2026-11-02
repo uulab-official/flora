@@ -9,6 +9,8 @@ const commands = {
   init: { required: [], optional: [] },
   create: { required: ['input'], optional: [] },
   transition: { required: ['input'], optional: [] },
+  retry: { required: ['input'], optional: [] },
+  overview: { required: ['app'], optional: [] },
   complete: { required: ['input'], optional: [] },
   list: { required: ['app'], optional: ['limit', 'after-job'] },
   show: { required: ['app', 'job'], optional: [] },
@@ -36,16 +38,17 @@ function integer(value, fallback) {
   if (!/^\d{1,12}$/.test(value) || /\s/.test(value)) throw new Error('BUILD_ARGUMENT_INVALID');
   const result = Number(value); if (!Number.isSafeInteger(result)) throw new Error('BUILD_ARGUMENT_INVALID'); return result;
 }
-export async function readBuildInput(path) {
+export async function readBuildInput(path, { privateOnly = false } = {}) {
   const max = 65536; path = resolve(path);
   if (await realpath(dirname(path)) !== dirname(path)) throw new Error('BUILD_INPUT_UNSAFE');
   const before = await lstat(path, { bigint: true });
+  if (privateOnly && ((before.mode & 0o077n) !== 0n || before.uid !== BigInt(process.geteuid()))) throw new Error('BUILD_INPUT_UNSAFE');
   if (!before.isFile() || before.nlink !== 1n) throw new Error('BUILD_INPUT_UNSAFE');
   if (before.size > BigInt(max)) throw new Error('BUILD_INPUT_TOO_LARGE');
   const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const actual = await handle.stat({ bigint: true });
-    if (!actual.isFile() || ['ino', 'dev', 'size', 'mtimeNs', 'ctimeNs', 'nlink'].some(key => actual[key] !== before[key]))
+    if (!actual.isFile() || ['ino', 'dev', 'size', 'mtimeNs', 'ctimeNs', 'nlink', 'mode', 'uid'].some(key => actual[key] !== before[key]))
       throw new Error('BUILD_INPUT_UNSAFE');
     const buffer = Buffer.alloc(max + 1); let size = 0;
     while (size < buffer.length) {
@@ -54,7 +57,7 @@ export async function readBuildInput(path) {
     }
     if (size > max) throw new Error('BUILD_INPUT_TOO_LARGE');
     const after = await handle.stat({ bigint: true });
-    if (BigInt(size) !== before.size || ['ino', 'dev', 'size', 'mtimeNs', 'ctimeNs', 'nlink'].some(key => after[key] !== before[key]))
+    if (BigInt(size) !== before.size || ['ino', 'dev', 'size', 'mtimeNs', 'ctimeNs', 'nlink', 'mode', 'uid'].some(key => after[key] !== before[key]))
       throw new Error('BUILD_INPUT_UNSAFE');
     try {
       const result = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, size)));
@@ -76,6 +79,8 @@ export async function runBuildOps(argv) {
       case 'init': result = { initialized: true, schemaVersion: 1, storage: 'local-only' }; break;
       case 'create': result = service.create(input); break;
       case 'transition': result = await service.transition(input); break;
+      case 'retry': result = await service.retry(input); break;
+      case 'overview': result = service.overview({ appId: o.app }); break;
       case 'complete': result = await service.complete(input); break;
       case 'list': result = service.list({ appId: o.app, limit: integer(o.limit, 100), afterJobId: o['after-job'] ?? '' }); break;
       case 'show': result = service.show(scope); break;

@@ -6,6 +6,7 @@ import { openLocalBuildService } from './local-build-service.mjs';
 import { isBuildId, isRecord } from './build-lifecycle.mjs';
 import { privateDirectory } from './private-paths.mjs';
 import { withVerifiedNativeArtifact } from './native-artifact-file.mjs';
+import { createBuildController } from './build-controller.mjs';
 
 const SESSION_MS = 30 * 60_000, APPROVAL_MS = 10 * 60_000, TICKET_MS = 60_000;
 const BODY_LIMIT = 16 * 1024, COOKIE = 'flora_local_session';
@@ -55,6 +56,8 @@ async function body(request, allowForm = false) {
 }
 function errorStatus(error) {
   if (error.status) return error.status;
+  if (error.message === 'BUILD_EXECUTION_LIMIT') return 429;
+  if (['BUILD_EXECUTION_DISABLED', 'BUILD_EXECUTION_ACTIVE', 'BUILD_NOT_QUEUED', 'BUILD_RETRY_DENIED', 'BUILD_RUNNER_NOT_MANAGED'].includes(error.message)) return 409;
   if (/NOT_FOUND$/.test(error.message)) return 404;
   if (/CONFLICT|ALREADY_EXISTS|TRANSITION_DENIED|COMPLETION_REQUIRED|HASH_MISMATCH|SIZE_MISMATCH|CHANGED|SOURCE_CHANGED/.test(error.message)) return 409;
   if (error.message === 'BUILD_LEDGER_BUSY') return 503;
@@ -64,15 +67,18 @@ function publicError(error) {
   return /^(BUILD|ARTIFACT)_[A-Z_]{1,80}$/.test(error?.message ?? '') ? error.message : 'BUILD_OPERATION_FAILED';
 }
 // Local owner only. appIds is an operator-selected capability boundary, not a SaaS tenant model.
-export async function startBuildConsole({ directory, appIds, port = 0, approvalCode, now = Date.now }) {
+export async function startBuildConsole({ directory, appIds, port = 0, approvalCode, now = Date.now, enableExecution = false, presets = [], maxConcurrent = 1 }) {
   if (!Array.isArray(appIds) || appIds.length < 1 || appIds.length > 100 || appIds.some(id => !isBuildId(id))
       || new Set(appIds).size !== appIds.length || !Number.isSafeInteger(port) || port < 0 || port > 65535
       || typeof approvalCode !== 'string' || !/^[a-f0-9]{48}$/.test(approvalCode)) throw new Error('BUILD_CONSOLE_CONFIG_INVALID');
+  if (typeof enableExecution !== 'boolean' || !Array.isArray(presets)) throw new Error('BUILD_CONSOLE_CONFIG_INVALID');
+  if (!enableExecution && presets.length) throw new Error('BUILD_EXECUTE_REQUIRED');
   directory = await privateDirectory(directory);
   const service = await openLocalBuildService({ directory });
   const allowed = new Set(appIds), sessions = new Map(), tickets = new Map(), pending = new Set();
-  const assets = new Map();
+  const assets = new Map(); let controller;
   try {
+    if (enableExecution) controller = createBuildController({ directory, service, presets, appIds, maxConcurrent });
     for (const [path, file, type] of [['/', 'index.html', 'text/html'], ['/console.mjs', 'console.mjs', 'text/javascript'], ['/console.css', 'console.css', 'text/css']])
       assets.set(path, { bytes: await readFile(new URL('console/' + file, import.meta.url)), type: type + '; charset=utf-8' });
   } catch (error) { service.close(); throw error; }
@@ -136,10 +142,17 @@ export async function startBuildConsole({ directory, appIds, port = 0, approvalC
         json(response, 200, { loggedOut: true }); return;
       }
     }
+    if (url.pathname === '/api/presets' && request.method === 'GET') {
+      const q = query(url, ['app']); scoped(q.app);
+      json(response, 200, { enabled: Boolean(controller), presets: controller?.list(q.app) ?? [], maxConcurrent: controller ? maxConcurrent : 0 }); return;
+    }
+    if (url.pathname === '/api/overview' && request.method === 'GET') {
+      const q = query(url, ['app']); scoped(q.app); json(response, 200, service.overview({ appId: q.app })); return;
+    }
     if (url.pathname === '/api/jobs') {
       if (request.method === 'GET') {
-        const q = query(url, ['app', 'limit', 'after']); scoped(q.app); const limit = number(q.limit, 25);
-        const jobs = service.list({ appId: q.app, limit, afterJobId: q.after ?? '' });
+        const q = query(url, ['app', 'limit', 'after', 'search', 'status']); scoped(q.app); const limit = number(q.limit, 25);
+        const jobs = service.list({ appId: q.app, limit, afterJobId: q.after ?? '', search: q.search ?? '', status: q.status ?? '' });
         json(response, 200, { jobs, nextCursor: jobs.length === limit ? jobs.at(-1).jobId : null }); return;
       }
       if (request.method === 'POST') {
@@ -147,10 +160,27 @@ export async function startBuildConsole({ directory, appIds, port = 0, approvalC
         json(response, 201, service.create(input)); return;
       }
     }
-    const match = /^\/api\/jobs\/([^/]+)\/([^/]+)(?:\/(history|transition|downloads))?$/.exec(url.pathname);
+    const match = /^\/api\/jobs\/([^/]+)\/([^/]+)(?:\/(history|transition|downloads|execution|execute|stop|retry))?$/.exec(url.pathname);
     if (match) {
       const scope = scoped(match[1], match[2]), action = match[3];
       if (!action && request.method === 'GET') { query(url, []); json(response, 200, service.show(scope)); return; }
+      if (action === 'execution' && request.method === 'GET') {
+        query(url, []); service.show(scope); json(response, 200, { enabled: Boolean(controller), execution: controller?.state(scope) ?? null }); return;
+      }
+      if (action === 'execute' && request.method === 'POST') {
+        query(url, []); fields(input, ['presetId', 'expectedVersion', 'idempotencyKey']);
+        if (!controller) fail(409, 'BUILD_EXECUTION_DISABLED');
+        json(response, 202, controller.start({ scope, ...input })); return;
+      }
+      if (action === 'stop' && request.method === 'POST') {
+        query(url, []); fields(input, ['expectedVersion']);
+        if (!controller) fail(409, 'BUILD_EXECUTION_DISABLED');
+        json(response, 202, controller.stop({ scope, ...input })); return;
+      }
+      if (action === 'retry' && request.method === 'POST') {
+        query(url, []); fields(input, ['newJobId', 'expectedVersion', 'idempotencyKey']);
+        json(response, 201, await service.retry({ scope, ...input })); return;
+      }
       if (action === 'history' && request.method === 'GET') {
         const q = query(url, ['limit', 'after']), limit = number(q.limit, 25);
         const events = service.history(scope, { limit, afterSequence: number(q.after, 0, Number.MAX_SAFE_INTEGER) });
@@ -214,11 +244,12 @@ export async function startBuildConsole({ directory, appIds, port = 0, approvalC
   });
   server.requestTimeout = 15_000; server.headersTimeout = 10_000; server.keepAliveTimeout = 1000; server.maxConnections = 32;
   try { await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); }); }
-  catch (error) { service.close(); throw error; }
+  catch (error) { await controller?.close(); service.close(); throw error; }
   origin = `http://127.0.0.1:${server.address().port}`;
   return { origin, async close() {
     if (closing) return; closing = true; sessions.clear(); tickets.clear();
+    const buildsStopped = controller?.close();
     const stopped = new Promise(resolve => server.close(resolve)); server.closeAllConnections();
-    await stopped; await Promise.allSettled([...pending]); service.close();
+    await stopped; await Promise.allSettled([...pending]); await buildsStopped; service.close();
   } };
 }

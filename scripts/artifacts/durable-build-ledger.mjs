@@ -113,17 +113,51 @@ class DurableBuildLedger {
       this.#audit(job, state, 'created'); return freeze({ ...job, ...state });
     });
   }
+  async retry({ scope, newJobId, expectedVersion, idempotencyKey }) {
+    scope = snapshotBuildScope(scope); version(expectedVersion);
+    if (!isBuildId(newJobId)) throw new Error('BUILD_SCOPE_MISMATCH');
+    snapshotBuildEvent({ status: 'authorized', idempotencyKey });
+    const digest = fingerprint(['retry', expectedVersion, newJobId]);
+    return this.#transaction(() => {
+      const parent = this.get(scope), prior = this.#replay(scope, idempotencyKey, digest);
+      if (prior) return prior;
+      if (parent.version !== expectedVersion) throw new Error('BUILD_VERSION_CONFLICT');
+      if (!['failed', 'cancelled'].includes(parent.status)) throw new Error('BUILD_RETRY_DENIED');
+      if (this.#db.prepare('SELECT 1 FROM jobs WHERE app_id=? AND job_id=?').get(scope.appId, newJobId))
+        throw new Error('BUILD_JOB_ALREADY_EXISTS');
+      const job = { ...context({ ...parent, jobId: newJobId }), parentJobId: parent.jobId };
+      const state = { appId: job.appId, jobId: job.jobId, version: 0, status: 'unconfigured',
+        artifactIntegrityVerified: false, signatureVerified: false, installVerified: false };
+      const result = { ...job, ...state };
+      this.#db.prepare('INSERT INTO jobs(app_id,job_id,context,state,version) VALUES(?,?,?,?,?)')
+        .run(job.appId, job.jobId, JSON.stringify(job), JSON.stringify(state), 0);
+      this.#db.prepare('INSERT INTO requests(app_id,job_id,request_key,fingerprint,result) VALUES(?,?,?,?,?)')
+        .run(scope.appId, scope.jobId, idempotencyKey, digest, JSON.stringify(result));
+      this.#audit(job, state, 'retry-created'); return freeze(result);
+    });
+  }
+  overview({ appId }) {
+    this.#assertOpen(); if (!isBuildId(appId)) throw new Error('BUILD_QUERY_INVALID');
+    const states = {}; let total = 0;
+    for (const row of this.#db.prepare("SELECT json_extract(state,'$.status') AS status,count(*) AS n FROM jobs WHERE app_id=? GROUP BY status").all(appId)) {
+      states[row.status] = row.n; total += row.n;
+    }
+    const files = this.#db.prepare("SELECT count(*) AS n,coalesce(sum(json_extract(metadata,'$.byteCount')),0) AS bytes FROM artifacts WHERE app_id=?").get(appId);
+    return freeze({ appId, total, states, artifacts: files.n, byteCount: files.bytes });
+  }
   get(scope) {
     this.#assertOpen(); scope = snapshotBuildScope(scope);
     const row = this.#db.prepare('SELECT context,state FROM jobs WHERE app_id=? AND job_id=?').get(scope.appId, scope.jobId);
     if (!row) throw new Error('BUILD_JOB_NOT_FOUND');
     return freeze({ ...JSON.parse(row.context), ...JSON.parse(row.state) });
   }
-  list({ appId, limit = 100, afterJobId = '' }) {
+  list({ appId, limit = 100, afterJobId = '', search = '', status = '' }) {
     this.#assertOpen(); queryLimit(limit);
-    if (!isBuildId(appId) || (afterJobId !== '' && !isBuildId(afterJobId))) throw new Error('BUILD_QUERY_INVALID');
-    return this.#db.prepare('SELECT context,state FROM jobs WHERE app_id=? AND job_id>? ORDER BY job_id LIMIT ?')
-      .all(appId, afterJobId, limit).map(row => freeze({ ...JSON.parse(row.context), ...JSON.parse(row.state) }));
+    if (!isBuildId(appId) || (afterJobId !== '' && !isBuildId(afterJobId)) || typeof search !== 'string' || search.length > 128
+        || /[\x00-\x1f\x7f]/.test(search) || !['', 'unconfigured', 'authorized', 'queued', 'running', 'succeeded', 'failed', 'cancelled', 'unknown'].includes(status))
+      throw new Error('BUILD_QUERY_INVALID');
+    return this.#db.prepare("SELECT context,state FROM jobs WHERE app_id=? AND job_id>? AND instr(lower(job_id),lower(?))>0 AND (?='' OR json_extract(state,'$.status')=?) ORDER BY job_id LIMIT ?")
+      .all(appId, afterJobId, search, status, status, limit).map(row => freeze({ ...JSON.parse(row.context), ...JSON.parse(row.state) }));
   }
   history(scope, { limit = 100, afterSequence = 0 } = {}) {
     this.#assertOpen(); scope = snapshotBuildScope(scope); queryLimit(limit);

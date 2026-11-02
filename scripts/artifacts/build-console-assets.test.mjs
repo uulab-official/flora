@@ -21,3 +21,12 @@ test('console layout supplies mobile and reduced motion rules without remote ass
   assert.match(css, /@media.*max-width/); assert.match(css, /prefers-reduced-motion/);
   assert.doesNotMatch(css, /@import|https?:\/\//);
 });
+test('console includes explicit execution confirmation, retry lineage and app-wide metrics', async () => {
+  const html = await asset('index.html'), js = await asset('console.mjs');
+  for (const id of ['run-dialog', 'run-form', 'run-context', 'retry-dialog', 'retry-form', 'retry-job-id', 'runner-mode', 'execution-status'])
+    assert.ok(html.includes(`id="${id}"`), id);
+  assert.match(html, /앱 전체 작업/); assert.doesNotMatch(html, /현재 페이지 작업<\/span>/);
+  for (const endpoint of ['/api/overview', '/api/presets', '/execute', '/stop', '/retry', '/execution']) assert.ok(js.includes(endpoint), endpoint);
+  assert.match(js, /parentJobId/); assert.match(js, /BUILD_SOURCE_DIRTY/);
+  assert.doesNotMatch(html, /name="(?:executable|args|cwd|sourcePath)"/);
+});

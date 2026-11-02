@@ -20,6 +20,8 @@ class LocalBuildService {
   constructor(ledger, root) { this.#ledger = ledger; this.#root = root; }
   create(job) { return this.#ledger.create(job); }
   transition(request) { return this.#ledger.transition(request); }
+  retry(request) { return this.#ledger.retry(request); }
+  overview(options) { return this.#ledger.overview(options); }
   list(options) { return this.#ledger.list(options); }
   history(scope, options) { return this.#ledger.history(scope, options); }
   show(scope) { return { job: this.#ledger.get(scope), artifacts: this.#ledger.artifacts(scope) }; }

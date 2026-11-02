@@ -11,7 +11,7 @@ import { isRecord, snapshotBuildScope } from './build-lifecycle.mjs';
 import { privateDirectory } from './private-paths.mjs';
 import { readBuildInput } from './build-ops.mjs';
 const exec = promisify(execFile), key = () => randomBytes(24).toString('hex');
-function recipeSnapshot(value) {
+export function snapshotLocalRecipe(value) {
   const keys = ['appId', 'repository', 'runnerId', 'platform', 'cwd', 'executable', 'args', 'artifactPath', 'format', 'timeoutMs', 'gitExecutable'];
   if (!isRecord(value) || Object.keys(value).some(k => !keys.includes(k)) || !Array.isArray(value.args) || value.args.length > 64
       || value.args.some(a => typeof a !== 'string' || a.length > 4096 || a.includes('\0'))) throw new Error('BUILD_RECIPE_INVALID');
@@ -22,6 +22,7 @@ function recipeSnapshot(value) {
   if (!child || child === '..' || child.startsWith('../') || isAbsolute(child) || !['apk', 'aab', 'ipa'].includes(recipe.format)
       || !recipe.artifactPath.endsWith('.' + recipe.format) || !Number.isSafeInteger(recipe.timeoutMs) || recipe.timeoutMs < 100 || recipe.timeoutMs > 3600000)
     throw new Error('BUILD_RECIPE_INVALID');
+  recipe.args = Object.freeze(recipe.args);
   return Object.freeze(recipe);
 }
 function cleanEnvironment() {
@@ -77,13 +78,14 @@ async function manifestFor(path, job) {
   } finally { await handle.close(); }
 }
 // Explicit one-shot local runner for trusted checkouts, NOT a sandbox for untrusted repositories.
-export async function runLocalBuild({ directory, scope, recipe, execute: approved = false, signal }) {
+export async function runLocalBuild({ directory, scope, recipe, execute: approved = false, signal, expectedVersion }) {
   if (approved !== true) throw new Error('BUILD_EXECUTE_REQUIRED');
-  scope = snapshotBuildScope(scope); recipe = recipeSnapshot(recipe); directory = await privateDirectory(directory);
+  scope = snapshotBuildScope(scope); recipe = snapshotLocalRecipe(recipe); directory = await privateDirectory(directory);
   if (signal?.aborted) throw new Error('BUILD_PROCESS_ABORTED');
   const service = await openLocalBuildService({ directory }); let lock, lockPath;
   try {
     const job = service.show(scope).job;
+    if (expectedVersion !== undefined && (!Number.isSafeInteger(expectedVersion) || expectedVersion !== job.version)) throw new Error('BUILD_VERSION_CONFLICT');
     if (job.status !== 'queued') throw new Error('BUILD_NOT_QUEUED');
     if (['appId', 'repository', 'runnerId', 'platform'].some(k => job[k] !== recipe[k])
         || (job.platform === 'ios' ? recipe.format !== 'ipa' : recipe.format === 'ipa')) throw new Error('BUILD_RECIPE_SCOPE_MISMATCH');
