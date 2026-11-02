@@ -49,3 +49,8 @@ jobs:
       - name: Actual native CLI shutdown before compilation
         if: runner.os != 'Windows'
         run: node --test packages/ota-runner/test/native-session-cli.test.ts
+      - name: Offline native artifact catalogue, inspection and exclusive export
+        run: node --test packages/ota-runner/test/native-artifact-access.test.ts packages/ota-runner/test/native-artifact-command.test.ts
+      - name: Actual offline native artifact CLI
+        if: runner.os != 'Windows'
+        run: node --test packages/ota-runner/test/native-artifact-cli.test.ts
