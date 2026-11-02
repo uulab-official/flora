@@ -42,7 +42,7 @@ jobs:
       - run: npm exec --yes --package=pnpm@11.19.0 -- pnpm build
       - run: npm exec --yes --package=pnpm@11.19.0 -- pnpm typecheck
       - name: Deadline, authority, cancellation and real HTTP regressions
-        run: node --test packages/ota-runner/test/native-client-reliability.test.ts
-      - name: Original native heartbeat regression
+        run: node --test packages/ota-runner/test/native-client-reliability.test.ts packages/ota-runner/test/native-client-compatibility.test.ts
+      - name: Original native client regressions
         if: runner.os != 'Windows'
-        run: node --test --test-name-pattern='^native heartbeat HTTP transport observes cancellation and remaining lease deadline$' packages/ota-runner/test/native-controller.test.ts
+        run: node --test --test-name-pattern='^(native heartbeat HTTP transport observes cancellation and remaining lease deadline|native HTTP client rejects OTA credentials and wrong-app lease without following redirects)$' packages/ota-runner/test/native-controller.test.ts

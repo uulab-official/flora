@@ -93,7 +93,9 @@ export function createNativeClient(options: { origin: string; token: string; app
       return raw.jobId as string | null;
     },
     async claim(jobId, signal) {
-      nativeAssert(matches(jobId, JOB_ID));
+      // Explicit claim historically accepts the bounded native authority ID shape.
+      // Pending remains stricter: its queue-generated IDs have a native_job_ prefix.
+      nativeAssert(matches(jobId, ID));
       const raw = await call("claim", { jobId }, undefined, signal);
       nativeAssert(object(raw));
       const l = bound(raw.lease), j = raw.job as NativeJob;
