@@ -2,13 +2,14 @@ import { nextBuildState } from "./build-lifecycle.mjs";
 
 // An in-memory reference ledger for concurrency tests and local dry-run use.
 // Production deployments MUST use durable storage with atomic CAS/uniqueness.
+const VALID_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 export class BuildJobLedger {
   #jobs = new Map();
   #keys = new Map();
   #locks = new Map();
 
   create(job) {
-    if (!job || typeof job.appId !== "string" || typeof job.jobId !== "string" ||
+    if (!job || !VALID_ID.test(job.appId ?? "") || !VALID_ID.test(job.jobId ?? "") ||
         job.status !== "unconfigured" || job.version !== 0)
       throw new Error("BUILD_INITIAL_STATE_INVALID");
     const id = JSON.stringify([job.appId, job.jobId]);
@@ -37,13 +38,13 @@ export class BuildJobLedger {
       const key = JSON.stringify([id, event?.idempotencyKey]);
       const deduped = this.#keys.get(key);
       if (deduped) {
-        if (deduped.status !== event.status) throw new Error("BUILD_IDEMPOTENCY_CONFLICT");
+        if (deduped.status !== event.status || deduped.artifactIntegrityVerified !== event.artifactIntegrityVerified || deduped.executionVerified !== event.executionVerified) throw new Error("BUILD_IDEMPOTENCY_CONFLICT");
         return Object.freeze({ ...deduped.result, replayed: true });
       }
       if (current.version !== expectedVersion) throw new Error("BUILD_VERSION_CONFLICT");
       const result = nextBuildState(current, event, scope);
       this.#jobs.set(id, result);
-      this.#keys.set(key, { status: event.status, result });
+      this.#keys.set(key, { status: event.status, artifactIntegrityVerified: event.artifactIntegrityVerified, executionVerified: event.executionVerified, result });
       return result;
     } finally {
       unlock();
