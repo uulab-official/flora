@@ -40,5 +40,9 @@ jobs:
       - run: node --version
       - run: npm exec --yes --package=pnpm@11.19.0 -- pnpm install --frozen-lockfile --ignore-scripts
       - run: npm exec --yes --package=pnpm@11.19.0 -- pnpm build
+      - run: npm exec --yes --package=pnpm@11.19.0 -- pnpm typecheck
       - name: Deadline, authority, cancellation and real HTTP regressions
         run: node --test packages/ota-runner/test/native-client-reliability.test.ts
+      - name: Original native heartbeat regression
+        if: runner.os != 'Windows'
+        run: node --test --test-name-pattern='^native heartbeat HTTP transport observes cancellation and remaining lease deadline$' packages/ota-runner/test/native-controller.test.ts

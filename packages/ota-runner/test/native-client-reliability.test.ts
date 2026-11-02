@@ -347,7 +347,7 @@ test("real HTTP lost completion acknowledgement is not automatically replayed", 
 });
 
 test("request timers and caller listeners are removed after success, rejection and cancellation", async t => {
-  const { getEventListeners } = await import("node:events");
+  const { getEventListeners } = (await import("node:events")).default;
   t.mock.timers.enable({ apis: ["setTimeout"], now: Date.now() });
   const signal = new AbortController();
   let outbound: AbortSignal | undefined | null;
