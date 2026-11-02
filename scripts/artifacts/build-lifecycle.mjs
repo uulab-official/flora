@@ -32,6 +32,7 @@ export function nextBuildState(current, event, scope) {
     version: current.version + 1,
     status: event.status,
     idempotencyKey: event.idempotencyKey,
+    // Atomic persistence and event deduplication are the responsibility of the ledger.
     // No raw credentials, logs, artifact paths or provider responses are copied.
     artifactIntegrityVerified: event.status === "succeeded",
     signatureVerified: false,
